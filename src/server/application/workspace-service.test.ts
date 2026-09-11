@@ -2,13 +2,18 @@ import { describe, expect, it } from "vitest";
 import { WorkspaceService } from "@/server/application/workspace-service";
 import { AesCredentialCipher } from "@/server/security/credential-cipher";
 import { MemoryStore } from "@/server/store/memory-store";
-import { createFixtureState, TEST_KEY } from "@/server/test-support/fixtures";
+import {
+  createFixtureState,
+  noopProviderRegistry,
+  TEST_KEY
+} from "@/server/test-support/fixtures";
 
 describe("Workspace Configuration", () => {
   it("moves Tasks through employee review to user completion", async () => {
     const service = new WorkspaceService(
       new MemoryStore(createFixtureState()),
-      new AesCredentialCipher(TEST_KEY)
+      new AesCredentialCipher(TEST_KEY),
+      noopProviderRegistry
     );
     const task = await service.createTask(
       "30000000-0000-4000-8000-000000000001",
@@ -47,7 +52,8 @@ describe("Workspace Configuration", () => {
   it("rejects employee completion authority", async () => {
     const service = new WorkspaceService(
       new MemoryStore(createFixtureState()),
-      new AesCredentialCipher(TEST_KEY)
+      new AesCredentialCipher(TEST_KEY),
+      noopProviderRegistry
     );
     const task = await service.createTask(
       "30000000-0000-4000-8000-000000000001",
@@ -72,7 +78,8 @@ describe("Workspace Configuration", () => {
 
     const providers = await new WorkspaceService(
       new MemoryStore(state),
-      cipher
+      cipher,
+      noopProviderRegistry
     ).listProviders();
     expect(providers[0]).not.toHaveProperty("encryptedCredential");
   });

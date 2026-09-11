@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { WorkspaceService } from "@/server/application/workspace-service";
-import type { ProviderRegistry } from "@/server/adapters/model/provider-registry";
+import type {
+  ProviderAccess,
+  ProviderRegistry
+} from "@/server/application/provider-gateway";
 import { AesCredentialCipher } from "@/server/security/credential-cipher";
 import { MemoryStore } from "@/server/store/memory-store";
 import { createInitialState } from "@/server/store/initial-state";
@@ -8,12 +11,9 @@ import { createInitialState } from "@/server/store/initial-state";
 class FakeProviderRegistry implements ProviderRegistry {
   readonly validations: string[] = [];
 
-  async validateCredential(
-    _provider: "openai",
-    credential: string
-  ): Promise<void> {
-    this.validations.push(credential);
-    if (credential === "invalid") {
+  async validate(access: ProviderAccess): Promise<void> {
+    this.validations.push(access.credential);
+    if (access.credential === "invalid") {
       throw new Error("Provider credential validation failed: invalid key");
     }
   }

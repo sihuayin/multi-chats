@@ -3,11 +3,19 @@ import type {
   EngineRequest,
   EngineTool
 } from "@/server/application/employee-engine";
+import type { ProviderRegistry } from "@/server/application/provider-gateway";
 import type { AppState, Employee } from "@/server/domain/types";
 import { AesCredentialCipher } from "@/server/security/credential-cipher";
 import { createInitialState } from "@/server/store/initial-state";
 
 export const TEST_KEY = "test-encryption-key";
+
+export const noopProviderRegistry: ProviderRegistry = {
+  async validate() {},
+  async listModels() {
+    return [];
+  }
+};
 
 export function createFixtureState(): AppState {
   const state = createInitialState("00000000-0000-4000-8000-000000000001");

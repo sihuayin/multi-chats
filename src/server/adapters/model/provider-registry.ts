@@ -1,3 +1,5 @@
+import "server-only";
+
 import {
   createModels,
   type Credential,
@@ -15,6 +17,10 @@ import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { openrouterProvider } from "@earendil-works/pi-ai/providers/openrouter";
 import { providerCatalog } from "@/lib/provider-catalog";
 import type { ProviderId } from "@/server/domain/types";
+import type {
+  ProviderModelSummary,
+  ProviderRegistry
+} from "@/server/application/provider-gateway";
 
 const factories: Record<ProviderId, () => Provider> = {
   openai: openaiProvider,
@@ -48,25 +54,6 @@ class StaticCredentialStore implements CredentialStore {
 
 export const providerDescriptions = providerCatalog;
 
-export type ProviderModelSummary = {
-  id: string;
-  name: string;
-  contextWindow?: number;
-  maxTokens?: number;
-  reasoning: boolean;
-};
-
-export interface ProviderRegistry {
-  validateCredential(
-    providerId: ProviderId,
-    credential: string
-  ): Promise<void>;
-  listModels(
-    providerId: ProviderId,
-    credential?: string
-  ): Promise<ProviderModelSummary[]>;
-}
-
 export function createProviderModels(
   providerId: ProviderId,
   credential?: string
@@ -96,9 +83,11 @@ export function listProviderModels(
 }
 
 export const piProviderRegistry: ProviderRegistry = {
-  validateCredential: validateProviderCredential,
-  async listModels(providerId, credential) {
-    return listProviderModels(providerId, credential);
+  async validate(access) {
+    return validateProviderCredential(access.provider, access.credential);
+  },
+  async listModels(access) {
+    return listProviderModels(access.provider, access.credential);
   }
 };
 

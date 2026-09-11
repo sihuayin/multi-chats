@@ -6,6 +6,7 @@ import {
 import { AesCredentialCipher } from "@/server/security/credential-cipher";
 import {
   createFixtureState,
+  noopProviderRegistry,
   RecordingEngine,
   TEST_KEY,
   ToolCallingEngine
@@ -128,7 +129,7 @@ describe("ConversationRun", () => {
     const store = new MemoryStore(state);
     const cipher = new AesCredentialCipher(TEST_KEY);
     const runService = new ConversationRunService(store, cipher, new ToolCallingEngine());
-    const workspace = new WorkspaceService(store, cipher);
+    const workspace = new WorkspaceService(store, cipher, noopProviderRegistry);
 
     const started = await runService.startTurn(
       "30000000-0000-4000-8000-000000000001",
