@@ -43,26 +43,40 @@ async function body(request: Request): Promise<unknown> {
 }
 
 async function health(): Promise<Response> {
-  const store = getStore();
-  const state = await store.read((current) => ({
-    workspaceId: current.workspace.id,
-    heartbeatAt: current.workspace.workerHeartbeatAt
-  }));
-  const heartbeatAge = state.heartbeatAt
-    ? Date.now() - new Date(state.heartbeatAt).getTime()
-    : Number.POSITIVE_INFINITY;
-  return json({
-    status:
-      heartbeatAge < 15_000 || !process.env.DATABASE_URL ? "ok" : "degraded",
-    database: "ok",
-    worker:
-      heartbeatAge < 15_000
-        ? "ok"
-        : !process.env.DATABASE_URL
-          ? "inline"
-          : "stale",
-    workspaceId: state.workspaceId
-  });
+  try {
+    const store = getStore();
+    const state = await store.read((current) => ({
+      workspaceId: current.workspace.id,
+      heartbeatAt: current.workspace.workerHeartbeatAt
+    }));
+    const heartbeatAge = state.heartbeatAt
+      ? Date.now() - new Date(state.heartbeatAt).getTime()
+      : Number.POSITIVE_INFINITY;
+    return json({
+      status:
+        heartbeatAge < 15_000 || !process.env.DATABASE_URL ? "ok" : "degraded",
+      database: "ok",
+      worker:
+        heartbeatAge < 15_000
+          ? "ok"
+          : !process.env.DATABASE_URL
+            ? "inline"
+            : "stale",
+      workspaceId: state.workspaceId
+    });
+  } catch (error) {
+    logger.error("health.database.failed", {
+      message: error instanceof Error ? error.message : String(error)
+    });
+    return json(
+      {
+        status: "unavailable",
+        database: "error",
+        worker: "unknown"
+      },
+      { status: 503 }
+    );
+  }
 }
 
 async function streamRunEvents(

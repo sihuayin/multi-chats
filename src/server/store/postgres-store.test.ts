@@ -13,7 +13,9 @@ describeWithDatabase("PostgresStore", () => {
 
   it("migrates and persists a locked Workspace update", async () => {
     await store.migrate();
+    await store.migrate();
     const original = await store.read((state) => state.workspace.name);
+    const originalWorkspaceId = await store.read((state) => state.workspace.id);
     const updated = `Workspace ${Date.now()}`;
 
     await store.update((state) => {
@@ -21,6 +23,7 @@ describeWithDatabase("PostgresStore", () => {
     });
 
     expect(await store.read((state) => state.workspace.name)).toBe(updated);
+    expect(await store.read((state) => state.workspace.id)).toBe(originalWorkspaceId);
     await store.update((state) => {
       state.workspace.name = original;
     });

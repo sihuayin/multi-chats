@@ -26,19 +26,30 @@ async function main(): Promise<void> {
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
+  const writeHeartbeat = () =>
+    store.update((state) => {
+      state.workspace.workerHeartbeatAt = new Date().toISOString();
+    });
+  await writeHeartbeat();
+  const heartbeatTimer = setInterval(() => {
+    void writeHeartbeat().catch((error) => {
+      logger.error("worker.heartbeat.failed", {
+        message: error instanceof Error ? error.message : String(error)
+      });
+    });
+  }, 5_000);
+
   logger.info("worker.started", {
     pollIntervalMs: interval,
     modelMode: process.env.MODEL_MODE ?? "pi"
   });
   while (!stopping) {
-    await store.update((state) => {
-      state.workspace.workerHeartbeatAt = new Date().toISOString();
-    });
     const processed = await runs.processNextQueuedRun();
     if (!processed) {
       await new Promise((resolve) => setTimeout(resolve, interval));
     }
   }
+  clearInterval(heartbeatTimer);
   if ("close" in store && typeof store.close === "function") {
     await store.close();
   }

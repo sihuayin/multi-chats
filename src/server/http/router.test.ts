@@ -49,4 +49,27 @@ describe("health endpoint", () => {
       }
     }
   });
+
+  it("reports database unavailability instead of returning a generic 500", async () => {
+    setStoreForTests({
+      async read() {
+        throw new Error("database unavailable");
+      },
+      async update() {
+        throw new Error("database unavailable");
+      }
+    });
+
+    const response = await handleApiRequest(
+      new Request("http://localhost/api/health"),
+      ["health"]
+    );
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      status: "unavailable",
+      database: "error",
+      worker: "unknown"
+    });
+  });
 });
