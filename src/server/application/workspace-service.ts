@@ -6,8 +6,7 @@ import type {
   Group,
   ProviderCredential,
   Skill,
-  Task,
-  TaskStatus
+  Task
 } from "@/server/domain/types";
 import {
   artifactInputSchema,
@@ -24,6 +23,7 @@ import {
   validateProviderCredential
 } from "@/server/adapters/model/provider-registry";
 import { ApiError, notFound } from "@/server/application/errors";
+import { transitionTask } from "@/server/application/task-ledger";
 import type { WorkspaceView } from "@/lib/workspace-view";
 import type { CredentialCipher } from "@/server/security/credential-cipher";
 import { BUILT_IN_TOOLS } from "@/server/store/initial-state";
@@ -363,9 +363,7 @@ export class WorkspaceService {
         });
       }
       if (parsed.status) {
-        this.assertTaskTransition(task.status, parsed.status, actorId);
-        task.status = parsed.status;
-        task.history.push({ status: parsed.status, at: now(), actorId });
+        transitionTask(task, parsed.status, actorId);
       }
       task.updatedAt = now();
       state.workspace.updatedAt = task.updatedAt;
@@ -412,6 +410,17 @@ export class WorkspaceService {
       }
       approval.status = decision;
       approval.resolvedAt = now();
+      if (approval.taskId) {
+        const task = state.tasks.find((item) => item.id === approval.taskId);
+        if (
+          task &&
+          task.status !== "completed" &&
+          task.status !== "cancelled" &&
+          decision !== "cancelled"
+        ) {
+          transitionTask(task, "in_progress", "user");
+        }
+      }
       state.workspace.updatedAt = approval.resolvedAt;
       return approval;
     });
@@ -426,34 +435,4 @@ export class WorkspaceService {
     }
   }
 
-  private assertTaskTransition(
-    current: TaskStatus,
-    next: TaskStatus,
-    actorId: string
-  ): void {
-    const employeeTransitions: Partial<Record<TaskStatus, TaskStatus[]>> = {
-      draft: ["in_progress", "blocked", "cancelled"],
-      in_progress: ["blocked", "review", "cancelled"],
-      blocked: ["in_progress", "review", "cancelled"],
-      review: ["in_progress"]
-    };
-    if (next === "completed") {
-      if (actorId !== "user") {
-        throw new ApiError(403, "Only the user can complete a Task", "task_completion");
-      }
-      if (current !== "review") {
-        throw new ApiError(409, "Task must be in review before completion", "task_transition");
-      }
-      return;
-    }
-    if (next === "cancelled" && actorId === "user") return;
-    const allowed = employeeTransitions[current] ?? [];
-    if (!allowed.includes(next)) {
-      throw new ApiError(
-        409,
-        `Task cannot move from ${current} to ${next}`,
-        "task_transition"
-      );
-    }
-  }
 }

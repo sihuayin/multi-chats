@@ -1,8 +1,8 @@
 import type {
-  AgentEngine,
+  EmployeeEngine,
   EngineRequest,
   EngineTool
-} from "@/server/application/agent-engine";
+} from "@/server/application/employee-engine";
 import type { AppState, Employee } from "@/server/domain/types";
 import { AesCredentialCipher } from "@/server/security/credential-cipher";
 import { createInitialState } from "@/server/store/initial-state";
@@ -64,7 +64,7 @@ export function createFixtureState(): AppState {
   return state;
 }
 
-export class RecordingEngine implements AgentEngine {
+export class RecordingEngine implements EmployeeEngine {
   readonly requests: Array<
     Omit<EngineRequest, "tools"> & {
       tools: Array<Omit<EngineTool, "execute">>;
@@ -96,7 +96,7 @@ export class RecordingEngine implements AgentEngine {
   }
 }
 
-export class ToolCallingEngine implements AgentEngine {
+export class ToolCallingEngine implements EmployeeEngine {
   async *run(request: EngineRequest) {
     const tool = request.tools.find((item) => item.name === "post_webhook");
     if (!tool) throw new Error("Test engine expected post_webhook");

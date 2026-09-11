@@ -1,14 +1,7 @@
 import { z } from "zod";
+import { PROVIDER_IDS } from "@/lib/provider-catalog";
 
-export const providerIdSchema = z.enum([
-  "openai",
-  "anthropic",
-  "google",
-  "openrouter",
-  "deepseek",
-  "groq",
-  "mistral"
-]);
+export const providerIdSchema = z.enum(PROVIDER_IDS);
 
 export const providerInputSchema = z.object({
   provider: providerIdSchema,

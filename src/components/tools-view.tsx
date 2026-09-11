@@ -41,6 +41,10 @@ export function ToolsView() {
               )}
               <code>{tool.name}</code>
             </div>
+            <details className="tool-schema-details">
+              <summary>Input schema</summary>
+              <pre>{JSON.stringify(tool.inputSchema, null, 2)}</pre>
+            </details>
           </article>
         ))}
       </div>

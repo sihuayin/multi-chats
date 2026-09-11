@@ -232,6 +232,10 @@ button {
   margin-top: 18px;
 }
 
+.rail-select {
+  font-size: 11px;
+}
+
 .conversation-item {
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr);
@@ -801,6 +805,22 @@ label textarea {
 
 .tool-schema code {
   font-size: 11px;
+}
+
+.tool-schema-details summary {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.tool-schema-details pre {
+  overflow: auto;
+  max-height: 220px;
+  padding: 9px;
+  font-size: 10px;
+  background: #f4f6f4;
+  border-radius: 6px;
 }
 
 .spin {

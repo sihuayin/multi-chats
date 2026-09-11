@@ -50,11 +50,11 @@ export type EngineEvent =
     }
   | { type: "error"; message: string };
 
-export interface AgentEngine {
+export interface EmployeeEngine {
   run(request: EngineRequest): AsyncIterable<EngineEvent>;
 }
 
-export class FakeAgentEngine implements AgentEngine {
+export class FakeEmployeeEngine implements EmployeeEngine {
   async *run(request: EngineRequest): AsyncIterable<EngineEvent> {
     const employee = request.systemPrompt
       .split("\n")[0]
@@ -75,7 +75,7 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
-export class PiAgentEngine implements AgentEngine {
+export class PiEmployeeEngine implements EmployeeEngine {
   async *run(request: EngineRequest): AsyncIterable<EngineEvent> {
     const models = createProviderModels(request.provider, request.credential);
     const model = models.getModel(request.provider, request.modelId);
@@ -172,6 +172,7 @@ export class PiAgentEngine implements AgentEngine {
     });
     const abortAgent = () => agent.abort();
     request.signal?.addEventListener("abort", abortAgent, { once: true });
+    if (request.signal?.aborted) agent.abort();
 
     const runPromise = agent.prompt(request.prompt).catch((error: unknown) => {
       push({

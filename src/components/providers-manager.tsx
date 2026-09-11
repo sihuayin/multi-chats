@@ -3,18 +3,9 @@
 import { KeyRound, LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { apiRequest } from "@/lib/api";
+import { providerCatalog } from "@/lib/provider-catalog";
 import { useWorkspace } from "@/components/workspace-provider";
 import { PageHeader } from "@/components/page-header";
-
-const providerOptions = [
-  ["openai", "OpenAI"],
-  ["anthropic", "Anthropic"],
-  ["google", "Google Gemini"],
-  ["openrouter", "OpenRouter"],
-  ["deepseek", "DeepSeek"],
-  ["groq", "Groq"],
-  ["mistral", "Mistral"]
-] as const;
 
 export function ProvidersManager() {
   const { data, refresh } = useWorkspace();
@@ -95,9 +86,9 @@ export function ProvidersManager() {
           <label>
             Provider
             <select value={provider} onChange={(event) => setProvider(event.target.value)}>
-              {providerOptions.map(([value, text]) => (
-                <option key={value} value={value}>
-                  {text}
+              {providerCatalog.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.label}
                 </option>
               ))}
             </select>

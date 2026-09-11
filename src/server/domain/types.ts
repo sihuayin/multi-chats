@@ -1,3 +1,5 @@
+import type { ProviderId } from "@/lib/provider-catalog";
+
 export type IsoDate = string;
 
 export type Workspace = {
@@ -18,14 +20,7 @@ export type ProviderCredential = {
   updatedAt: IsoDate;
 };
 
-export type ProviderId =
-  | "openai"
-  | "anthropic"
-  | "google"
-  | "openrouter"
-  | "deepseek"
-  | "groq"
-  | "mistral";
+export type { ProviderId } from "@/lib/provider-catalog";
 
 export type Employee = {
   id: string;
@@ -183,6 +178,7 @@ export type Approval = {
   workspaceId: string;
   runId: string;
   messageId?: string;
+  taskId?: string;
   toolName: string;
   args: Record<string, unknown>;
   status: "pending" | "approved" | "rejected" | "cancelled" | "expired";

@@ -13,6 +13,7 @@ import { groqProvider } from "@earendil-works/pi-ai/providers/groq";
 import { mistralProvider } from "@earendil-works/pi-ai/providers/mistral";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { openrouterProvider } from "@earendil-works/pi-ai/providers/openrouter";
+import { providerCatalog } from "@/lib/provider-catalog";
 import type { ProviderId } from "@/server/domain/types";
 
 const factories: Record<ProviderId, () => Provider> = {
@@ -45,18 +46,7 @@ class StaticCredentialStore implements CredentialStore {
   async delete(): Promise<void> {}
 }
 
-export const providerDescriptions: Array<{
-  id: ProviderId;
-  label: string;
-}> = [
-  { id: "openai", label: "OpenAI" },
-  { id: "anthropic", label: "Anthropic" },
-  { id: "google", label: "Google Gemini" },
-  { id: "openrouter", label: "OpenRouter" },
-  { id: "deepseek", label: "DeepSeek" },
-  { id: "groq", label: "Groq" },
-  { id: "mistral", label: "Mistral" }
-];
+export const providerDescriptions = providerCatalog;
 
 export function createProviderModels(
   providerId: ProviderId,

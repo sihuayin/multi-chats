@@ -8,8 +8,13 @@ import type {
   RunEvent,
   ToolDefinition
 } from "@/server/domain/types";
-import type { AgentEngine, EngineEvent, EngineTool } from "@/server/application/agent-engine";
+import type {
+  EmployeeEngine,
+  EngineEvent,
+  EngineTool
+} from "@/server/application/employee-engine";
 import { ApiError, notFound } from "@/server/application/errors";
+import { transitionTask } from "@/server/application/task-ledger";
 import { messageInputSchema } from "@/server/domain/schemas";
 import type { CredentialCipher } from "@/server/security/credential-cipher";
 import { BUILT_IN_TOOLS } from "@/server/store/initial-state";
@@ -172,7 +177,7 @@ export class ConversationRunService {
   constructor(
     private readonly store: StateStore,
     private readonly cipher: CredentialCipher,
-    private readonly engine: AgentEngine,
+    private readonly engine: EmployeeEngine,
     private readonly options: { approvalTimeoutMs?: number } = {}
   ) {}
 
@@ -288,10 +293,50 @@ export class ConversationRunService {
       const run = state.runs.find((item) => item.id === runId);
       if (!run) notFound("Run");
       if (["completed", "failed", "cancelled"].includes(run.status)) return run;
+      const timestamp = now();
+      for (const approval of state.approvals) {
+        if (approval.runId === runId && approval.status === "pending") {
+          approval.status = "cancelled";
+          approval.resolvedAt = timestamp;
+        }
+      }
+      for (const message of state.messages) {
+        if (message.runId === runId && message.status === "streaming") {
+          message.status = "cancelled";
+          message.updatedAt = timestamp;
+        }
+      }
       run.status = "cancelled";
-      run.completedAt = now();
+      run.completedAt = timestamp;
       appendEvent(state, run, "run_cancelled", {});
-      state.workspace.updatedAt = run.completedAt;
+      state.workspace.updatedAt = timestamp;
+      return run;
+    });
+  }
+
+  async resumeRun(runId: string): Promise<Run> {
+    return this.store.update((state) => {
+      const run = state.runs.find((item) => item.id === runId);
+      if (!run) notFound("Run");
+      if (run.status !== "interrupted") {
+        throw new ApiError(
+          409,
+          "Only interrupted Runs can be resumed",
+          "run_resume"
+        );
+      }
+      for (const message of state.messages) {
+        if (message.runId === runId && message.status === "streaming") {
+          message.status = "cancelled";
+          message.updatedAt = now();
+        }
+      }
+      run.status = "queued";
+      run.error = undefined;
+      run.startedAt = undefined;
+      run.completedAt = undefined;
+      appendEvent(state, run, "run_started", { resumed: true });
+      state.workspace.updatedAt = now();
       return run;
     });
   }
@@ -307,6 +352,7 @@ export class ConversationRunService {
 
   async processRun(runId: string, signal?: AbortSignal): Promise<Run> {
     const controller = new AbortController();
+    let cancellationPoll: ReturnType<typeof setInterval> | undefined;
     this.activeControllers.set(runId, controller);
     const abort = () => controller.abort();
     signal?.addEventListener("abort", abort, { once: true });
@@ -327,8 +373,29 @@ export class ConversationRunService {
         return structuredClone(run);
       });
       if (!claimed) return initial;
+      cancellationPoll = setInterval(() => {
+        void this.store
+          .read((state) => state.runs.find((item) => item.id === runId)?.status)
+          .then((status) => {
+            if (status === "cancelled") controller.abort();
+          })
+          .catch(() => undefined);
+      }, 300);
+
+      const completedEmployeeIds = await this.store.read(
+        (state) =>
+          new Set(
+            state.runEvents
+              .filter(
+                (event) =>
+                  event.runId === runId && event.type === "message_completed"
+              )
+              .map((event) => String(event.payload.employeeId ?? ""))
+          )
+      );
 
       for (const employeeId of initial.memberSnapshot) {
+        if (completedEmployeeIds.has(employeeId)) continue;
         if (controller.signal.aborted) break;
         await this.processEmployeeTurn(
           runId,
@@ -368,11 +435,18 @@ export class ConversationRunService {
         run.status = "failed";
         run.error = message;
         run.completedAt = now();
+        for (const current of state.messages) {
+          if (current.runId === runId && current.status === "streaming") {
+            current.status = "failed";
+            current.updatedAt = run.completedAt;
+          }
+        }
         appendEvent(state, run, "run_error", { message });
         state.workspace.updatedAt = run.completedAt;
         return run;
       });
     } finally {
+      if (cancellationPoll) clearInterval(cancellationPoll);
       signal?.removeEventListener("abort", abort);
       this.activeControllers.delete(runId);
     }
@@ -569,7 +643,13 @@ export class ConversationRunService {
     signal?: AbortSignal
   ): Promise<{ content: string; details?: unknown; isError?: boolean }> {
     if (tool.requiresApproval) {
-      const approval = await this.requestApproval(runId, messageId, tool, args);
+      const approval = await this.requestApproval(
+        runId,
+        messageId,
+        employeeId,
+        tool,
+        args
+      );
       if (approval.status === "rejected") {
         return {
           content: "The user rejected this Tool call.",
@@ -637,13 +717,11 @@ export class ConversationRunService {
         if (task.assigneeIds.length > 0 && !task.assigneeIds.includes(employeeId)) {
           throw new Error("Task is not assigned to this Employee");
         }
-        task.status = status as "in_progress" | "blocked" | "review";
-        task.history.push({
-          status: task.status,
-          at: now(),
-          actorId: employeeId
-        });
-        task.updatedAt = now();
+        transitionTask(
+          task,
+          status as "in_progress" | "blocked" | "review",
+          employeeId
+        );
         appendEvent(state, run, "task_changed", {
           taskId,
           status: task.status,
@@ -699,24 +777,40 @@ export class ConversationRunService {
   private async requestApproval(
     runId: string,
     messageId: string,
+    employeeId: string,
     tool: ToolDefinition,
     args: Record<string, unknown>
   ) {
     const approval = await this.store.update((state) => {
       const run = state.runs.find((item) => item.id === runId);
       if (!run) notFound("Run");
+      const explicitTaskId =
+        typeof args.taskId === "string" ? args.taskId : undefined;
+      const task =
+        state.tasks.find((item) => item.id === explicitTaskId) ??
+        state.tasks.find(
+          (item) =>
+            item.conversationId === run.conversationId &&
+            item.status !== "completed" &&
+            item.status !== "cancelled" &&
+            item.assigneeIds.includes(employeeId)
+        );
       const timestamp = now();
       const approval = {
         id: crypto.randomUUID(),
         workspaceId: state.workspace.id,
         runId,
         messageId,
+        taskId: task?.id,
         toolName: tool.name,
         args,
         status: "pending" as const,
         createdAt: timestamp
       };
       state.approvals.push(approval);
+      if (task) {
+        transitionTask(task, "blocked", employeeId);
+      }
       run.status = "waiting_approval";
       appendEvent(state, run, "approval_requested", {
         approvalId: approval.id,

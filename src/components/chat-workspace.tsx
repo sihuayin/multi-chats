@@ -11,6 +11,7 @@ import {
   LoaderCircle,
   MessageSquarePlus,
   PanelRight,
+  RotateCcw,
   Send,
   ShieldAlert,
   UserPen,
@@ -35,6 +36,7 @@ export function ChatWorkspace() {
   const { data, refresh } = useWorkspace();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  const [groupChoice, setGroupChoice] = useState("");
   const [taskTitle, setTaskTitle] = useState("");
   const [taskGoal, setTaskGoal] = useState("");
   const [startedRunId, setStartedRunId] = useState<string | null>(null);
@@ -118,8 +120,12 @@ export function ChatWorkspace() {
   );
 
   async function createConversation() {
-    const group = data?.groups.at(-1);
-    const title = group ? `${group.name} session` : "New conversation";
+    const group =
+      groupChoice === "ad-hoc"
+        ? undefined
+        : data?.groups.find((item) => item.id === groupChoice) ??
+          data?.groups.at(-1);
+    const title = group ? `${group.name} session` : "Ad hoc conversation";
     setBusy(true);
     try {
       const conversation = await apiRequest<Conversation>("/api/conversations", {
@@ -167,6 +173,20 @@ export function ChatWorkspace() {
     try {
       await apiRequest(`/api/runs/${activeRunId}`, { method: "DELETE" });
       setStartedRunId(null);
+      await refresh();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resumeRun() {
+    if (!latestRun) return;
+    setBusy(true);
+    try {
+      await apiRequest(`/api/runs/${latestRun.id}/resume`, { method: "POST" });
+      setStartedRunId(latestRun.id);
       await refresh();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
@@ -302,6 +322,20 @@ export function ChatWorkspace() {
           </button>
         </div>
         <div className="conversation-list">
+          <select
+            className="rail-select"
+            aria-label="Conversation source"
+            value={groupChoice}
+            onChange={(event) => setGroupChoice(event.target.value)}
+          >
+            <option value="">Latest Group</option>
+            <option value="ad-hoc">Ad hoc</option>
+            {data?.groups.map((group) => (
+              <option key={group.id} value={group.id}>
+                {group.name}
+              </option>
+            ))}
+          </select>
           {conversations.map((conversation) => (
             <button
               key={conversation.id}
@@ -355,6 +389,12 @@ export function ChatWorkspace() {
                 <button className="button secondary" onClick={cancelRun}>
                   <CircleStop size={16} />
                   Stop
+                </button>
+              ) : null}
+              {latestRun?.status === "interrupted" ? (
+                <button className="button secondary" onClick={resumeRun}>
+                  <RotateCcw size={16} />
+                  Resume
                 </button>
               ) : null}
               <button

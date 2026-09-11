@@ -1,7 +1,7 @@
 import {
-  FakeAgentEngine,
-  PiAgentEngine
-} from "@/server/application/agent-engine";
+  FakeEmployeeEngine,
+  PiEmployeeEngine
+} from "@/server/application/employee-engine";
 import { ConversationRunService } from "@/server/application/conversation-run-service";
 import { WorkspaceService } from "@/server/application/workspace-service";
 import { createCredentialCipher } from "@/server/security/credential-cipher";
@@ -20,7 +20,9 @@ export function getServices() {
     const store = getStore();
     const cipher = createCredentialCipher();
     const engine =
-      process.env.MODEL_MODE === "fake" ? new FakeAgentEngine() : new PiAgentEngine();
+      process.env.MODEL_MODE === "fake"
+        ? new FakeEmployeeEngine()
+        : new PiEmployeeEngine();
     globalState.__multiChatsServices = {
       workspace: new WorkspaceService(store, cipher),
       runs: new ConversationRunService(store, cipher, engine)

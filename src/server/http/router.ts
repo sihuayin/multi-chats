@@ -211,6 +211,9 @@ export async function handleApiRequest(
       if (request.method === "DELETE" && id && !child) {
         return json(await runs.cancelRun(id));
       }
+      if (request.method === "POST" && id && child === "resume") {
+        return json(await runs.resumeRun(id));
+      }
       if (request.method === "GET" && id && child === "events") {
         return streamRunEvents(request, id);
       }

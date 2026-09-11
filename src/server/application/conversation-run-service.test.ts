@@ -12,7 +12,7 @@ import {
 } from "@/server/test-support/fixtures";
 import { MemoryStore } from "@/server/store/memory-store";
 import { WorkspaceService } from "@/server/application/workspace-service";
-import type { AgentEngine } from "@/server/application/agent-engine";
+import type { EmployeeEngine } from "@/server/application/employee-engine";
 
 describe("ConversationRun", () => {
   it("stores a Message without starting a Run when no Employee is mentioned", async () => {
@@ -159,7 +159,7 @@ describe("ConversationRun", () => {
   it("claims a queued Run only once when workers process it concurrently", async () => {
     const store = new MemoryStoreFixture();
     let attempts = 0;
-    const engine: AgentEngine = {
+    const engine: EmployeeEngine = {
       async *run() {
         attempts += 1;
         await new Promise((resolve) => setTimeout(resolve, 30));
@@ -209,6 +209,120 @@ describe("ConversationRun", () => {
       (await runService.getRunById("50000000-0000-4000-8000-000000000001"))
         ?.status
     ).toBe("interrupted");
+  });
+
+  it("cancels an active Engine and marks partial Messages as cancelled", async () => {
+    const store = new MemoryStoreFixture();
+    const engine: EmployeeEngine = {
+      async *run(request) {
+        if (request.signal?.aborted) throw new Error("aborted");
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, 500);
+          request.signal?.addEventListener(
+            "abort",
+            () => {
+              clearTimeout(timer);
+              reject(new Error("aborted"));
+            },
+            { once: true }
+          );
+        });
+        yield { type: "text_completed", text: "late" };
+      }
+    };
+    const runService = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      engine
+    );
+    const started = await runService.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice wait forever" }
+    );
+    const processing = runService.processRun(started.run!.id);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(
+      await store.read((state) =>
+        state.messages.some(
+          (message) =>
+            message.runId === started.run!.id && message.status === "streaming"
+        )
+      )
+    ).toBe(true);
+    await runService.cancelRun(started.run!.id);
+    await processing;
+
+    expect((await runService.getRunById(started.run!.id))?.status).toBe("cancelled");
+    const messages = await runService.listMessages(started.message.conversationId);
+    expect(messages.at(-1)?.status).toBe("cancelled");
+  });
+
+  it("observes a cancellation written by another service instance", async () => {
+    const store = new MemoryStoreFixture();
+    const engine: EmployeeEngine = {
+      async *run(request) {
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, 500);
+          request.signal?.addEventListener(
+            "abort",
+            () => {
+              clearTimeout(timer);
+              reject(new Error("aborted"));
+            },
+            { once: true }
+          );
+          if (request.signal?.aborted) {
+            clearTimeout(timer);
+            reject(new Error("aborted"));
+          }
+        });
+        yield { type: "text_completed", text: "late" };
+      }
+    };
+    const worker = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      engine
+    );
+    const web = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      new RecordingEngine()
+    );
+    const started = await worker.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice wait for cross-process cancel" }
+    );
+    const processing = worker.processRun(started.run!.id);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await web.cancelRun(started.run!.id);
+    await processing;
+
+    expect((await worker.getRunById(started.run!.id))?.status).toBe("cancelled");
+  });
+
+  it("resumes an interrupted Run and skips already completed Employees", async () => {
+    const store = new MemoryStoreFixture();
+    const engine = new RecordingEngine(() => ["resumed"]);
+    const runService = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      engine
+    );
+    const started = await runService.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice resume this" }
+    );
+    await store.update((state) => {
+      const run = state.runs.find((item) => item.id === started.run!.id);
+      if (run) run.status = "interrupted";
+    });
+
+    await runService.resumeRun(started.run!.id);
+    await runService.processRun(started.run!.id);
+
+    expect(engine.requests).toHaveLength(1);
+    expect((await runService.getRunById(started.run!.id))?.status).toBe("completed");
   });
 });
 
