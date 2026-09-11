@@ -25,13 +25,22 @@ export function ToolsView() {
             </div>
             <p>{toolDescription(t, tool)}</p>
             <div className="button-row">
-              <span className={`status-pill ${tool.requiresApproval ? "review" : "completed"}`}>
-                {tool.requiresApproval
-                  ? t("tools.requiresApproval")
-                  : tool.risk === "write"
-                    ? t("tools.internalWrite")
-                    : t("tools.readOnly")}
+              <span
+                className={`status-pill ${
+                  tool.risk === "write" ? "review" : "completed"
+                }`}
+              >
+                {tool.risk === "write"
+                  ? tool.requiresApproval
+                    ? t("tools.sideEffecting")
+                    : t("tools.internalWrite")
+                  : t("tools.readOnly")}
               </span>
+              {tool.requiresApproval ? (
+                <span className="status-pill review">
+                  {t("tools.requiresApproval")}
+                </span>
+              ) : null}
               <span className="status-pill">
                 {tool.replay === "safe"
                   ? t("tools.safeReplay")

@@ -78,6 +78,27 @@ describe("Skill configuration", () => {
     );
   });
 
+  it("rejects malformed structured Skill input", async () => {
+    const { service, store } = setup();
+
+    await expect(
+      service.createSkill({
+        name: "",
+        description: "Missing required Skill fields.",
+        instructions: "",
+        inputs: "not-an-array",
+        outputs: [],
+        toolNames: []
+      })
+    ).rejects.toThrow();
+
+    expect(
+      store.snapshot().skills.some(
+        (skill) => skill.description === "Missing required Skill fields."
+      )
+    ).toBe(false);
+  });
+
   it("rejects executable code and arbitrary scripts", async () => {
     const { service, store } = setup();
 

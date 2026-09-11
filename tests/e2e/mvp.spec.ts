@@ -38,7 +38,7 @@ test("configures an Employee Group and completes a mentioned Run", async ({
     .getByLabel("Description")
     .fill("Updated custom Skill description.");
   await page.getByRole("button", { name: "Save changes" }).click();
-  await expect(page.getByText("Updated custom Skill description.")).toBeVisible();
+  await expect(skillCard).toContainText("Updated custom Skill description.");
 
   await page.goto("/employees");
   await page.getByLabel("Name").fill(employeeName);
