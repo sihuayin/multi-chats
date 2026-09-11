@@ -304,6 +304,11 @@ export class ConversationRunService {
         if (message.runId === runId && message.status === "streaming") {
           message.status = "cancelled";
           message.updatedAt = timestamp;
+          appendEvent(state, run, "employee_turn_failed", {
+            employeeId: message.authorId,
+            messageId: message.id,
+            status: "cancelled"
+          });
         }
       }
       run.status = "cancelled";
@@ -439,6 +444,11 @@ export class ConversationRunService {
           if (current.runId === runId && current.status === "streaming") {
             current.status = "failed";
             current.updatedAt = run.completedAt;
+            appendEvent(state, run, "employee_turn_failed", {
+              employeeId: current.authorId,
+              messageId: current.id,
+              message
+            });
           }
         }
         appendEvent(state, run, "run_error", { message });
@@ -588,6 +598,10 @@ export class ConversationRunService {
       current.status = "complete";
       current.updatedAt = now();
       appendEvent(state, run, "message_completed", {
+        messageId: current.id,
+        employeeId
+      });
+      appendEvent(state, run, "employee_turn_completed", {
         messageId: current.id,
         employeeId
       });

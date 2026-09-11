@@ -7,6 +7,7 @@ test("configures an Employee Group and completes a mentioned Run", async ({
 }) => {
   const suffix = Date.now().toString(36);
   const employeeName = `Researcher ${suffix}`;
+  const secondEmployeeName = `Writer ${suffix}`;
 
   await page.context().addCookies([
     {
@@ -55,9 +56,15 @@ test("configures an Employee Group and completes a mentioned Run", async ({
     page.locator(".list-card").filter({ hasText: employeeName })
   ).toContainText(selectedModel);
 
+  await page.getByLabel("Name").fill(secondEmployeeName);
+  await page.getByLabel("Writer").check();
+  await page.getByRole("button", { name: "Create Employee" }).click();
+  await expect(page.getByText(secondEmployeeName)).toBeVisible();
+
   await page.goto("/groups");
   await page.getByLabel("Group name").fill(`Research Team ${suffix}`);
   await page.getByLabel(employeeName).check();
+  await page.getByLabel(secondEmployeeName).check();
   await page.getByRole("button", { name: "Create Group" }).click();
   const groupName = `Research Team ${suffix}`;
   const editedGroupName = `${groupName} V2`;
@@ -69,7 +76,9 @@ test("configures an Employee Group and completes a mentioned Run", async ({
     dialog: import("@playwright/test").Dialog
   ) => {
     await dialog.accept(
-      groupDialogIndex === 0 ? editedGroupName : employeeName
+      groupDialogIndex === 0
+        ? editedGroupName
+        : `${employeeName}, ${secondEmployeeName}`
     );
     groupDialogIndex += 1;
   };
@@ -85,16 +94,26 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   ).toBeVisible();
   await page
     .getByPlaceholder("Message the group or mention @employee")
-    .fill(`@researcher-${suffix} prepare the launch brief`);
+    .fill("@all prepare the launch brief");
   await page.getByRole("button", { name: "Send" }).click();
 
   await expect(page.getByText(`${employeeName} reviewed`)).toBeVisible({
     timeout: 10_000
   });
   const employeeResponse = `${employeeName} reviewed the request and prepared a structured response.`;
+  const secondEmployeeResponse = `${secondEmployeeName} reviewed the request and prepared a structured response.`;
   await expect(page.getByText(employeeResponse)).toBeVisible({
     timeout: 10_000
   });
+  await expect(page.getByText(secondEmployeeResponse)).toBeVisible({
+    timeout: 10_000
+  });
+  const employeeMessages = await page
+    .locator(".message-bubble.employee")
+    .allTextContents();
+  expect(employeeMessages[0]).toContain(employeeResponse);
+  expect(employeeMessages[1]).toContain(secondEmployeeResponse);
+  await expect(page.locator(".member-turn-state.completed")).toHaveCount(2);
 
   await page.reload();
   await page
@@ -102,6 +121,7 @@ test("configures an Employee Group and completes a mentioned Run", async ({
     .filter({ hasText: `${editedGroupName} Conversation` })
     .click();
   await expect(page.getByText(employeeResponse)).toBeVisible();
+  await expect(page.getByText(secondEmployeeResponse)).toBeVisible();
   await expect(
     page.locator('.run-timeline[data-run-status="completed"]')
   ).toBeVisible();

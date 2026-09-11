@@ -374,6 +374,25 @@ button {
   align-items: center;
 }
 
+.member-turn-state {
+  margin-left: 5px;
+  color: var(--muted);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.member-turn-state.active {
+  color: #0f5f87;
+}
+
+.member-turn-state.completed {
+  color: #0b6e5e;
+}
+
+.member-turn-state.failed {
+  color: var(--danger);
+}
+
 .status-pill.completed {
   color: #0b6e5e;
   background: #dff3eb;

@@ -121,6 +121,8 @@ export type RunEvent = {
   type:
     | "run_started"
     | "employee_turn_started"
+    | "employee_turn_completed"
+    | "employee_turn_failed"
     | "message_delta"
     | "message_completed"
     | "tool_started"

@@ -76,6 +76,7 @@ describe("ConversationRun", () => {
       "message_delta",
       "message_delta",
       "message_completed",
+      "employee_turn_completed",
       "run_completed"
     ]);
   });
@@ -99,6 +100,58 @@ describe("ConversationRun", () => {
     expect(engine.requests[0].systemPrompt).toContain("You are Alice");
     expect(engine.requests[1].systemPrompt).toContain("You are Bob");
     expect(engine.requests[1].prompt).toContain("Alice: response");
+  });
+
+  it("keeps the @all member snapshot when the Conversation changes mid-Run", async () => {
+    const store = new MemoryStoreFixture();
+    let releaseFirst: (() => void) | undefined;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const requests: import("@/server/application/model-gateway").ModelRequest[] =
+      [];
+    const gateway: ModelGateway = {
+      async *run(request) {
+        requests.push(request);
+        if (requests.length === 1) {
+          yield { type: "text_delta", delta: "Alice response" };
+          yield { type: "text_completed", text: "Alice response" };
+          await firstGate;
+        } else {
+          yield { type: "text_delta", delta: "Bob response" };
+          yield { type: "text_completed", text: "Bob response" };
+        }
+      }
+    };
+    const runService = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway
+    );
+    const workspace = new WorkspaceService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      noopProviderRegistry
+    );
+    const started = await runService.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@all work together" }
+    );
+    const processing = runService.processRun(started.run!.id);
+    for (let attempt = 0; attempt < 20 && requests.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    await workspace.updateConversationMembers(
+      "30000000-0000-4000-8000-000000000001",
+      ["20000000-0000-4000-8000-000000000001"]
+    );
+    releaseFirst?.();
+    await processing;
+
+    expect(requests).toHaveLength(2);
+    expect(requests[1].systemPrompt).toContain("You are Bob");
+    expect(requests[1].prompt).toContain("Alice: Alice response");
   });
 
   it("parses names as slugged mentions", () => {

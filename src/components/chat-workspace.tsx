@@ -28,6 +28,7 @@ import type {
 } from "@/server/domain/types";
 import { useWorkspace } from "@/components/workspace-provider";
 import type { TranslationKey } from "@/lib/i18n";
+import { employeeTurnStatuses } from "@/lib/employee-turn-status";
 
 function MessageIcon({ artifact }: { artifact: Artifact }) {
   if (artifact.type === "json") return <FileJson size={16} />;
@@ -124,6 +125,13 @@ export function ChatWorkspace() {
             .sort((left, right) => left.sequence - right.sequence)
         : [],
     [data?.runEvents, latestRun]
+  );
+  const employeeTurnStates = useMemo(
+    () =>
+      latestRun
+        ? employeeTurnStatuses(latestRun, latestRunEvents)
+        : new Map(),
+    [latestRun, latestRunEvents]
   );
 
   async function createConversation() {
@@ -406,6 +414,17 @@ export function ChatWorkspace() {
                         }
                       />
                       {employee?.name ?? t("common.unknown")}
+                      {employeeTurnStates.has(memberId) ? (
+                        <span
+                          className={`member-turn-state ${employeeTurnStates.get(
+                            memberId
+                          )}`}
+                        >
+                          {t(
+                            `turn.${employeeTurnStates.get(memberId)}` as TranslationKey
+                          )}
+                        </span>
+                      ) : null}
                     </span>
                   );
                 })}

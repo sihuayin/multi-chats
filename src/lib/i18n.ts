@@ -157,7 +157,11 @@ const en = {
   "status.running": "Running",
   "status.waiting_approval": "Waiting approval",
   "status.failed": "Failed",
-  "status.interrupted": "Interrupted"
+  "status.interrupted": "Interrupted",
+  "turn.queued": "Queued",
+  "turn.active": "Active",
+  "turn.completed": "Completed",
+  "turn.failed": "Failed"
 } as const;
 
 export type TranslationKey = keyof typeof en;
@@ -318,7 +322,11 @@ const zh: Record<TranslationKey, string> = {
   "status.running": "运行中",
   "status.waiting_approval": "等待批准",
   "status.failed": "失败",
-  "status.interrupted": "已中断"
+  "status.interrupted": "已中断",
+  "turn.queued": "排队中",
+  "turn.active": "进行中",
+  "turn.completed": "已完成",
+  "turn.failed": "失败"
 };
 
 const dictionaries: Record<Locale, Record<TranslationKey, string>> = {
