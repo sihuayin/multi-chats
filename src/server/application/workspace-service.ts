@@ -177,10 +177,20 @@ export class WorkspaceService {
 
   async updateEmployee(id: string, input: unknown): Promise<Employee> {
     const parsed = employeeInputSchema.parse(input);
-    await this.assertEmployeeModel(
-      parsed.providerCredentialId,
-      parsed.modelId
-    );
+    const current = await this.store.read((state) => {
+      const employee = state.employees.find((item) => item.id === id);
+      if (!employee) notFound("Employee");
+      return employee;
+    });
+    if (
+      current.providerCredentialId !== parsed.providerCredentialId ||
+      current.modelId !== parsed.modelId
+    ) {
+      await this.assertEmployeeModel(
+        parsed.providerCredentialId,
+        parsed.modelId
+      );
+    }
     return this.store.update((state) => {
       const employee = state.employees.find((item) => item.id === id);
       if (!employee) notFound("Employee");

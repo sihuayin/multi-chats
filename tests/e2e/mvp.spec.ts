@@ -27,8 +27,13 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   const modelSelect = page.getByLabel("Model");
   await expect(modelSelect.locator("option")).not.toHaveCount(0);
   await modelSelect.selectOption({ index: 0 });
+  const selectedModel = await modelSelect.inputValue();
+  await expect(modelSelect.locator("option").first()).toContainText("context");
   await page.getByRole("button", { name: "Create Employee" }).click();
   await expect(page.getByText(employeeName)).toBeVisible();
+  await expect(
+    page.locator(".list-card").filter({ hasText: employeeName })
+  ).toContainText(selectedModel);
 
   await page.goto("/groups");
   await page.getByLabel("Group name").fill(`Research Team ${suffix}`);
@@ -60,16 +65,12 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   await page.goto("/employees");
   const employeeCard = page.locator(".list-card").filter({ hasText: employeeName });
   const editedEmployeeName = `${employeeName} Edited`;
-  let dialogIndex = 0;
-  const dialogHandler = async (dialog: import("@playwright/test").Dialog) => {
-    await dialog.accept(
-      dialogIndex === 0 ? editedEmployeeName : "Updated employee identity."
-    );
-    dialogIndex += 1;
-  };
-  page.on("dialog", dialogHandler);
   await employeeCard.getByTitle("Edit Employee").click();
-  page.off("dialog", dialogHandler);
+  await expect(page.getByRole("heading", { name: "Edit Employee" })).toBeVisible();
+  await page.getByLabel("Name").fill(editedEmployeeName);
+  await page.getByLabel("Identity").fill("Updated employee identity.");
+  await page.getByLabel("Writer").check();
+  await page.getByRole("button", { name: "Save changes" }).click();
   await expect(page.getByText(editedEmployeeName)).toBeVisible();
 
   const editedCard = page.locator(".list-card").filter({ hasText: editedEmployeeName });

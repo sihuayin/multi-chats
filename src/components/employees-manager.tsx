@@ -21,6 +21,7 @@ export function EmployeesManager() {
   const { t } = useI18n();
   const [name, setName] = useState("");
   const [identity, setIdentity] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [providerId, setProviderId] = useState("");
   const [modelId, setModelId] = useState("");
   const [skillIds, setSkillIds] = useState<string[]>([]);
@@ -49,23 +50,31 @@ export function EmployeesManager() {
     };
   }, [effectiveProviderId]);
 
-  async function createEmployee() {
+  function resetForm() {
+    setEditingId(null);
+    setName("");
+    setIdentity("");
+    setSkillIds([]);
+  }
+
+  async function saveEmployee() {
     setBusy(true);
     setError(null);
     try {
-      await apiRequest("/api/employees", {
-        method: "POST",
+      await apiRequest(editingId ? `/api/employees/${editingId}` : "/api/employees", {
+        method: editingId ? "PUT" : "POST",
         body: JSON.stringify({
           name,
           identity: identity || t("employees.defaultIdentity"),
           providerCredentialId: effectiveProviderId,
           modelId,
           skillIds,
-          active: true
+          active:
+            data?.employees.find((employee) => employee.id === editingId)
+              ?.active ?? true
         })
       });
-      setName("");
-      setSkillIds([]);
+      resetForm();
       await refresh();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
@@ -91,32 +100,15 @@ export function EmployeesManager() {
     }
   }
 
-  async function editEmployee(id: string) {
+  function editEmployee(id: string) {
     const employee = data?.employees.find((item) => item.id === id);
     if (!employee) return;
-    const nextName = window.prompt(t("employees.editNamePrompt"), employee.name);
-    if (!nextName) return;
-    const nextIdentity = window.prompt(
-      t("employees.editIdentityPrompt"),
-      employee.identity
-    );
-    if (!nextIdentity) return;
-    setBusy(true);
-    try {
-      await apiRequest(`/api/employees/${id}`, {
-        method: "PUT",
-        body: JSON.stringify({
-          ...employee,
-          name: nextName,
-          identity: nextIdentity
-        })
-      });
-      await refresh();
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : String(nextError));
-    } finally {
-      setBusy(false);
-    }
+    setEditingId(employee.id);
+    setName(employee.name);
+    setIdentity(employee.identity);
+    setProviderId(employee.providerCredentialId);
+    setModelId(employee.modelId);
+    setSkillIds(employee.skillIds);
   }
 
   return (
@@ -131,7 +123,9 @@ export function EmployeesManager() {
         <section className="panel">
           <div className="panel-title">
             <Bot size={17} />
-            <h2>{t("employees.create")}</h2>
+            <h2>
+              {editingId ? t("employees.editTitle") : t("employees.create")}
+            </h2>
           </div>
           <label>
             {t("employees.name")}
@@ -203,14 +197,23 @@ export function EmployeesManager() {
               </label>
             ))}
           </fieldset>
-          <button
-            className="button primary"
-            onClick={createEmployee}
-            disabled={busy || !name.trim() || !effectiveProviderId || !modelId}
-          >
-            {busy ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}
-            {t("employees.create")}
-          </button>
+          <div className="button-row">
+            <button
+              className="button primary"
+              onClick={saveEmployee}
+              disabled={busy || !name.trim() || !effectiveProviderId || !modelId}
+            >
+              {busy ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}
+              {editingId
+                ? t("employees.saveChanges")
+                : t("employees.create")}
+            </button>
+            {editingId ? (
+              <button className="button quiet" onClick={resetForm}>
+                {t("employees.cancelEdit")}
+              </button>
+            ) : null}
+          </div>
         </section>
 
         <section className="panel">

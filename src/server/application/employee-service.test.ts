@@ -10,20 +10,21 @@ import { createInitialState } from "@/server/store/initial-state";
 
 class EmployeeProviderRegistry implements ProviderRegistry {
   readonly modelQueries: ProviderAccess[] = [];
+  models = [
+    {
+      id: "test-model",
+      name: "Test Model",
+      contextWindow: 128_000,
+      maxTokens: 8_000,
+      reasoning: true
+    }
+  ];
 
   async validate() {}
 
   async listModels(access: ProviderAccess) {
     this.modelQueries.push(access);
-    return [
-      {
-        id: "test-model",
-        name: "Test Model",
-        contextWindow: 128_000,
-        maxTokens: 8_000,
-        reasoning: true
-      }
-    ];
+    return this.models;
   }
 }
 
@@ -145,6 +146,32 @@ describe("Employee configuration", () => {
       identity: "After identity.",
       skillIds: [skill.id],
       active: true
+    });
+  });
+
+  it("can disable or edit an Employee after its model leaves the provider catalog", async () => {
+    const { service, registry } = setup();
+    const provider = await createProvider(service);
+    const employee = await service.createEmployee({
+      name: "Historical",
+      identity: "Keep this history.",
+      providerCredentialId: provider.id,
+      modelId: "test-model",
+      skillIds: [],
+      active: true
+    });
+    registry.models = [];
+
+    const renamed = await service.updateEmployee(employee.id, {
+      ...employee,
+      name: "Historical Employee",
+      active: false
+    });
+
+    expect(renamed).toMatchObject({
+      name: "Historical Employee",
+      modelId: "test-model",
+      active: false
     });
   });
 });
