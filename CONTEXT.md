@@ -28,6 +28,22 @@ _Avoid_: Team
 A chat room with a specific member set, message history, and related tasks.
 _Avoid_: Channel, room, thread
 
+**Message**:
+An ordered public communication in a conversation, authored by the user or an employee.
+_Avoid_: Post, event
+
 **Task**:
 A trackable unit of requested work with a goal, assignees, status, and artifacts.
 _Avoid_: Job, issue, ticket
+
+**Run**:
+A bounded attempt to process a conversation turn, including employee responses and tool activity.
+_Avoid_: Job, execution
+
+**Approval**:
+A user decision required before an employee invokes a side-effecting tool.
+_Avoid_: Permission, confirmation
+
+**Artifact**:
+A structured result attached to a task, limited to text, Markdown, or JSON in v1.
+_Avoid_: Attachment, file, output
