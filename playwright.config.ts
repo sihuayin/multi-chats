@@ -9,7 +9,8 @@ export default defineConfig({
     trace: "on-first-retry"
   },
   webServer: {
-    command: "MODEL_MODE=fake npm run dev",
+    command:
+      "DATABASE_URL= SQLITE_PATH=.data/e2e.sqlite MODEL_MODE=fake npm run dev",
     url: "http://localhost:3000/api/health",
     reuseExistingServer: true,
     timeout: 180_000

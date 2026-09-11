@@ -1,14 +1,16 @@
-import { PostgresStore } from "@/server/store/postgres-store";
+import { getStore } from "@/server/store";
 
 async function main(): Promise<void> {
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) {
-    throw new Error("DATABASE_URL is required");
-  }
-  const store = new PostgresStore(databaseUrl);
-  await store.migrate();
-  await store.close();
-  console.log("Database migration complete");
+  const store = getStore();
+  await store.migrate?.();
+  await store.close?.();
+  console.log(
+    process.env.DATABASE_URL
+      ? "PostgreSQL migration complete"
+      : `SQLite migration complete: ${
+          process.env.SQLITE_PATH ?? ".data/multi-chats.sqlite"
+        }`
+  );
 }
 
 main().catch((error) => {

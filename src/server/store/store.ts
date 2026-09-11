@@ -5,4 +5,6 @@ export interface StateStore {
   update<T>(
     updater: (state: AppState) => T | Promise<T>
   ): Promise<T>;
+  migrate?(): Promise<void>;
+  close?(): Promise<void>;
 }
