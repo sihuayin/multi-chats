@@ -53,6 +53,42 @@ export class FakeModelGateway implements ModelGateway {
       yield { type: "text_completed", text };
       return;
     }
+    if (currentRequest.includes("USE_POST_WEBHOOK")) {
+      const tool = request.tools.find((item) => item.name === "post_webhook");
+      if (!tool) {
+        yield { type: "error", message: "post_webhook Tool is unavailable", kind: "terminal" };
+        return;
+      }
+      const args = {
+        url: "http://127.0.0.1:9/hook",
+        body: { launch: true }
+      };
+      yield {
+        type: "tool_started",
+        toolCallId: "fake-post-webhook",
+        toolName: tool.name,
+        args
+      };
+      const result = await tool.execute(
+        "fake-post-webhook",
+        args,
+        request.signal
+      );
+      yield {
+        type: "tool_completed",
+        toolCallId: "fake-post-webhook",
+        toolName: tool.name,
+        result: result.content,
+        isError: Boolean(result.isError),
+        errorKind: result.errorKind
+      };
+      const text = result.isError
+        ? `Tool failed: ${result.content}`
+        : `Tool completed: ${result.content}`;
+      yield { type: "text_delta", delta: text };
+      yield { type: "text_completed", text };
+      return;
+    }
     const employee = request.systemPrompt
       .split("\n")[0]
       .replace("You are ", "")

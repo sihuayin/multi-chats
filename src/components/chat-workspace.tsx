@@ -23,6 +23,7 @@ import ReactMarkdown from "react-markdown";
 import { apiRequest } from "@/lib/api";
 import { useI18n } from "@/components/i18n-provider";
 import type {
+  ApprovalDecision,
   Artifact,
   Conversation,
   Task
@@ -65,6 +66,39 @@ function statusKey(status: string): TranslationKey {
 
 function artifactTypeKey(type: Artifact["type"]): TranslationKey {
   return `artifact.${type}`;
+}
+
+function ApprovalActions({
+  onResolve
+}: {
+  onResolve: (decision: ApprovalDecision) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="button-row wrap">
+      <button
+        className="button primary"
+        onClick={() => onResolve("approved")}
+      >
+        <Check size={16} />
+        {t("chat.approve")}
+      </button>
+      <button
+        className="button danger"
+        onClick={() => onResolve("rejected")}
+      >
+        <X size={16} />
+        {t("chat.reject")}
+      </button>
+      <button
+        className="button quiet"
+        onClick={() => onResolve("cancelled")}
+      >
+        <Ban size={16} />
+        {t("chat.cancelApproval")}
+      </button>
+    </div>
+  );
 }
 
 export function ChatWorkspace() {
@@ -263,7 +297,10 @@ export function ChatWorkspace() {
     }
   }
 
-  async function resolveApproval(id: string, decision: "approved" | "rejected") {
+  async function resolveApproval(
+    id: string,
+    decision: ApprovalDecision
+  ) {
     setBusy(true);
     try {
       await apiRequest(`/api/approvals/${id}`, {
@@ -579,22 +616,11 @@ export function ChatWorkspace() {
                     </strong>
                   </div>
                   <pre>{JSON.stringify(approval.args, null, 2)}</pre>
-                  <div className="button-row">
-                    <button
-                      className="button primary"
-                      onClick={() => resolveApproval(approval.id, "approved")}
-                    >
-                      <Check size={16} />
-                      {t("chat.approve")}
-                    </button>
-                    <button
-                      className="button danger"
-                      onClick={() => resolveApproval(approval.id, "rejected")}
-                    >
-                      <X size={16} />
-                      {t("chat.reject")}
-                    </button>
-                  </div>
+                  <ApprovalActions
+                    onResolve={(decision) =>
+                      void resolveApproval(approval.id, decision)
+                    }
+                  />
                 </article>
               ))}
             </div>
@@ -688,24 +714,21 @@ export function ChatWorkspace() {
               <ShieldAlert size={16} />
               <strong>{approval.toolName}</strong>
             </div>
-            <div className="button-row">
-              <button
-                className="button primary"
-                onClick={() => resolveApproval(approval.id, "approved")}
-              >
-                {t("chat.approve")}
-              </button>
-              <button
-                className="button danger"
-                onClick={() => resolveApproval(approval.id, "rejected")}
-              >
-                {t("chat.reject")}
-              </button>
-            </div>
+            <ApprovalActions
+              onResolve={(decision) =>
+                void resolveApproval(approval.id, decision)
+              }
+            />
           </article>
         ))}
         <div className="task-list">
           {tasks.map((task) => {
+            const pendingApproval = pendingApprovals.find(
+              (approval) => approval.taskId === task.id
+            );
+            const displayedStatus = pendingApproval
+              ? "waiting_approval"
+              : task.status;
             const artifacts = (data?.artifacts ?? []).filter(
               (artifact) => artifact.taskId === task.id
             );
@@ -713,8 +736,8 @@ export function ChatWorkspace() {
               <article key={task.id} className="task-card">
                 <div className="task-card-header">
                   <strong>{task.title}</strong>
-                  <span className={`status-pill ${task.status}`}>
-                    {t(statusKey(task.status))}
+                  <span className={`status-pill ${displayedStatus}`}>
+                    {t(statusKey(displayedStatus))}
                   </span>
                 </div>
                 <p>{task.goal}</p>

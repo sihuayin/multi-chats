@@ -123,7 +123,8 @@ export class ToolCallingModelGateway implements ModelGateway {
       toolCallId: "test-tool-call",
       toolName: tool.name,
       result: result.content,
-      isError: Boolean(result.isError)
+      isError: Boolean(result.isError),
+      errorKind: result.errorKind
     };
     yield {
       type: "text_delta" as const,

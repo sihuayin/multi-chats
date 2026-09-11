@@ -1,5 +1,6 @@
 import type {
   AppState,
+  Approval,
   Employee,
   Message,
   Run,
@@ -27,6 +28,17 @@ import type { StateStore } from "@/server/store/store";
 export type StartTurnResult = {
   message: Message;
   run: Run | null;
+};
+
+type ToolCallContext = {
+  runId: string;
+  messageId: string;
+  employeeId: string;
+  allowedToolNames: string[];
+  tool: ToolDefinition;
+  toolCallId: string;
+  args: Record<string, unknown>;
+  signal?: AbortSignal;
 };
 
 function now(): string {
@@ -109,6 +121,22 @@ function toolDefinitionsForEmployee(
       .flatMap((skill) => skill.toolNames)
   );
   return BUILT_IN_TOOLS.filter((tool) => allowedTools.has(tool.name));
+}
+
+function settleApproval(
+  state: AppState,
+  runId: string,
+  approval: Approval
+): void {
+  const run = state.runs.find((item) => item.id === runId);
+  if (!run) return;
+  if (run.status !== "cancelled") {
+    run.status = "running";
+  }
+  appendEvent(state, run, "approval_resolved", {
+    approvalId: approval.id,
+    status: approval.status
+  });
 }
 
 export class ConversationRunService {
@@ -509,16 +537,17 @@ export class ConversationRunService {
       description: tool.description,
       inputSchema: tool.inputSchema,
       replay: tool.replay,
-      execute: (_toolCallId, args, toolSignal) =>
-        this.executeTool(
+      execute: (toolCallId, args, toolSignal) =>
+        this.executeTool({
           runId,
-          message.id,
+          messageId: message.id,
           employeeId,
           allowedToolNames,
           tool,
+          toolCallId,
           args,
-          toolSignal
-        )
+          signal: toolSignal
+        })
     }));
 
     const systemPrompt = [
@@ -652,22 +681,11 @@ export class ConversationRunService {
   }
 
   private async executeTool(
-    runId: string,
-    messageId: string,
-    employeeId: string,
-    allowedToolNames: string[],
-    tool: ToolDefinition,
-    args: Record<string, unknown>,
-    signal?: AbortSignal
+    context: ToolCallContext
   ): Promise<ToolExecutionResult> {
+    const { runId, employeeId, allowedToolNames, tool, args } = context;
     if (tool.requiresApproval) {
-      const approval = await this.requestApproval(
-        runId,
-        messageId,
-        employeeId,
-        tool,
-        args
-      );
+      const approval = await this.requestApproval(context);
       if (approval.status === "rejected") {
         return {
           content: "The user rejected this Tool call.",
@@ -695,10 +713,10 @@ export class ConversationRunService {
           employeeId,
           allowedToolNames
         },
-        signal
+        signal: context.signal
       });
     } catch (error) {
-      if (signal?.aborted) {
+      if (context.signal?.aborted) {
         return {
           content: "Tool call cancelled.",
           isError: true,
@@ -713,13 +731,9 @@ export class ConversationRunService {
     }
   }
 
-  private async requestApproval(
-    runId: string,
-    messageId: string,
-    employeeId: string,
-    tool: ToolDefinition,
-    args: Record<string, unknown>
-  ) {
+  private async requestApproval(context: ToolCallContext) {
+    const { runId, messageId, employeeId, tool, toolCallId, args } = context;
+    const timeoutMs = this.options.approvalTimeoutMs ?? 5 * 60_000;
     const approval = await this.store.update((state) => {
       const run = state.runs.find((item) => item.id === runId);
       if (!run) notFound("Run");
@@ -741,25 +755,34 @@ export class ConversationRunService {
         runId,
         messageId,
         taskId: task?.id,
+        employeeId,
+        toolCallId,
         toolName: tool.name,
         args,
         status: "pending" as const,
-        createdAt: timestamp
+        createdAt: timestamp,
+        expiresAt: new Date(Date.now() + timeoutMs).toISOString()
       };
       state.approvals.push(approval);
       if (task) {
-        transitionTask(task, "blocked", employeeId);
+        if (task.status === "draft" || task.status === "review") {
+          transitionTask(task, "in_progress", employeeId);
+        }
+        if (task.status !== "blocked") {
+          transitionTask(task, "blocked", employeeId);
+        }
       }
       run.status = "waiting_approval";
       appendEvent(state, run, "approval_requested", {
         approvalId: approval.id,
+        employeeId,
+        toolCallId,
         toolName: tool.name,
         args
       });
       return structuredClone(approval);
     });
 
-    const timeoutMs = this.options.approvalTimeoutMs ?? 5 * 60_000;
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -767,16 +790,14 @@ export class ConversationRunService {
         (state) => state.approvals.find((item) => item.id === approval.id) ?? approval
       );
       if (current.status !== "pending") {
+        if (
+          current.toolCallId &&
+          current.toolCallId !== approval.toolCallId
+        ) {
+          throw new Error("Approval does not match this Tool call");
+        }
         await this.store.update((state) => {
-          const run = state.runs.find((item) => item.id === runId);
-          if (!run) return;
-          if (run.status !== "cancelled") {
-            run.status = "running";
-          }
-          appendEvent(state, run, "approval_resolved", {
-            approvalId: current.id,
-            status: current.status
-          });
+          settleApproval(state, runId, current);
         });
         return current;
       }
@@ -785,18 +806,19 @@ export class ConversationRunService {
     return this.store.update((state) => {
       const current = state.approvals.find((item) => item.id === approval.id);
       if (!current) notFound("Approval");
+      if (current.status !== "pending") {
+        settleApproval(state, runId, current);
+        return structuredClone(current);
+      }
       current.status = "expired";
       current.resolvedAt = now();
-      const run = state.runs.find((item) => item.id === runId);
-      if (run) {
-        if (run.status !== "cancelled") {
-          run.status = "running";
+      if (current.taskId) {
+        const task = state.tasks.find((item) => item.id === current.taskId);
+        if (task && task.status !== "completed" && task.status !== "cancelled") {
+          transitionTask(task, "in_progress", "user");
         }
-        appendEvent(state, run, "approval_resolved", {
-          approvalId: current.id,
-          status: current.status
-        });
       }
+      settleApproval(state, runId, current);
       return structuredClone(current);
     });
   }

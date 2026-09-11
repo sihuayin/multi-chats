@@ -30,6 +30,7 @@ test("configures an Employee Group and completes a mentioned Run", async ({
     .getByLabel("Instructions")
     .fill("Check every claim and report uncertainty.");
   await page.getByLabel(/Fetch URL/).check();
+  await page.getByLabel(/Post webhook/).check();
   await page.getByRole("button", { name: "Create custom Skill" }).click();
   await expect(page.getByText(customSkillName)).toBeVisible();
 
@@ -236,6 +237,45 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   await toolRunTimeline.locator("summary").click();
   await expect(toolRunTimeline).toContainText("tool started");
   await expect(toolRunTimeline).toContainText("tool completed");
+
+  await page.getByPlaceholder("Task title").fill("Approve webhook");
+  await page
+    .getByPlaceholder("Goal and expected result")
+    .fill("Publish only after an explicit decision.");
+  await page.getByRole("button", { name: "Add Task" }).click();
+  const approvalTaskCard = page.locator(".task-card").filter({
+    hasText: "Approve webhook"
+  });
+  await expect(approvalTaskCard).toBeVisible();
+
+  await page
+    .getByPlaceholder("Message the group or mention @employee")
+    .fill(`@researcher-${suffix} USE_POST_WEBHOOK`);
+  await page.getByRole("button", { name: "Send" }).click();
+  const approvalCard = page.locator(".message-stream .approval-card");
+  await expect(approvalCard).toBeVisible();
+  await expect(
+    approvalTaskCard.locator(".status-pill.waiting_approval")
+  ).toBeVisible();
+  await page.reload();
+  await page.locator(".conversation-item").last().click();
+  await expect(approvalCard).toBeVisible();
+  await approvalCard.getByRole("button", { name: "Approve" }).click();
+  await expect(page.getByText(/Tool failed: Private network URLs are not allowed/)).toBeVisible({
+    timeout: 10_000
+  });
+  await expect(approvalCard).toHaveCount(0);
+  await expect(approvalTaskCard.locator(".status-pill.in_progress")).toBeVisible();
+
+  await page
+    .getByPlaceholder("Message the group or mention @employee")
+    .fill(`@researcher-${suffix} USE_POST_WEBHOOK`);
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(approvalCard).toBeVisible();
+  await approvalCard.getByRole("button", { name: "Reject" }).click();
+  await expect(
+    page.getByText(/Tool failed: The user rejected this Tool call/)
+  ).toBeVisible({ timeout: 10_000 });
 
   await page
     .getByPlaceholder("Message the group or mention @employee")

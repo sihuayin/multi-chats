@@ -417,6 +417,11 @@ button {
   background: var(--amber-soft);
 }
 
+.status-pill.waiting_approval {
+  color: #71420f;
+  background: var(--amber-soft);
+}
+
 .status-pill.blocked,
 .status-pill.cancelled {
   color: var(--danger);

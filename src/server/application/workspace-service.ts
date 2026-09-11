@@ -1,5 +1,6 @@
 import type {
   Approval,
+  ApprovalDecision,
   Artifact,
   Conversation,
   Employee,
@@ -427,7 +428,7 @@ export class WorkspaceService {
 
   async resolveApproval(
     id: string,
-    decision: Approval["status"]
+    decision: ApprovalDecision
   ): Promise<Approval> {
     return this.store.update((state) => {
       const approval = state.approvals.find((item) => item.id === id);
@@ -435,20 +436,35 @@ export class WorkspaceService {
       if (approval.status !== "pending") {
         throw new ApiError(409, "Approval is already resolved", "approval_resolved");
       }
+      const resolvedAt = now();
+      if (
+        approval.expiresAt &&
+        Date.parse(approval.expiresAt) <= Date.now()
+      ) {
+        approval.status = "expired";
+        approval.resolvedAt = resolvedAt;
+        if (approval.taskId) {
+          const task = state.tasks.find((item) => item.id === approval.taskId);
+          if (
+            task &&
+            task.status !== "completed" &&
+            task.status !== "cancelled"
+          ) {
+            transitionTask(task, "in_progress", "user");
+          }
+        }
+        state.workspace.updatedAt = resolvedAt;
+        return approval;
+      }
       approval.status = decision;
-      approval.resolvedAt = now();
+      approval.resolvedAt = resolvedAt;
       if (approval.taskId) {
         const task = state.tasks.find((item) => item.id === approval.taskId);
-        if (
-          task &&
-          task.status !== "completed" &&
-          task.status !== "cancelled" &&
-          decision !== "cancelled"
-        ) {
+        if (task && task.status !== "completed" && task.status !== "cancelled") {
           transitionTask(task, "in_progress", "user");
         }
       }
-      state.workspace.updatedAt = approval.resolvedAt;
+      state.workspace.updatedAt = resolvedAt;
       return approval;
     });
   }

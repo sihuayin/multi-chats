@@ -287,6 +287,89 @@ describe("Workspace Configuration", () => {
     ).rejects.toThrow("Invalid input");
   });
 
+  it("resolves only the selected pending Approval", async () => {
+    const state = createFixtureState();
+    const now = new Date().toISOString();
+    state.approvals.push(
+      {
+        id: "approval-one",
+        workspaceId: state.workspace.id,
+        runId: "run-one",
+        employeeId: "20000000-0000-4000-8000-000000000001",
+        toolCallId: "tool-call-one",
+        toolName: "post_webhook",
+        args: {},
+        status: "pending",
+        createdAt: now,
+        expiresAt: new Date(Date.now() + 60_000).toISOString()
+      },
+      {
+        id: "approval-two",
+        workspaceId: state.workspace.id,
+        runId: "run-two",
+        employeeId: "20000000-0000-4000-8000-000000000001",
+        toolCallId: "tool-call-two",
+        toolName: "post_webhook",
+        args: {},
+        status: "pending",
+        createdAt: now,
+        expiresAt: new Date(Date.now() + 60_000).toISOString()
+      }
+    );
+    const store = new MemoryStore(state);
+    const service = new WorkspaceService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      noopProviderRegistry
+    );
+
+    await service.resolveApproval("approval-one", "approved");
+
+    expect(
+      await store.read((current) =>
+        current.approvals
+          .filter((approval) => approval.id.startsWith("approval-"))
+          .map((approval) => [approval.id, approval.status])
+      )
+    ).toEqual([
+      ["approval-one", "approved"],
+      ["approval-two", "pending"]
+    ]);
+  });
+
+  it("expires an Approval before applying a late decision", async () => {
+    for (const decision of ["approved", "rejected", "cancelled"] as const) {
+      const state = createFixtureState();
+      state.approvals.push({
+        id: `expired-${decision}`,
+        workspaceId: state.workspace.id,
+        runId: `run-expired-${decision}`,
+        employeeId: "20000000-0000-4000-8000-000000000001",
+        toolCallId: `tool-call-expired-${decision}`,
+        toolName: "post_webhook",
+        args: {},
+        status: "pending",
+        createdAt: new Date(Date.now() - 60_000).toISOString(),
+        expiresAt: new Date(Date.now() - 1_000).toISOString()
+      });
+      const store = new MemoryStore(state);
+      const service = new WorkspaceService(
+        store,
+        new AesCredentialCipher(TEST_KEY),
+        noopProviderRegistry
+      );
+
+      await expect(
+        service.resolveApproval(`expired-${decision}`, decision)
+      ).resolves.toMatchObject({ status: "expired" });
+      expect(
+        await store.read((current) =>
+          current.approvals.find((item) => item.id === `expired-${decision}`)
+        )
+      ).toMatchObject({ status: "expired" });
+    }
+  });
+
   it("encrypts provider credentials at rest and never returns the secret", async () => {
     const cipher = new AesCredentialCipher(TEST_KEY);
     const state = createFixtureState();

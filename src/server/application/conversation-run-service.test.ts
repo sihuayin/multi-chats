@@ -19,6 +19,7 @@ import type {
   ToolExecutionResult,
   ToolGateway
 } from "@/server/application/tool-gateway";
+import type { AppState, Approval } from "@/server/domain/types";
 
 describe("ConversationRun", () => {
   it("stores a Message without starting a Run when no Employee is mentioned", async () => {
@@ -744,20 +745,7 @@ describe("ConversationRun", () => {
   it("pauses a side-effecting Tool until the user rejects it", async () => {
     const state = createFixtureState();
     const customSkillId = "40000000-0000-4000-8000-000000000001";
-    state.skills.push({
-      id: customSkillId,
-      workspaceId: state.workspace.id,
-      name: "Publisher",
-      description: "Posts approved updates.",
-      instructions: "Publish only after approval.",
-      inputs: ["payload"],
-      outputs: ["receipt"],
-      toolNames: ["post_webhook"],
-      builtIn: false,
-      createdAt: state.workspace.createdAt,
-      updatedAt: state.workspace.updatedAt
-    });
-    state.employees[0].skillIds.push(customSkillId);
+    addApprovalSkill(state, customSkillId);
     const store = new MemoryStore(state);
     const cipher = new AesCredentialCipher(TEST_KEY);
     const runService = new ConversationRunService(
@@ -792,25 +780,226 @@ describe("ConversationRun", () => {
     expect(
       events.find((event) => event.type === "tool_completed")?.payload.isError
     ).toBe(true);
+    expect(
+      events.find((event) => event.type === "tool_completed")?.payload
+    ).toMatchObject({
+      result: "The user rejected this Tool call.",
+      errorKind: "unauthorized"
+    });
+  });
+
+  it("executes a side-effecting Tool after approval", async () => {
+    const state = createFixtureState();
+    const customSkillId = "40000000-0000-4000-8000-000000000006";
+    addApprovalSkill(state, customSkillId);
+    const store = new MemoryStore(state);
+    const cipher = new AesCredentialCipher(TEST_KEY);
+    const calls: ToolExecutionRequest[] = [];
+    const toolGateway: ToolGateway = {
+      async execute(request) {
+        calls.push(request);
+        return { content: "Webhook accepted." };
+      }
+    };
+    const runService = new ConversationRunService(
+      store,
+      cipher,
+      new ToolCallingModelGateway(),
+      { toolGateway }
+    );
+    const workspace = new WorkspaceService(store, cipher, noopProviderRegistry);
+    const task = await workspace.createTask(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        title: "Publish update",
+        goal: "Publish only after approval.",
+        assigneeIds: ["20000000-0000-4000-8000-000000000001"]
+      }
+    );
+    const started = await runService.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice publish the update" }
+    );
+    const processing = runService.processRun(started.run!.id);
+    const approval = await waitForPendingApproval(store, started.run!.id);
+
+    expect(
+      (await runService.getRunById(started.run!.id))?.status
+    ).toBe("waiting_approval");
+    expect(approval.taskId).toBe(task.id);
+    expect(
+      await store.read((current) =>
+        current.tasks.find((item) => item.id === task.id)
+      )
+    ).toMatchObject({ status: "blocked" });
+    await workspace.resolveApproval(approval.id, "approved");
+    const completed = await processing;
+
+    expect(completed.status).toBe("completed");
+    expect(calls).toHaveLength(1);
+    expect(calls[0].tool.name).toBe("post_webhook");
+    expect(
+      await store.read((current) =>
+        current.tasks.find((item) => item.id === task.id)
+      )
+    ).toMatchObject({ status: "in_progress" });
+    expect(
+      (await runService.listRunEvents(started.run!.id)).map((event) => event.type)
+    ).toEqual(
+      expect.arrayContaining([
+        "approval_requested",
+        "approval_resolved",
+        "tool_completed"
+      ])
+    );
+  });
+
+  it("returns approval cancellation as a structured Tool outcome", async () => {
+    const state = createFixtureState();
+    const customSkillId = "40000000-0000-4000-8000-000000000007";
+    addApprovalSkill(state, customSkillId);
+    const store = new MemoryStore(state);
+    const cipher = new AesCredentialCipher(TEST_KEY);
+    const calls: ToolExecutionRequest[] = [];
+    const runService = new ConversationRunService(
+      store,
+      cipher,
+      new ToolCallingModelGateway(),
+      {
+        toolGateway: {
+          async execute(request) {
+            calls.push(request);
+            return { content: "should not execute" };
+          }
+        }
+      }
+    );
+    const workspace = new WorkspaceService(store, cipher, noopProviderRegistry);
+    const started = await runService.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice cancel publishing" }
+    );
+    const processing = runService.processRun(started.run!.id);
+    const approval = await waitForPendingApproval(store, started.run!.id);
+
+    await workspace.resolveApproval(approval.id, "cancelled");
+    await processing;
+
+    expect(calls).toEqual([]);
+    const events = await runService.listRunEvents(started.run!.id);
+    expect(
+      events.find((event) => event.type === "tool_completed")?.payload
+    ).toMatchObject({ isError: true, errorKind: "cancelled" });
+    expect(events.map((event) => event.type)).toContain("tool_cancelled");
+  });
+
+  it("expires Approval without executing the Tool", async () => {
+    const state = createFixtureState();
+    const customSkillId = "40000000-0000-4000-8000-000000000008";
+    addApprovalSkill(state, customSkillId);
+    const store = new MemoryStore(state);
+    const cipher = new AesCredentialCipher(TEST_KEY);
+    const calls: ToolExecutionRequest[] = [];
+    const runService = new ConversationRunService(
+      store,
+      cipher,
+      new ToolCallingModelGateway(),
+      {
+        approvalTimeoutMs: 20,
+        toolGateway: {
+          async execute(request) {
+            calls.push(request);
+            return { content: "should not execute" };
+          }
+        }
+      }
+    );
+    const started = await runService.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice let publishing expire" }
+    );
+
+    const completed = await runService.processRun(started.run!.id);
+
+    expect(completed.status).toBe("completed");
+    expect(calls).toEqual([]);
+    expect(
+      await store.read((current) =>
+        current.approvals.find((item) => item.runId === started.run!.id)
+      )
+    ).toMatchObject({ status: "expired" });
+  });
+
+  it("preserves Approval decisions across worker recovery", async () => {
+    const state = createFixtureState();
+    const employeeId = "20000000-0000-4000-8000-000000000001";
+    const runId = "50000000-0000-4000-8000-000000000025";
+    const messageId = "message-approval-restart";
+    const toolCallId = "tool-call-approval-restart";
+    const now = new Date().toISOString();
+    state.messages.push({
+      id: messageId,
+      workspaceId: state.workspace.id,
+      conversationId: "30000000-0000-4000-8000-000000000001",
+      authorType: "employee",
+      authorId: employeeId,
+      content: "",
+      runId,
+      status: "streaming",
+      createdAt: now,
+      updatedAt: now
+    });
+    state.runs.push({
+      id: runId,
+      workspaceId: state.workspace.id,
+      conversationId: "30000000-0000-4000-8000-000000000001",
+      triggerMessageId: "trigger",
+      memberSnapshot: [employeeId],
+      status: "waiting_approval",
+      createdAt: now
+    });
+    state.approvals.push({
+      id: "approval-after-restart",
+      workspaceId: state.workspace.id,
+      runId,
+      messageId,
+      employeeId,
+      toolCallId,
+      toolName: "post_webhook",
+      args: {
+        url: "https://example.com/hook",
+        body: { launch: true }
+      },
+      status: "rejected",
+      createdAt: now,
+      resolvedAt: now,
+      expiresAt: new Date(Date.now() + 60_000).toISOString()
+    });
+    const store = new MemoryStore(state);
+    const runService = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      new RecordingModelGateway()
+    );
+
+    await runService.recoverInterruptedRuns();
+
+    expect((await runService.getRunById(runId))?.status).toBe("interrupted");
+    expect(
+      await store.read((current) =>
+        current.approvals.find((item) => item.id === "approval-after-restart")
+      )
+    ).toMatchObject({
+      status: "rejected",
+      toolCallId,
+      employeeId
+    });
   });
 
   it("does not resume or complete a Run cancelled while awaiting approval", async () => {
     const state = createFixtureState();
     const customSkillId = "40000000-0000-4000-8000-000000000002";
-    state.skills.push({
-      id: customSkillId,
-      workspaceId: state.workspace.id,
-      name: "Publisher",
-      description: "Posts approved updates.",
-      instructions: "Publish only after approval.",
-      inputs: ["payload"],
-      outputs: ["receipt"],
-      toolNames: ["post_webhook"],
-      builtIn: false,
-      createdAt: state.workspace.createdAt,
-      updatedAt: state.workspace.updatedAt
-    });
-    state.employees[0].skillIds.push(customSkillId);
+    addApprovalSkill(state, customSkillId);
     const store = new MemoryStore(state);
     const runService = new ConversationRunService(
       store,
@@ -1088,6 +1277,40 @@ class MemoryStoreFixture extends MemoryStore {
   constructor() {
     super(createFixtureState());
   }
+}
+
+function addApprovalSkill(state: AppState, skillId: string): void {
+  state.skills.push({
+    id: skillId,
+    workspaceId: state.workspace.id,
+    name: "Publisher",
+    description: "Posts approved updates.",
+    instructions: "Publish only after approval.",
+    inputs: ["payload"],
+    outputs: ["receipt"],
+    toolNames: ["post_webhook"],
+    builtIn: false,
+    createdAt: state.workspace.createdAt,
+    updatedAt: state.workspace.updatedAt
+  });
+  state.employees[0].skillIds.push(skillId);
+}
+
+async function waitForPendingApproval(
+  store: MemoryStore,
+  runId: string
+): Promise<Approval> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const approval = await store.read(
+      (state) =>
+        state.approvals.find(
+          (item) => item.runId === runId && item.status === "pending"
+        ) ?? null
+    );
+    if (approval) return approval;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Pending Approval was not created");
 }
 
 function toolModelGateway(

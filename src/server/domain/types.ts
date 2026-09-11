@@ -189,12 +189,17 @@ export type Approval = {
   runId: string;
   messageId?: string;
   taskId?: string;
+  employeeId?: string;
+  toolCallId?: string;
   toolName: string;
   args: Record<string, unknown>;
   status: "pending" | "approved" | "rejected" | "cancelled" | "expired";
   createdAt: IsoDate;
+  expiresAt?: IsoDate;
   resolvedAt?: IsoDate;
 };
+
+export type ApprovalDecision = "approved" | "rejected" | "cancelled";
 
 export type AppState = {
   workspace: Workspace;
