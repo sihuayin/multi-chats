@@ -24,7 +24,9 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   await page.goto("/employees");
   await page.getByLabel("Name").fill(employeeName);
   await page.getByLabel("Researcher").check();
-  await expect(page.getByLabel("Model").locator("option")).not.toHaveCount(0);
+  const modelSelect = page.getByLabel("Model");
+  await expect(modelSelect.locator("option")).not.toHaveCount(0);
+  await modelSelect.selectOption({ index: 0 });
   await page.getByRole("button", { name: "Create Employee" }).click();
   await expect(page.getByText(employeeName)).toBeVisible();
 
@@ -55,9 +57,30 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   await page.getByRole("button", { name: "Add Task" }).click();
   await expect(page.getByText("Review launch brief")).toBeVisible();
 
+  await page.goto("/employees");
+  const employeeCard = page.locator(".list-card").filter({ hasText: employeeName });
+  const editedEmployeeName = `${employeeName} Edited`;
+  let dialogIndex = 0;
+  const dialogHandler = async (dialog: import("@playwright/test").Dialog) => {
+    await dialog.accept(
+      dialogIndex === 0 ? editedEmployeeName : "Updated employee identity."
+    );
+    dialogIndex += 1;
+  };
+  page.on("dialog", dialogHandler);
+  await employeeCard.getByTitle("Edit Employee").click();
+  page.off("dialog", dialogHandler);
+  await expect(page.getByText(editedEmployeeName)).toBeVisible();
+
+  const editedCard = page.locator(".list-card").filter({ hasText: editedEmployeeName });
+  await editedCard.getByRole("button", { name: "Disable" }).click();
+  await expect(editedCard.getByRole("button", { name: "Enable" })).toBeVisible();
+
   await page.getByRole("button", { name: "中文" }).click();
   await expect(page.getByRole("link", { name: "员工" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "会话" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "员工", exact: true })
+  ).toBeVisible();
 
   await page.getByRole("button", { name: "EN", exact: true }).click();
   await expect(page.getByRole("link", { name: "Employees" })).toBeVisible();

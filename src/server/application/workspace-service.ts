@@ -148,6 +148,10 @@ export class WorkspaceService {
 
   async createEmployee(input: unknown): Promise<Employee> {
     const parsed = employeeInputSchema.parse(input);
+    await this.assertEmployeeModel(
+      parsed.providerCredentialId,
+      parsed.modelId
+    );
     return this.store.update((state) => {
       const provider = state.providers.find(
         (item) => item.id === parsed.providerCredentialId
@@ -173,6 +177,10 @@ export class WorkspaceService {
 
   async updateEmployee(id: string, input: unknown): Promise<Employee> {
     const parsed = employeeInputSchema.parse(input);
+    await this.assertEmployeeModel(
+      parsed.providerCredentialId,
+      parsed.modelId
+    );
     return this.store.update((state) => {
       const employee = state.employees.find((item) => item.id === id);
       if (!employee) notFound("Employee");
@@ -436,6 +444,30 @@ export class WorkspaceService {
     );
     if (ids.some((id) => !activeIds.has(id))) {
       throw new ApiError(400, "One or more Employees are unknown or inactive", "invalid_employee");
+    }
+  }
+
+  private async assertEmployeeModel(
+    providerCredentialId: string,
+    modelId: string
+  ): Promise<void> {
+    const access = await this.store.read((state) => {
+      const provider = state.providers.find(
+        (item) => item.id === providerCredentialId
+      );
+      if (!provider) notFound("Provider");
+      return {
+        provider: provider.provider,
+        credential: this.cipher.decrypt(provider.encryptedCredential)
+      };
+    });
+    const models = await this.providers.listModels(access);
+    if (!models.some((model) => model.id === modelId)) {
+      throw new ApiError(
+        400,
+        "Employee model is not available from the selected provider",
+        "invalid_model"
+      );
     }
   }
 
