@@ -133,6 +133,21 @@ export function ChatWorkspace() {
         : new Map(),
     [latestRun, latestRunEvents]
   );
+  const displayMemberIds = useMemo(() => {
+    if (!selected) return [];
+    if (
+      latestRun &&
+      ["queued", "running", "waiting_approval"].includes(latestRun.status)
+    ) {
+      return [
+        ...latestRun.memberSnapshot,
+        ...selected.memberIds.filter(
+          (memberId) => !latestRun.memberSnapshot.includes(memberId)
+        )
+      ];
+    }
+    return selected.memberIds;
+  }, [latestRun, selected]);
 
   async function createConversation() {
     const group =
@@ -395,7 +410,7 @@ export function ChatWorkspace() {
                 <h2>{selected.title}</h2>
               </div>
               <div className="member-stack" aria-label={t("chat.editMembers")}>
-                {selected.memberIds.map((memberId) => {
+                {displayMemberIds.map((memberId) => {
                   const employee = data?.employees.find(
                     (item) => item.id === memberId
                   );

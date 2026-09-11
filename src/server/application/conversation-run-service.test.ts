@@ -146,6 +146,15 @@ describe("ConversationRun", () => {
       "30000000-0000-4000-8000-000000000001",
       ["20000000-0000-4000-8000-000000000001"]
     );
+    expect(
+      await store.read(
+        (state) =>
+          state.conversations.find(
+            (conversation) =>
+              conversation.id === "30000000-0000-4000-8000-000000000001"
+          )?.memberIds
+      )
+    ).toEqual(["20000000-0000-4000-8000-000000000001"]);
     releaseFirst?.();
     await processing;
 
@@ -318,6 +327,9 @@ describe("ConversationRun", () => {
     expect((await runService.getRunById(started.run!.id))?.status).toBe("cancelled");
     const messages = await runService.listMessages(started.message.conversationId);
     expect(messages.at(-1)?.status).toBe("cancelled");
+    expect(
+      (await runService.listRunEvents(started.run!.id)).map((event) => event.type)
+    ).toContain("employee_turn_cancelled");
   });
 
   it("observes a cancellation written by another service instance", async () => {

@@ -304,10 +304,9 @@ export class ConversationRunService {
         if (message.runId === runId && message.status === "streaming") {
           message.status = "cancelled";
           message.updatedAt = timestamp;
-          appendEvent(state, run, "employee_turn_failed", {
+          appendEvent(state, run, "employee_turn_cancelled", {
             employeeId: message.authorId,
             messageId: message.id,
-            status: "cancelled"
           });
         }
       }
@@ -428,6 +427,16 @@ export class ConversationRunService {
           if (run.status !== "cancelled") {
             run.status = "cancelled";
             run.completedAt = now();
+            for (const message of state.messages) {
+              if (message.runId === runId && message.status === "streaming") {
+                message.status = "cancelled";
+                message.updatedAt = run.completedAt;
+                appendEvent(state, run, "employee_turn_cancelled", {
+                  employeeId: message.authorId,
+                  messageId: message.id
+                });
+              }
+            }
             appendEvent(state, run, "run_cancelled", {});
           }
           return run;

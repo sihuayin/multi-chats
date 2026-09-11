@@ -51,4 +51,13 @@ describe("employeeTurnStatuses", () => {
 
     expect(statuses.get("alice")).toBe("failed");
   });
+
+  it("distinguishes a cancelled Employee turn from failure", () => {
+    const statuses = employeeTurnStatuses(run, [
+      event(1, "employee_turn_started", { employeeId: "alice" }),
+      event(2, "employee_turn_cancelled", { employeeId: "alice" })
+    ]);
+
+    expect(statuses.get("alice")).toBe("cancelled");
+  });
 });

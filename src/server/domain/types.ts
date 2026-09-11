@@ -123,6 +123,7 @@ export type RunEvent = {
     | "employee_turn_started"
     | "employee_turn_completed"
     | "employee_turn_failed"
+    | "employee_turn_cancelled"
     | "message_delta"
     | "message_completed"
     | "tool_started"

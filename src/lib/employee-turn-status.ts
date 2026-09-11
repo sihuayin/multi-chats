@@ -4,7 +4,8 @@ export type EmployeeTurnStatus =
   | "queued"
   | "active"
   | "completed"
-  | "failed";
+  | "failed"
+  | "cancelled";
 
 export function employeeTurnStatuses(
   run: Run,
@@ -26,10 +27,15 @@ export function employeeTurnStatuses(
 
     if (event.type === "employee_turn_started") {
       statuses.set(employeeId, "active");
-    } else if (event.type === "employee_turn_completed") {
+    } else if (
+      event.type === "employee_turn_completed" ||
+      event.type === "message_completed"
+    ) {
       statuses.set(employeeId, "completed");
     } else if (event.type === "employee_turn_failed") {
       statuses.set(employeeId, "failed");
+    } else if (event.type === "employee_turn_cancelled") {
+      statuses.set(employeeId, "cancelled");
     }
   }
 
