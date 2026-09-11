@@ -138,6 +138,49 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   const taskCard = page.locator(".task-card").filter({
     hasText: "Review launch brief"
   });
+  const artifactDialogs = [
+    { name: "Plain notes", content: "Plain-text launch findings." },
+    { name: "Markdown brief", content: "# Launch findings\n\n- Source checked" },
+    { name: "JSON metrics", content: JSON.stringify({ confidence: 0.9 }) }
+  ];
+  let artifactDialogIndex = 0;
+  const artifactDialogHandler = async (
+    dialog: import("@playwright/test").Dialog
+  ) => {
+    const artifact = artifactDialogs[Math.floor(artifactDialogIndex / 2)];
+    await dialog.accept(
+      artifactDialogIndex % 2 === 0 ? artifact.name : artifact.content
+    );
+    artifactDialogIndex += 1;
+  };
+  page.on("dialog", artifactDialogHandler);
+  const artifactType = taskCard.getByLabel("Artifact type");
+  await artifactType.selectOption("text");
+  await expect(taskCard.getByText("Plain notes")).toBeVisible();
+  await artifactType.selectOption("markdown");
+  await expect(taskCard.getByText("Markdown brief")).toBeVisible();
+  await artifactType.selectOption("json");
+  await expect(taskCard.getByText("JSON metrics")).toBeVisible();
+  page.off("dialog", artifactDialogHandler);
+
+  const textArtifact = taskCard.locator("details").filter({
+    hasText: "Plain notes"
+  });
+  await textArtifact.locator("summary").click();
+  await expect(textArtifact).toContainText("Plain-text launch findings.");
+  const markdownArtifact = taskCard.locator("details").filter({
+    hasText: "Markdown brief"
+  });
+  await markdownArtifact.locator("summary").click();
+  await expect(
+    markdownArtifact.getByRole("heading", { name: "Launch findings" })
+  ).toBeVisible();
+  const jsonArtifact = taskCard.locator("details").filter({
+    hasText: "JSON metrics"
+  });
+  await jsonArtifact.locator("summary").click();
+  await expect(jsonArtifact).toContainText('"confidence": 0.9');
+
   await taskCard.getByRole("button", { name: "Start" }).click();
   await expect(taskCard.locator(".status-pill.in_progress")).toBeVisible();
   await taskCard.getByRole("button", { name: "Block" }).click();

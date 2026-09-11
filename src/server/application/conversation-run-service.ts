@@ -14,8 +14,13 @@ import type {
   ModelTool
 } from "@/server/application/model-gateway";
 import { ApiError, notFound } from "@/server/application/errors";
-import { transitionTask } from "@/server/application/task-ledger";
+import {
+  assertTaskAssignee,
+  transitionTask
+} from "@/server/application/task-ledger";
+import { createTaskArtifact } from "@/server/application/artifact-ledger";
 import { messageInputSchema } from "@/server/domain/schemas";
+import { isArtifactType } from "@/lib/artifact-types";
 import type { CredentialCipher } from "@/server/security/credential-cipher";
 import { BUILT_IN_TOOLS } from "@/server/store/initial-state";
 import type { StateStore } from "@/server/store/store";
@@ -792,35 +797,34 @@ export class ConversationRunService {
     }
 
     if (tool.name === "attach_artifact") {
-      const taskId = String(args.taskId ?? "");
-      const type = String(args.type ?? "");
-      const name = String(args.name ?? "");
-      const content = String(args.content ?? "");
-      if (!["text", "markdown", "json"].includes(type)) {
+      const taskId = typeof args.taskId === "string" ? args.taskId : "";
+      const type = args.type;
+      if (!isArtifactType(type)) {
         throw new Error("Unsupported Artifact type");
       }
-      if (type === "json") JSON.parse(content);
+      if (
+        typeof args.name !== "string" ||
+        typeof args.content !== "string"
+      ) {
+        throw new Error("Artifact name and content must be strings");
+      }
       const artifactId = await this.store.update((state) => {
         const run = state.runs.find((item) => item.id === runId);
         const task = state.tasks.find((item) => item.id === taskId);
         if (!run || !task || task.conversationId !== run.conversationId) {
           throw new Error("Task does not belong to this Conversation");
         }
-        if (task.assigneeIds.length > 0 && !task.assigneeIds.includes(employeeId)) {
-          throw new Error("Task is not assigned to this Employee");
-        }
-        const timestamp = now();
-        const artifact = {
-          id: crypto.randomUUID(),
-          workspaceId: state.workspace.id,
+        assertTaskAssignee(task, employeeId);
+        const artifact = createTaskArtifact(
+          state,
           taskId,
-          type: type as "text" | "markdown" | "json",
-          name,
-          content,
-          createdAt: timestamp,
-          updatedAt: timestamp
-        };
-        state.artifacts.push(artifact);
+          {
+            type,
+            name: args.name,
+            content: args.content
+          },
+          employeeId
+        );
         appendEvent(state, run, "artifact_created", {
           taskId,
           artifactId: artifact.id,

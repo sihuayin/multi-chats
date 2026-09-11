@@ -1,5 +1,7 @@
 import type { ProviderId } from "@/lib/provider-catalog";
 
+import type { ArtifactType } from "@/lib/artifact-types";
+
 export type IsoDate = string;
 
 export type Workspace = {
@@ -163,6 +165,7 @@ export type Task = {
     at: IsoDate;
     actorId: string;
     action?: string;
+    artifactId?: string;
   }>;
   createdAt: IsoDate;
   updatedAt: IsoDate;
@@ -172,7 +175,7 @@ export type Artifact = {
   id: string;
   workspaceId: string;
   taskId: string;
-  type: "text" | "markdown" | "json";
+  type: ArtifactType;
   name: string;
   content: string;
   createdAt: IsoDate;

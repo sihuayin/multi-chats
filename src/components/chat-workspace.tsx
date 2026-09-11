@@ -19,6 +19,7 @@ import {
   X
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
 import { apiRequest } from "@/lib/api";
 import { useI18n } from "@/components/i18n-provider";
 import type {
@@ -28,6 +29,7 @@ import type {
 } from "@/server/domain/types";
 import { useWorkspace } from "@/components/workspace-provider";
 import type { TranslationKey } from "@/lib/i18n";
+import { artifactTypes } from "@/lib/artifact-types";
 import { employeeTurnStatuses } from "@/lib/employee-turn-status";
 
 function MessageIcon({ artifact }: { artifact: Artifact }) {
@@ -35,8 +37,34 @@ function MessageIcon({ artifact }: { artifact: Artifact }) {
   return <FileText size={16} />;
 }
 
+function ArtifactContent({ artifact }: { artifact: Artifact }) {
+  if (artifact.type === "markdown") {
+    return (
+      <div className="artifact-markdown">
+        <ReactMarkdown>{artifact.content}</ReactMarkdown>
+      </div>
+    );
+  }
+
+  if (artifact.type === "json") {
+    let content = artifact.content;
+    try {
+      content = JSON.stringify(JSON.parse(artifact.content), null, 2);
+    } catch {
+      // Invalid legacy data remains inspectable instead of breaking the Task panel.
+    }
+    return <pre className="artifact-json">{content}</pre>;
+  }
+
+  return <pre className="artifact-text">{artifact.content}</pre>;
+}
+
 function statusKey(status: string): TranslationKey {
   return `status.${status}` as TranslationKey;
+}
+
+function artifactTypeKey(type: Artifact["type"]): TranslationKey {
+  return `artifact.${type}`;
 }
 
 export function ChatWorkspace() {
@@ -342,6 +370,28 @@ export function ChatWorkspace() {
         method: "POST",
         body: JSON.stringify({ name, content, type })
       });
+      await refresh();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateArtifact(artifact: Artifact) {
+    const name = window.prompt(t("chat.artifactName"), artifact.name);
+    if (!name?.trim()) return;
+    const content = window.prompt(t("chat.artifactContent"), artifact.content);
+    if (content === null) return;
+    setBusy(true);
+    try {
+      await apiRequest(
+        `/api/tasks/${artifact.taskId}/artifacts/${artifact.id}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ name, content })
+        }
+      );
       await refresh();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
@@ -747,13 +797,25 @@ export function ChatWorkspace() {
                       {t("chat.cancel")}
                     </button>
                   ) : null}
-                  <button
-                    className="button quiet"
-                    onClick={() => attachArtifact(task, "markdown")}
+                  <select
+                    className="artifact-type-select"
+                    aria-label={t("chat.artifactType")}
+                    defaultValue=""
+                    onChange={(event) => {
+                      const type = event.target.value as Artifact["type"];
+                      event.target.value = "";
+                      if (type) void attachArtifact(task, type);
+                    }}
                   >
-                    <FileText size={14} />
-                    {t("chat.artifact")}
-                  </button>
+                    <option value="" disabled>
+                      {t("chat.artifact")}
+                    </option>
+                    {artifactTypes.map((type) => (
+                      <option key={type} value={type}>
+                        {t(artifactTypeKey(type))}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 {artifacts.length > 0 ? (
                   <div className="artifact-list">
@@ -762,9 +824,17 @@ export function ChatWorkspace() {
                         <summary>
                           <MessageIcon artifact={artifact} />
                           {artifact.name}
-                          <span>{artifact.type}</span>
+                          <span>{t(artifactTypeKey(artifact.type))}</span>
                         </summary>
-                        <pre>{artifact.content}</pre>
+                        <ArtifactContent artifact={artifact} />
+                        <div className="artifact-actions">
+                          <button
+                            className="button quiet"
+                            onClick={() => void updateArtifact(artifact)}
+                          >
+                            {t("common.edit")}
+                          </button>
+                        </div>
                       </details>
                     ))}
                   </div>

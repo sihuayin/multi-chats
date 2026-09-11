@@ -8,6 +8,16 @@ const taskTransitions: Partial<Record<TaskStatus, TaskStatus[]>> = {
   review: ["in_progress"]
 };
 
+export function assertTaskAssignee(task: Task, actorId: string): void {
+  if (!task.assigneeIds.includes(actorId)) {
+    throw new ApiError(
+      403,
+      "Only assigned Employees can update a Task",
+      "task_assignee"
+    );
+  }
+}
+
 export function transitionTask(
   task: Task,
   next: TaskStatus,
@@ -37,13 +47,7 @@ export function transitionTask(
       );
     }
   } else {
-    if (actorId !== "user" && !task.assigneeIds.includes(actorId)) {
-      throw new ApiError(
-        403,
-        "Only assigned Employees can update a Task",
-        "task_assignee"
-      );
-    }
+    if (actorId !== "user") assertTaskAssignee(task, actorId);
     const allowed = taskTransitions[current] ?? [];
     if (!allowed.includes(next)) {
       throw new ApiError(

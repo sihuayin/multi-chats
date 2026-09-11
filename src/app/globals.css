@@ -649,6 +649,56 @@ select:focus {
   border-radius: 6px;
 }
 
+.artifact-type-select {
+  min-width: 112px;
+}
+
+.artifact-markdown {
+  overflow: auto;
+  max-height: 260px;
+  margin-top: 9px;
+  padding: 10px;
+  color: #384340;
+  font-size: 11px;
+  line-height: 1.55;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.artifact-markdown > :first-child {
+  margin-top: 0;
+}
+
+.artifact-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.artifact-markdown h1,
+.artifact-markdown h2,
+.artifact-markdown h3 {
+  margin: 0.8em 0 0.35em;
+  font-size: 1.2em;
+}
+
+.artifact-markdown code {
+  padding: 1px 4px;
+  font-size: 0.95em;
+  background: #eef2ee;
+  border-radius: 3px;
+}
+
+.artifact-markdown pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.artifact-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 7px;
+}
+
 .run-timeline {
   margin-top: 14px;
   padding: 10px;

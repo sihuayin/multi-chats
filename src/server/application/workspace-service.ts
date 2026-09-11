@@ -9,7 +9,6 @@ import type {
   Task
 } from "@/server/domain/types";
 import {
-  artifactInputSchema,
   conversationInputSchema,
   employeeInputSchema,
   groupInputSchema,
@@ -21,6 +20,10 @@ import {
 import type { ProviderRegistry } from "@/server/application/provider-gateway";
 import { ApiError, notFound } from "@/server/application/errors";
 import { transitionTask } from "@/server/application/task-ledger";
+import {
+  createTaskArtifact,
+  updateTaskArtifact
+} from "@/server/application/artifact-ledger";
 import type { WorkspaceView } from "@/lib/workspace-view";
 import type { CredentialCipher } from "@/server/security/credential-cipher";
 import { BUILT_IN_TOOLS } from "@/server/store/initial-state";
@@ -401,31 +404,25 @@ export class WorkspaceService {
     });
   }
 
-  async createArtifact(taskId: string, input: unknown): Promise<Artifact> {
-    const parsed = artifactInputSchema.parse(input);
-    return this.store.update((state) => {
-      const task = state.tasks.find((item) => item.id === taskId);
-      if (!task) notFound("Task");
-      if (parsed.type === "json") {
-        try {
-          JSON.parse(parsed.content);
-        } catch {
-          throw new ApiError(400, "JSON Artifact content is invalid", "invalid_json");
-        }
-      }
-      const timestamp = now();
-      const artifact: Artifact = {
-        id: crypto.randomUUID(),
-        workspaceId: state.workspace.id,
-        taskId,
-        ...parsed,
-        createdAt: timestamp,
-        updatedAt: timestamp
-      };
-      state.artifacts.push(artifact);
-      state.workspace.updatedAt = timestamp;
-      return artifact;
-    });
+  async createArtifact(
+    taskId: string,
+    input: unknown,
+    actorId = "user"
+  ): Promise<Artifact> {
+    return this.store.update((state) =>
+      createTaskArtifact(state, taskId, input, actorId)
+    );
+  }
+
+  async updateArtifact(
+    taskId: string,
+    artifactId: string,
+    input: unknown,
+    actorId = "user"
+  ): Promise<Artifact> {
+    return this.store.update((state) =>
+      updateTaskArtifact(state, taskId, artifactId, input, actorId)
+    );
   }
 
   async resolveApproval(

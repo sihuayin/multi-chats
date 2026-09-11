@@ -335,6 +335,188 @@ describe("ConversationRun", () => {
     ).toBe("review");
   });
 
+  it("lets an assigned Employee publish supported Task Artifacts", async () => {
+    const state = createFixtureState();
+    const skillId = "40000000-0000-4000-8000-000000000004";
+    state.skills.push({
+      id: skillId,
+      workspaceId: state.workspace.id,
+      name: "Artifact publisher",
+      description: "Publishes structured Task results.",
+      instructions: "Attach each requested result to the assigned Task.",
+      inputs: ["result"],
+      outputs: ["artifact"],
+      toolNames: ["attach_artifact"],
+      builtIn: false,
+      createdAt: state.workspace.createdAt,
+      updatedAt: state.workspace.updatedAt
+    });
+    state.employees[0].skillIds.push(skillId);
+    const store = new MemoryStore(state);
+    const workspace = new WorkspaceService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      noopProviderRegistry
+    );
+    const task = await workspace.createTask(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        title: "Publish Task results",
+        goal: "Attach all supported result types.",
+        assigneeIds: ["20000000-0000-4000-8000-000000000001"]
+      }
+    );
+    const gateway: ModelGateway = {
+      async *run(request) {
+        const tool = request.tools.find(
+          (item) => item.name === "attach_artifact"
+        );
+        if (!tool) throw new Error("attach_artifact Tool was not available");
+        for (const [type, name, content] of [
+          ["text", "Notes", "Plain findings."],
+          ["markdown", "Brief", "# Findings"],
+          ["json", "Metrics", JSON.stringify({ confidence: 0.9 })]
+        ]) {
+          await tool.execute(`tool-${type}`, {
+            taskId: task.id,
+            type,
+            name,
+            content
+          });
+        }
+        yield { type: "text_delta", delta: "Artifacts published." };
+        yield { type: "text_completed", text: "Artifacts published." };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway
+    );
+    const started = await runs.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice publish the results" }
+    );
+
+    await runs.processRun(started.run!.id);
+
+    const persisted = await store.read((current) => ({
+      artifacts: current.artifacts.map((artifact) => ({
+        type: artifact.type,
+        name: artifact.name,
+        taskId: artifact.taskId
+      })),
+      actions:
+        current.tasks
+          .find((item) => item.id === task.id)
+          ?.history.filter((entry) => entry.action === "artifact_created")
+          .map((entry) => entry.actorId) ?? []
+    }));
+    expect(persisted.artifacts).toEqual([
+      { type: "text", name: "Notes", taskId: task.id },
+      { type: "markdown", name: "Brief", taskId: task.id },
+      { type: "json", name: "Metrics", taskId: task.id }
+    ]);
+    expect(persisted.actions).toEqual([
+      "20000000-0000-4000-8000-000000000001",
+      "20000000-0000-4000-8000-000000000001",
+      "20000000-0000-4000-8000-000000000001"
+    ]);
+    expect(
+      (await runs.listRunEvents(started.run!.id)).filter(
+        (event) => event.type === "artifact_created"
+      )
+    ).toHaveLength(3);
+  });
+
+  it("rejects invalid Employee Task Artifacts", async () => {
+    const state = createFixtureState();
+    const skillId = "40000000-0000-4000-8000-000000000005";
+    state.skills.push({
+      id: skillId,
+      workspaceId: state.workspace.id,
+      name: "Artifact publisher",
+      description: "Publishes structured Task results.",
+      instructions: "Attach requested results to the assigned Task.",
+      inputs: ["result"],
+      outputs: ["artifact"],
+      toolNames: ["attach_artifact"],
+      builtIn: false,
+      createdAt: state.workspace.createdAt,
+      updatedAt: state.workspace.updatedAt
+    });
+    state.employees[0].skillIds.push(skillId);
+    const store = new MemoryStore(state);
+    const workspace = new WorkspaceService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      noopProviderRegistry
+    );
+    const task = await workspace.createTask(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        title: "Validate Task results",
+        goal: "Reject invalid result payloads.",
+        assigneeIds: ["20000000-0000-4000-8000-000000000001"]
+      }
+    );
+    const failures: string[] = [];
+    const gateway: ModelGateway = {
+      async *run(request) {
+        const tool = request.tools.find(
+          (item) => item.name === "attach_artifact"
+        );
+        if (!tool) throw new Error("attach_artifact Tool was not available");
+        for (const args of [
+          {
+            taskId: task.id,
+            type: "binary",
+            name: "Binary",
+            content: "AAECAw=="
+          },
+          {
+            taskId: task.id,
+            type: "json",
+            name: "Broken JSON",
+            content: "{"
+          },
+          {
+            taskId: task.id,
+            type: "text",
+            name: "Binary body",
+            content: { bytes: [0, 1, 2, 3] }
+          }
+        ]) {
+          try {
+            await tool.execute("invalid-tool", args);
+          } catch (error) {
+            failures.push(error instanceof Error ? error.message : String(error));
+          }
+        }
+        yield { type: "text_delta", delta: "Validation complete." };
+        yield { type: "text_completed", text: "Validation complete." };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway
+    );
+    const started = await runs.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice validate the results" }
+    );
+
+    await runs.processRun(started.run!.id);
+
+    expect(failures).toEqual([
+      "Unsupported Artifact type",
+      "JSON Artifact content is invalid",
+      "Artifact name and content must be strings"
+    ]);
+    expect(await store.read((current) => current.artifacts)).toEqual([]);
+  });
+
   it("parses names as slugged mentions", () => {
     const state = createFixtureState();
     expect(

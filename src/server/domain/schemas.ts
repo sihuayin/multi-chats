@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { artifactTypes } from "@/lib/artifact-types";
 import { PROVIDER_IDS } from "@/lib/provider-catalog";
 
 export const providerIdSchema = z.enum(PROVIDER_IDS);
@@ -65,10 +66,20 @@ export const taskPatchSchema = z.object({
 });
 
 export const artifactInputSchema = z.object({
-  type: z.enum(["text", "markdown", "json"]),
+  type: z.enum(artifactTypes),
   name: z.string().trim().min(1).max(120),
   content: z.string().max(200_000)
 });
+
+export const artifactPatchSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120).optional(),
+    content: z.string().max(200_000).optional()
+  })
+  .refine(
+    (value) => value.name !== undefined || value.content !== undefined,
+    "At least one Artifact field is required"
+  );
 
 export const approvalDecisionSchema = z.object({
   decision: z.enum(["approved", "rejected", "cancelled"])

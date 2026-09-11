@@ -126,7 +126,7 @@ export async function handleApiRequest(
   segments: string[]
 ): Promise<Response> {
   try {
-    const [resource, id, child] = segments;
+    const [resource, id, child, grandchild] = segments;
 
     if (request.method === "GET" && resource === "health") {
       return health();
@@ -242,6 +242,21 @@ export async function handleApiRequest(
         return json(await workspace.createArtifact(id, await body(request)), {
           status: 201
         });
+      }
+      if (
+        request.method === "PATCH" &&
+        id &&
+        child === "artifacts" &&
+        grandchild
+      ) {
+        return json(
+          await workspace.updateArtifact(
+            id,
+            grandchild,
+            await body(request),
+            "user"
+          )
+        );
       }
     }
 
