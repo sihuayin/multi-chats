@@ -2,7 +2,7 @@ import {
   FakeEmployeeEngine,
   PiEmployeeEngine
 } from "@/server/application/employee-engine";
-import { piProviderRegistry } from "@/server/adapters/model/provider-registry";
+import { piProviderRegistry } from "@/server/adapters/model/provider-registry.server";
 import { ConversationRunService } from "@/server/application/conversation-run-service";
 import { WorkspaceService } from "@/server/application/workspace-service";
 import { createCredentialCipher } from "@/server/security/credential-cipher";
