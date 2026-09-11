@@ -1,11 +1,5 @@
 import type { ProviderId } from "@/server/domain/types";
 
-export type ModelMessage = {
-  role: "user" | "assistant";
-  author: string;
-  content: string;
-};
-
 export type ModelTool = {
   name: string;
   label: string;

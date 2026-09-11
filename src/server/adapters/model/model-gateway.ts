@@ -159,3 +159,9 @@ export class PiModelGateway implements ModelGateway {
     }
   }
 }
+
+export function createModelGateway(): ModelGateway {
+  return process.env.MODEL_MODE === "fake"
+    ? new FakeModelGateway()
+    : new PiModelGateway();
+}

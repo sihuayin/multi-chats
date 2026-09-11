@@ -221,7 +221,7 @@ describe("ConversationRun", () => {
     ).toBe("interrupted");
   });
 
-  it("cancels an active Engine and marks partial Messages as cancelled", async () => {
+  it("cancels an active Model Gateway and marks partial Messages as cancelled", async () => {
     const store = new MemoryStoreFixture();
     const engine: ModelGateway = {
       async *run(request) {

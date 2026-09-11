@@ -1,6 +1,5 @@
 import {
-  FakeModelGateway,
-  PiModelGateway
+  createModelGateway
 } from "@/server/adapters/model/model-gateway.server";
 import { piProviderRegistry } from "@/server/adapters/model/provider-registry.server";
 import { ConversationRunService } from "@/server/application/conversation-run-service";
@@ -22,13 +21,9 @@ export function getServices(): AppServices {
   if (!globalState.__multiChatsServices) {
     const store = getStore();
     const cipher = createCredentialCipher();
-    const engine =
-      process.env.MODEL_MODE === "fake"
-        ? new FakeModelGateway()
-        : new PiModelGateway();
     globalState.__multiChatsServices = {
       workspace: new WorkspaceService(store, cipher, piProviderRegistry),
-      runs: new ConversationRunService(store, cipher, engine)
+      runs: new ConversationRunService(store, cipher, createModelGateway())
     };
   }
   return globalState.__multiChatsServices;

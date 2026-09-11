@@ -107,7 +107,7 @@ export class RecordingModelGateway implements ModelGateway {
 export class ToolCallingModelGateway implements ModelGateway {
   async *run(request: ModelRequest) {
     const tool = request.tools.find((item) => item.name === "post_webhook");
-    if (!tool) throw new Error("Test engine expected post_webhook");
+    if (!tool) throw new Error("Test Model Gateway expected post_webhook");
     yield {
       type: "tool_started" as const,
       toolCallId: "test-tool-call",

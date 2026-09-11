@@ -1,7 +1,6 @@
 import { ConversationRunService } from "@/server/application/conversation-run-service";
 import {
-  FakeModelGateway,
-  PiModelGateway
+  createModelGateway
 } from "@/server/adapters/model/model-gateway";
 import { logger } from "@/server/observability/logger";
 import { createCredentialCipher } from "@/server/security/credential-cipher";
@@ -12,9 +11,7 @@ async function main(): Promise<void> {
   const runs = new ConversationRunService(
     store,
     createCredentialCipher(),
-    process.env.MODEL_MODE === "fake"
-      ? new FakeModelGateway()
-      : new PiModelGateway()
+    createModelGateway()
   );
   await runs.recoverInterruptedRuns();
 
