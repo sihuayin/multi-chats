@@ -235,6 +235,106 @@ describe("ConversationRun", () => {
     expect(requests[1].prompt).toContain("Alice: Alice response");
   });
 
+  it("lets an assigned Employee move a Task and includes Task context", async () => {
+    const state = createFixtureState();
+    const skillId = "40000000-0000-4000-8000-000000000003";
+    state.skills.push({
+      id: skillId,
+      workspaceId: state.workspace.id,
+      name: "Task worker",
+      description: "Updates assigned Tasks.",
+      instructions: "Update the assigned Task when work starts.",
+      inputs: ["task"],
+      outputs: ["status"],
+      toolNames: ["update_task"],
+      builtIn: false,
+      createdAt: state.workspace.createdAt,
+      updatedAt: state.workspace.updatedAt
+    });
+    state.employees[0].skillIds.push(skillId);
+    const store = new MemoryStore(state);
+    const workspace = new WorkspaceService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      noopProviderRegistry
+    );
+    const task = await workspace.createTask(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        title: "Implement Task flow",
+        goal: "Move the Task to in progress.",
+        assigneeIds: ["20000000-0000-4000-8000-000000000001"]
+      }
+    );
+    const captured: import("@/server/application/model-gateway").ModelRequest[] =
+      [];
+    const gateway: ModelGateway = {
+      async *run(request) {
+        captured.push(request);
+        const tool = request.tools.find((item) => item.name === "update_task");
+        if (!tool) throw new Error("update_task Tool was not available");
+        for (const status of ["in_progress", "blocked", "review"]) {
+          await tool.execute("tool-call", {
+            taskId: task.id,
+            status
+          });
+        }
+        yield { type: "text_delta", delta: "Task started." };
+        yield { type: "text_completed", text: "Task started." };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway
+    );
+    const started = await runs.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice start the assigned Task" }
+    );
+
+    await runs.processRun(started.run!.id);
+
+    const updated = await store.read((current) =>
+      current.tasks.find((item) => item.id === task.id)
+    );
+    expect(updated?.status).toBe("review");
+    expect(updated?.history.map((entry) => entry.status)).toEqual([
+      "draft",
+      "in_progress",
+      "blocked",
+      "review"
+    ]);
+    expect(updated?.history.at(-1)?.actorId).toBe(
+      "20000000-0000-4000-8000-000000000001"
+    );
+    expect(captured[0].prompt).toContain(task.id);
+    expect(captured[0].prompt).toContain("Implement Task flow");
+    expect(captured[0].prompt).toContain("Move the Task to in progress.");
+
+    const employeeTool = captured[0].tools.find(
+      (item) => item.name === "update_task"
+    );
+    if (!employeeTool) throw new Error("update_task Tool was not available");
+    await expect(
+      employeeTool.execute("tool-call", {
+        taskId: task.id,
+        status: "completed"
+      })
+    ).rejects.toThrow("Task status is not allowed for Employee updates");
+    await expect(
+      employeeTool.execute("tool-call", {
+        taskId: task.id,
+        status: "cancelled"
+      })
+    ).rejects.toThrow("Task status is not allowed for Employee updates");
+    expect(
+      (await store.read((current) =>
+        current.tasks.find((item) => item.id === task.id)
+      ))?.status
+    ).toBe("review");
+  });
+
   it("parses names as slugged mentions", () => {
     const state = createFixtureState();
     expect(

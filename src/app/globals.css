@@ -772,6 +772,12 @@ label textarea {
   text-transform: uppercase;
 }
 
+.choice-fieldset.compact {
+  max-height: 150px;
+  overflow-y: auto;
+  padding: 9px;
+}
+
 .check-row {
   display: flex;
   align-items: center;

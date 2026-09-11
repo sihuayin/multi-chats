@@ -135,6 +135,32 @@ test("configures an Employee Group and completes a mentioned Run", async ({
     .fill("Confirm the brief is complete and consistent.");
   await page.getByRole("button", { name: "Add Task" }).click();
   await expect(page.getByText("Review launch brief")).toBeVisible();
+  const taskCard = page.locator(".task-card").filter({
+    hasText: "Review launch brief"
+  });
+  await taskCard.getByRole("button", { name: "Start" }).click();
+  await expect(taskCard.locator(".status-pill.in_progress")).toBeVisible();
+  await taskCard.getByRole("button", { name: "Block" }).click();
+  await expect(taskCard.locator(".status-pill.blocked")).toBeVisible();
+  await taskCard.getByRole("button", { name: "Resume" }).click();
+  await expect(taskCard.locator(".status-pill.in_progress")).toBeVisible();
+  await taskCard.getByRole("button", { name: "Review" }).click();
+  await expect(taskCard.locator(".status-pill.review")).toBeVisible();
+  await taskCard.getByRole("button", { name: "Complete" }).click();
+  await expect(taskCard.locator(".status-pill.completed")).toBeVisible();
+
+  await page.getByPlaceholder("Task title").fill("Cancel this task");
+  await page
+    .getByPlaceholder("Goal and expected result")
+    .fill("This Task should be cancelled.");
+  await page.getByLabel(secondEmployeeName).check();
+  await page.getByRole("button", { name: "Add Task" }).click();
+  const cancelledTask = page.locator(".task-card").filter({
+    hasText: "Cancel this task"
+  });
+  await expect(cancelledTask).toContainText(secondEmployeeName);
+  await cancelledTask.getByRole("button", { name: "Cancel" }).click();
+  await expect(cancelledTask.locator(".status-pill.cancelled")).toBeVisible();
 
   await page.goto("/");
   await page

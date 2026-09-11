@@ -1,10 +1,10 @@
 import type { Task, TaskStatus } from "@/server/domain/types";
 import { ApiError } from "@/server/application/errors";
 
-const employeeTransitions: Partial<Record<TaskStatus, TaskStatus[]>> = {
-  draft: ["in_progress", "blocked", "cancelled"],
-  in_progress: ["blocked", "review", "cancelled"],
-  blocked: ["in_progress", "review", "cancelled"],
+const taskTransitions: Partial<Record<TaskStatus, TaskStatus[]>> = {
+  draft: ["in_progress"],
+  in_progress: ["blocked", "review"],
+  blocked: ["in_progress", "review"],
   review: ["in_progress"]
 };
 
@@ -25,8 +25,26 @@ export function transitionTask(
         "task_transition"
       );
     }
-  } else if (next !== "cancelled" || actorId !== "user") {
-    const allowed = employeeTransitions[current] ?? [];
+  } else if (next === "cancelled") {
+    if (actorId !== "user") {
+      throw new ApiError(403, "Only the user can cancel a Task", "task_cancel");
+    }
+    if (current === "completed" || current === "cancelled") {
+      throw new ApiError(
+        409,
+        "Completed or cancelled Tasks cannot be cancelled again",
+        "task_transition"
+      );
+    }
+  } else {
+    if (actorId !== "user" && !task.assigneeIds.includes(actorId)) {
+      throw new ApiError(
+        403,
+        "Only assigned Employees can update a Task",
+        "task_assignee"
+      );
+    }
+    const allowed = taskTransitions[current] ?? [];
     if (!allowed.includes(next)) {
       throw new ApiError(
         409,

@@ -47,6 +47,7 @@ export function ChatWorkspace() {
   const [groupChoice, setGroupChoice] = useState("");
   const [taskTitle, setTaskTitle] = useState("");
   const [taskGoal, setTaskGoal] = useState("");
+  const [taskAssigneeIds, setTaskAssigneeIds] = useState<string[]>([]);
   const [startedRunId, setStartedRunId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [taskPanelOpen, setTaskPanelOpen] = useState(true);
@@ -61,6 +62,13 @@ export function ChatWorkspace() {
     conversations.find((conversation) => conversation.id === selectedId) ??
     conversations[0] ??
     null;
+  const selectedTaskAssigneeIds = useMemo(
+    () =>
+      taskAssigneeIds.filter((assigneeId) =>
+        selected?.memberIds.includes(assigneeId)
+      ),
+    [selected?.memberIds, taskAssigneeIds]
+  );
 
   const activeRun = useMemo(
     () =>
@@ -251,11 +259,15 @@ export function ChatWorkspace() {
         body: JSON.stringify({
           title: taskTitle,
           goal: taskGoal,
-          assigneeIds: selected.memberIds
+          assigneeIds:
+            selectedTaskAssigneeIds.length > 0
+              ? selectedTaskAssigneeIds
+              : selected.memberIds
         })
       });
       setTaskTitle("");
       setTaskGoal("");
+      setTaskAssigneeIds([]);
       await refresh();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
@@ -587,6 +599,30 @@ export function ChatWorkspace() {
               onChange={(event) => setTaskGoal(event.target.value)}
               placeholder={t("chat.taskGoal")}
             />
+            <fieldset className="choice-fieldset compact">
+              <legend>{t("chat.assignees")}</legend>
+              {selected.memberIds.map((memberId) => {
+                const employee = data?.employees.find(
+                  (item) => item.id === memberId
+                );
+                return (
+                  <label key={memberId} className="check-row">
+                    <input
+                      type="checkbox"
+                      checked={selectedTaskAssigneeIds.includes(memberId)}
+                      onChange={(event) =>
+                        setTaskAssigneeIds((current) =>
+                          event.target.checked
+                            ? [...current, memberId]
+                            : current.filter((id) => id !== memberId)
+                        )
+                      }
+                    />
+                    <span>{employee?.name ?? t("common.unknown")}</span>
+                  </label>
+                );
+              })}
+            </fieldset>
             <button
               className="button secondary"
               onClick={createTask}
@@ -632,6 +668,16 @@ export function ChatWorkspace() {
                   </span>
                 </div>
                 <p>{task.goal}</p>
+                <small>
+                  {task.assigneeIds
+                    .map(
+                      (assigneeId) =>
+                        data?.employees.find(
+                          (employee) => employee.id === assigneeId
+                        )?.name ?? t("common.unknown")
+                    )
+                    .join(", ")}
+                </small>
                 <div className="button-row wrap">
                   {task.status === "draft" ? (
                     <button
@@ -642,21 +688,53 @@ export function ChatWorkspace() {
                     </button>
                   ) : null}
                   {task.status === "in_progress" ? (
-                    <button
-                      className="button quiet"
-                      onClick={() => updateTask(task, "review")}
-                    >
-                      {t("chat.review")}
-                    </button>
+                    <>
+                      <button
+                        className="button quiet"
+                        onClick={() => updateTask(task, "blocked")}
+                      >
+                        {t("chat.block")}
+                      </button>
+                      <button
+                        className="button quiet"
+                        onClick={() => updateTask(task, "review")}
+                      >
+                        {t("chat.review")}
+                      </button>
+                    </>
+                  ) : null}
+                  {task.status === "blocked" ? (
+                    <>
+                      <button
+                        className="button quiet"
+                        onClick={() => updateTask(task, "in_progress")}
+                      >
+                        {t("chat.resume")}
+                      </button>
+                      <button
+                        className="button quiet"
+                        onClick={() => updateTask(task, "review")}
+                      >
+                        {t("chat.review")}
+                      </button>
+                    </>
                   ) : null}
                   {task.status === "review" ? (
-                    <button
-                      className="button quiet"
-                      onClick={() => updateTask(task, "completed")}
-                    >
-                      <Check size={14} />
-                      {t("chat.complete")}
-                    </button>
+                    <>
+                      <button
+                        className="button quiet"
+                        onClick={() => updateTask(task, "in_progress")}
+                      >
+                        {t("chat.returnToWork")}
+                      </button>
+                      <button
+                        className="button quiet"
+                        onClick={() => updateTask(task, "completed")}
+                      >
+                        <Check size={14} />
+                        {t("chat.complete")}
+                      </button>
+                    </>
                   ) : null}
                   {["draft", "in_progress", "blocked", "review"].includes(
                     task.status

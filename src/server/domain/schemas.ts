@@ -45,7 +45,7 @@ export const messageInputSchema = z.object({
 export const taskInputSchema = z.object({
   title: z.string().trim().min(1).max(120),
   goal: z.string().trim().min(1).max(8000),
-  assigneeIds: z.array(z.string()).default([])
+  assigneeIds: z.array(z.string()).min(1)
 });
 
 export const taskStatusSchema = z.enum([
@@ -59,7 +59,7 @@ export const taskStatusSchema = z.enum([
 
 export const taskPatchSchema = z.object({
   status: taskStatusSchema.optional(),
-  assigneeIds: z.array(z.string()).optional(),
+  assigneeIds: z.array(z.string()).min(1).optional(),
   goal: z.string().trim().min(1).max(8000).optional(),
   title: z.string().trim().min(1).max(120).optional()
 });

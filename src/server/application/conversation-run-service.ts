@@ -151,7 +151,7 @@ function taskContext(state: AppState, conversationId: string, employeeId: string
   return tasks
     .map(
       (task) =>
-        `Task ${task.title} [${task.status}]: ${task.goal}${
+        `Task ${task.id} "${task.title}" [${task.status}]: ${task.goal}${
           task.assigneeIds.includes(employeeId) ? " (assigned to you)" : ""
         }`
     )
@@ -776,9 +776,6 @@ export class ConversationRunService {
         const task = state.tasks.find((item) => item.id === taskId);
         if (!run || !task || task.conversationId !== run.conversationId) {
           throw new Error("Task does not belong to this Conversation");
-        }
-        if (task.assigneeIds.length > 0 && !task.assigneeIds.includes(employeeId)) {
-          throw new Error("Task is not assigned to this Employee");
         }
         transitionTask(
           task,

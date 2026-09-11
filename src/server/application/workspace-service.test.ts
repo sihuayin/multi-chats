@@ -60,13 +60,92 @@ describe("Workspace Configuration", () => {
       {
         title: "Review evidence",
         goal: "Check all claims.",
-        assigneeIds: []
+        assigneeIds: ["20000000-0000-4000-8000-000000000001"]
       }
     );
 
     await expect(
       service.updateTask(task.id, { status: "completed" }, "employee")
     ).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("allows only the user to cancel Tasks", async () => {
+    const service = new WorkspaceService(
+      new MemoryStore(createFixtureState()),
+      new AesCredentialCipher(TEST_KEY),
+      noopProviderRegistry
+    );
+    const task = await service.createTask(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        title: "Review evidence",
+        goal: "Check all claims.",
+        assigneeIds: ["20000000-0000-4000-8000-000000000001"]
+      }
+    );
+
+    await expect(
+      service.updateTask(
+        task.id,
+        { status: "cancelled" },
+        "20000000-0000-4000-8000-000000000001"
+      )
+    ).rejects.toMatchObject({ code: "task_cancel" });
+    await expect(
+      service.updateTask(task.id, { status: "cancelled" }, "user")
+    ).resolves.toMatchObject({ status: "cancelled" });
+  });
+
+  it("rejects Task updates from unassigned Employees", async () => {
+    const service = new WorkspaceService(
+      new MemoryStore(createFixtureState()),
+      new AesCredentialCipher(TEST_KEY),
+      noopProviderRegistry
+    );
+    const task = await service.createTask(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        title: "Assigned to Alice",
+        goal: "Complete the task.",
+        assigneeIds: ["20000000-0000-4000-8000-000000000001"]
+      }
+    );
+
+    await expect(
+      service.updateTask(
+        task.id,
+        { status: "in_progress" },
+        "20000000-0000-4000-8000-000000000002"
+      )
+    ).rejects.toMatchObject({ code: "task_assignee" });
+  });
+
+  it("keeps at least one assignee on every Task", async () => {
+    const service = new WorkspaceService(
+      new MemoryStore(createFixtureState()),
+      new AesCredentialCipher(TEST_KEY),
+      noopProviderRegistry
+    );
+
+    await expect(
+      service.createTask("30000000-0000-4000-8000-000000000001", {
+        title: "Unassigned Task",
+        goal: "This should be rejected.",
+        assigneeIds: []
+      })
+    ).rejects.toThrow("Too small");
+
+    const task = await service.createTask(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        title: "Assigned Task",
+        goal: "Keep the assignee invariant.",
+        assigneeIds: ["20000000-0000-4000-8000-000000000001"]
+      }
+    );
+    await expect(
+      service.updateTask(task.id, { assigneeIds: [] }, "user")
+    ).rejects.toThrow("Too small");
   });
 
   it("encrypts provider credentials at rest and never returns the secret", async () => {
