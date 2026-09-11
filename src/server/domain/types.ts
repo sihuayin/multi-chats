@@ -131,6 +131,7 @@ export type RunEvent = {
     | "message_completed"
     | "tool_started"
     | "tool_completed"
+    | "tool_cancelled"
     | "approval_requested"
     | "approval_resolved"
     | "task_changed"

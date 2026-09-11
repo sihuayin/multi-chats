@@ -1,4 +1,8 @@
 import type { ProviderId } from "@/server/domain/types";
+import type {
+  ToolExecutionErrorKind,
+  ToolExecutionResult
+} from "@/server/application/tool-gateway";
 
 export type ModelTool = {
   name: string;
@@ -10,7 +14,7 @@ export type ModelTool = {
     toolCallId: string,
     args: Record<string, unknown>,
     signal?: AbortSignal
-  ) => Promise<{ content: string; details?: unknown; isError?: boolean }>;
+  ) => Promise<ToolExecutionResult>;
 };
 
 export type ModelRequest = {
@@ -38,6 +42,7 @@ export type ModelEvent =
       toolName: string;
       result: string;
       isError: boolean;
+      errorKind?: ToolExecutionErrorKind;
     }
   | {
       type: "error";

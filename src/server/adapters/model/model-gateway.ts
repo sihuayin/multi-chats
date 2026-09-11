@@ -6,6 +6,7 @@ import type {
   ModelGateway,
   ModelRequest
 } from "@/server/application/model-gateway";
+import { isToolExecutionErrorKind } from "@/server/application/tool-gateway";
 
 export class FakeModelGateway implements ModelGateway {
   constructor(
@@ -20,6 +21,36 @@ export class FakeModelGateway implements ModelGateway {
         message: "model failed after partial output",
         kind: "terminal"
       };
+      return;
+    }
+    const currentRequest =
+      [...request.prompt.matchAll(/^User: (.+)$/gm)].at(-1)?.[1] ?? "";
+    if (currentRequest.includes("USE_CURRENT_TIME")) {
+      const tool = request.tools.find((item) => item.name === "current_time");
+      if (!tool) {
+        yield { type: "error", message: "current_time Tool is unavailable", kind: "terminal" };
+        return;
+      }
+      yield {
+        type: "tool_started",
+        toolCallId: "fake-current-time",
+        toolName: tool.name,
+        args: {}
+      };
+      const result = await tool.execute("fake-current-time", {});
+      yield {
+        type: "tool_completed",
+        toolCallId: "fake-current-time",
+        toolName: tool.name,
+        result: result.content,
+        isError: Boolean(result.isError),
+        errorKind: result.errorKind
+      };
+      const text = result.isError
+        ? `Tool failed: ${result.content}`
+        : `Current time: ${result.content}`;
+      yield { type: "text_delta", delta: text };
+      yield { type: "text_completed", text };
       return;
     }
     const employee = request.systemPrompt
@@ -77,7 +108,12 @@ export class PiModelGateway implements ModelGateway {
         const result = await tool.execute(toolCallId, asRecord(params), signal);
         return {
           content: [{ type: "text", text: result.content }],
-          details: result.details,
+          details: result.errorKind
+            ? {
+                ...asRecord(result.details),
+                errorKind: result.errorKind
+              }
+            : result.details,
           isError: result.isError
         };
       }
@@ -91,6 +127,10 @@ export class PiModelGateway implements ModelGateway {
       },
       streamFn: models.streamSimple.bind(models),
       toolExecution: "sequential",
+      afterToolCall: async ({ result, isError }) => ({
+        isError:
+          isError || isToolExecutionErrorKind(asRecord(result.details).errorKind)
+      }),
       maxRetryDelayMs: 2_000
     });
 
@@ -117,6 +157,7 @@ export class PiModelGateway implements ModelGateway {
       }
 
       if (event.type === "tool_execution_end") {
+        const details = asRecord(event.result?.details);
         const text =
           Array.isArray(event.result?.content) &&
           event.result.content.every((item: unknown) => typeof item === "object")
@@ -131,7 +172,10 @@ export class PiModelGateway implements ModelGateway {
           toolCallId: event.toolCallId,
           toolName: event.toolName,
           result: text,
-          isError: event.isError
+          isError: event.isError,
+          errorKind: isToolExecutionErrorKind(details.errorKind)
+            ? details.errorKind
+            : undefined
         });
       }
 

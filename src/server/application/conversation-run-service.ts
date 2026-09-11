@@ -1,5 +1,3 @@
-import { isIP } from "node:net";
-
 import type {
   AppState,
   Employee,
@@ -14,13 +12,14 @@ import type {
   ModelTool
 } from "@/server/application/model-gateway";
 import { ApiError, notFound } from "@/server/application/errors";
+import { appendEvent } from "@/server/application/run-ledger";
+import { transitionTask } from "@/server/application/task-ledger";
 import {
-  assertTaskAssignee,
-  transitionTask
-} from "@/server/application/task-ledger";
-import { createTaskArtifact } from "@/server/application/artifact-ledger";
+  RegisteredToolGateway,
+  type ToolExecutionResult,
+  type ToolGateway
+} from "@/server/application/tool-gateway";
 import { messageInputSchema } from "@/server/domain/schemas";
-import { isArtifactType } from "@/lib/artifact-types";
 import type { CredentialCipher } from "@/server/security/credential-cipher";
 import { BUILT_IN_TOOLS } from "@/server/store/initial-state";
 import type { StateStore } from "@/server/store/store";
@@ -32,48 +31,6 @@ export type StartTurnResult = {
 
 function now(): string {
   return new Date().toISOString();
-}
-
-function assertSafeHttpUrl(value: string): URL {
-  const url = new URL(value);
-  if (!["http:", "https:"].includes(url.protocol)) {
-    throw new Error("Only HTTP and HTTPS URLs are allowed");
-  }
-
-  const hostname = url.hostname.toLowerCase();
-  if (
-    hostname === "localhost" ||
-    hostname.endsWith(".local") ||
-    hostname === "::1"
-  ) {
-    throw new Error("Local network URLs are not allowed");
-  }
-
-  const version = isIP(hostname);
-  if (version === 4) {
-    const [first, second] = hostname.split(".").map(Number);
-    if (
-      first === 0 ||
-      first === 10 ||
-      first === 127 ||
-      (first === 169 && second === 254) ||
-      (first === 172 && second >= 16 && second <= 31) ||
-      (first === 192 && second === 168)
-    ) {
-      throw new Error("Private network URLs are not allowed");
-    }
-  }
-
-  if (
-    version === 6 &&
-    (hostname.startsWith("fc") ||
-      hostname.startsWith("fd") ||
-      hostname.startsWith("fe80"))
-  ) {
-    throw new Error("Private network URLs are not allowed");
-  }
-
-  return url;
 }
 
 function slugify(value: string): string {
@@ -102,28 +59,6 @@ export function parseMentions(
     all: mentions.includes("all"),
     employeeIds
   };
-}
-
-function appendEvent(
-  state: AppState,
-  run: Run,
-  type: RunEvent["type"],
-  payload: Record<string, unknown> = {}
-): RunEvent {
-  const event: RunEvent = {
-    id: crypto.randomUUID(),
-    workspaceId: state.workspace.id,
-    runId: run.id,
-    sequence:
-      state.runEvents
-        .filter((item) => item.runId === run.id)
-        .reduce((highest, item) => Math.max(highest, item.sequence), 0) + 1,
-    type,
-    payload,
-    createdAt: now()
-  };
-  state.runEvents.push(event);
-  return event;
 }
 
 function transcriptFor(state: AppState, conversationId: string): string {
@@ -178,13 +113,20 @@ function toolDefinitionsForEmployee(
 
 export class ConversationRunService {
   private readonly activeControllers = new Map<string, AbortController>();
+  private readonly toolGateway: ToolGateway;
 
   constructor(
     private readonly store: StateStore,
     private readonly cipher: CredentialCipher,
     private readonly gateway: ModelGateway,
-    private readonly options: { approvalTimeoutMs?: number } = {}
-  ) {}
+    private readonly options: {
+      approvalTimeoutMs?: number;
+      toolGateway?: ToolGateway;
+    } = {}
+  ) {
+    this.toolGateway =
+      options.toolGateway ?? new RegisteredToolGateway(store);
+  }
 
   async recoverInterruptedRuns(): Promise<void> {
     await this.store.update((state) => {
@@ -560,17 +502,19 @@ export class ConversationRunService {
       return structuredClone(message);
     });
 
+    const allowedToolNames = context.tools.map((tool) => tool.name);
     const modelTools: ModelTool[] = context.tools.map((tool) => ({
       name: tool.name,
       label: tool.label,
       description: tool.description,
       inputSchema: tool.inputSchema,
       replay: tool.replay,
-      execute: (toolCallId, args, toolSignal) =>
+      execute: (_toolCallId, args, toolSignal) =>
         this.executeTool(
           runId,
           message.id,
           employeeId,
+          allowedToolNames,
           tool,
           args,
           toolSignal
@@ -686,10 +630,15 @@ export class ConversationRunService {
           ...event
         });
         if (event.isError) {
-          appendEvent(state, run, "tool_error", {
-            messageId,
-            ...event
-          });
+          appendEvent(
+            state,
+            run,
+            event.errorKind === "cancelled" ? "tool_cancelled" : "tool_error",
+            {
+              messageId,
+              ...event
+            }
+          );
         }
       }
       if (event.type === "error") {
@@ -706,10 +655,11 @@ export class ConversationRunService {
     runId: string,
     messageId: string,
     employeeId: string,
+    allowedToolNames: string[],
     tool: ToolDefinition,
     args: Record<string, unknown>,
     signal?: AbortSignal
-  ): Promise<{ content: string; details?: unknown; isError?: boolean }> {
+  ): Promise<ToolExecutionResult> {
     if (tool.requiresApproval) {
       const approval = await this.requestApproval(
         runId,
@@ -722,120 +672,45 @@ export class ConversationRunService {
         return {
           content: "The user rejected this Tool call.",
           details: { approvalId: approval.id },
-          isError: true
+          isError: true,
+          errorKind: "unauthorized"
         };
       }
       if (approval.status === "cancelled" || approval.status === "expired") {
         return {
           content: `Tool approval ${approval.status}.`,
           details: { approvalId: approval.id },
-          isError: true
+          isError: true,
+          errorKind: "cancelled"
         };
       }
     }
 
-    if (tool.name === "current_time") {
-      return { content: new Date().toISOString() };
-    }
-
-    if (tool.name === "fetch_url") {
-      const url = String(args.url ?? "");
-      const parsed = assertSafeHttpUrl(url);
-      const response = await fetch(parsed, {
-        signal,
-        headers: { "user-agent": "multi-chats/0.1" }
-      });
-      const text = (await response.text()).slice(0, 50_000);
-      return {
-        content: text,
-        details: { status: response.status, url }
-      };
-    }
-
-    if (tool.name === "post_webhook") {
-      const url = String(args.url ?? "");
-      const parsed = assertSafeHttpUrl(url);
-      const response = await fetch(parsed, {
-        method: "POST",
-        signal,
-        headers: {
-          "content-type": "application/json",
-          "user-agent": "multi-chats/0.1"
+    try {
+      return await this.toolGateway.execute({
+        tool,
+        args,
+        context: {
+          runId,
+          employeeId,
+          allowedToolNames
         },
-        body: JSON.stringify(args.body ?? {})
+        signal
       });
+    } catch (error) {
+      if (signal?.aborted) {
+        return {
+          content: "Tool call cancelled.",
+          isError: true,
+          errorKind: "cancelled"
+        };
+      }
       return {
-        content: `Webhook responded with HTTP ${response.status}.`,
-        details: { status: response.status, url }
+        content: error instanceof Error ? error.message : String(error),
+        isError: true,
+        errorKind: "execution"
       };
     }
-
-    if (tool.name === "update_task") {
-      const taskId = String(args.taskId ?? "");
-      const status = String(args.status ?? "");
-      if (!["in_progress", "blocked", "review"].includes(status)) {
-        throw new Error("Task status is not allowed for Employee updates");
-      }
-      await this.store.update((state) => {
-        const run = state.runs.find((item) => item.id === runId);
-        const task = state.tasks.find((item) => item.id === taskId);
-        if (!run || !task || task.conversationId !== run.conversationId) {
-          throw new Error("Task does not belong to this Conversation");
-        }
-        transitionTask(
-          task,
-          status as "in_progress" | "blocked" | "review",
-          employeeId
-        );
-        appendEvent(state, run, "task_changed", {
-          taskId,
-          status: task.status,
-          employeeId
-        });
-      });
-      return { content: `Task moved to ${status}.` };
-    }
-
-    if (tool.name === "attach_artifact") {
-      const taskId = typeof args.taskId === "string" ? args.taskId : "";
-      const type = args.type;
-      if (!isArtifactType(type)) {
-        throw new Error("Unsupported Artifact type");
-      }
-      if (
-        typeof args.name !== "string" ||
-        typeof args.content !== "string"
-      ) {
-        throw new Error("Artifact name and content must be strings");
-      }
-      const artifactId = await this.store.update((state) => {
-        const run = state.runs.find((item) => item.id === runId);
-        const task = state.tasks.find((item) => item.id === taskId);
-        if (!run || !task || task.conversationId !== run.conversationId) {
-          throw new Error("Task does not belong to this Conversation");
-        }
-        assertTaskAssignee(task, employeeId);
-        const artifact = createTaskArtifact(
-          state,
-          taskId,
-          {
-            type,
-            name: args.name,
-            content: args.content
-          },
-          employeeId
-        );
-        appendEvent(state, run, "artifact_created", {
-          taskId,
-          artifactId: artifact.id,
-          employeeId
-        });
-        return artifact.id;
-      });
-      return { content: `Artifact attached.`, details: { artifactId } };
-    }
-
-    throw new Error(`Tool ${tool.name} is not implemented`);
   }
 
   private async requestApproval(

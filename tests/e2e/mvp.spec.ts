@@ -227,6 +227,18 @@ test("configures an Employee Group and completes a mentioned Run", async ({
 
   await page
     .getByPlaceholder("Message the group or mention @employee")
+    .fill(`@researcher-${suffix} USE_CURRENT_TIME`);
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText(/Current time:/)).toBeVisible({
+    timeout: 10_000
+  });
+  const toolRunTimeline = page.locator(".run-timeline");
+  await toolRunTimeline.locator("summary").click();
+  await expect(toolRunTimeline).toContainText("tool started");
+  await expect(toolRunTimeline).toContainText("tool completed");
+
+  await page
+    .getByPlaceholder("Message the group or mention @employee")
     .fill(`@researcher-${suffix} slow request`);
   await page.getByRole("button", { name: "Send" }).click();
   await expect(

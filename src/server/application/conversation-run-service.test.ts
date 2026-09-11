@@ -14,6 +14,11 @@ import {
 import { MemoryStore } from "@/server/store/memory-store";
 import { WorkspaceService } from "@/server/application/workspace-service";
 import type { ModelGateway } from "@/server/application/model-gateway";
+import type {
+  ToolExecutionRequest,
+  ToolExecutionResult,
+  ToolGateway
+} from "@/server/application/tool-gateway";
 
 describe("ConversationRun", () => {
   it("stores a Message without starting a Run when no Employee is mentioned", async () => {
@@ -79,6 +84,205 @@ describe("ConversationRun", () => {
       "employee_turn_completed",
       "run_completed"
     ]);
+  });
+
+  it("exposes only Tools allowed by the Employee's Skills", async () => {
+    const store = new MemoryStoreFixture();
+    const engine = new RecordingModelGateway();
+    const runService = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      engine
+    );
+
+    const alice = await runService.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice inspect the Tools" }
+    );
+    await runService.processRun(alice.run!.id);
+    const bob = await runService.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@bob inspect the Tools" }
+    );
+    await runService.processRun(bob.run!.id);
+
+    expect(engine.requests[0].tools.map((tool) => tool.name)).toEqual([
+      "current_time",
+      "fetch_url"
+    ]);
+    expect(engine.requests[1].tools).toEqual([]);
+  });
+
+  it("executes read-only Tools through the Tool Gateway and uses the result", async () => {
+    const store = new MemoryStoreFixture();
+    const calls: ToolExecutionRequest[] = [];
+    const toolGateway: ToolGateway = {
+      async execute(request) {
+        calls.push(request);
+        return {
+          content: "2026-01-01T00:00:00.000Z",
+          details: { source: "fake" }
+        };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      toolModelGateway("current_time", {}, (content) => content),
+      { toolGateway }
+    );
+    const started = await runs.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice use the current time Tool" }
+    );
+
+    await runs.processRun(started.run!.id);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      tool: { name: "current_time" },
+      args: {},
+      context: {
+        employeeId: "20000000-0000-4000-8000-000000000001",
+        allowedToolNames: ["current_time", "fetch_url"]
+      }
+    });
+    const messages = await runs.listMessages(started.message.conversationId);
+    expect(messages.at(-1)?.content).toBe(
+      "The Tool returned 2026-01-01T00:00:00.000Z."
+    );
+    const events = await runs.listRunEvents(started.run!.id);
+    expect(events.map((event) => event.type)).toEqual(
+      expect.arrayContaining(["tool_started", "tool_completed"])
+    );
+    expect(events.map((event) => event.type)).not.toContain("tool_error");
+    expect(await store.read((state) => state.approvals)).toEqual([]);
+  });
+
+  it("reports denied Tool calls without executing them", async () => {
+    const store = new MemoryStoreFixture();
+    const toolGateway: ToolGateway = {
+      async execute() {
+        return {
+          content: "This Tool is not allowed for this Employee.",
+          isError: true,
+          errorKind: "unauthorized"
+        };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      toolModelGateway("current_time", {}, () => "denied"),
+      { toolGateway }
+    );
+    const started = await runs.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice use a denied Tool" }
+    );
+
+    await runs.processRun(started.run!.id);
+
+    const events = await runs.listRunEvents(started.run!.id);
+    expect(
+      events.find((event) => event.type === "tool_completed")?.payload
+    ).toMatchObject({ isError: true, errorKind: "unauthorized" });
+    expect(
+      events.find((event) => event.type === "tool_error")?.payload
+    ).toMatchObject({ errorKind: "unauthorized" });
+  });
+
+  it("reports Tool schema failures without executing the Tool", async () => {
+    const store = new MemoryStoreFixture();
+    const toolGateway: ToolGateway = {
+      async execute() {
+        return {
+          content: "Invalid Tool arguments.",
+          isError: true,
+          errorKind: "validation"
+        };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      toolModelGateway("fetch_url", {}, () => "invalid"),
+      { toolGateway }
+    );
+    const started = await runs.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice call fetch_url without a URL" }
+    );
+
+    await runs.processRun(started.run!.id);
+
+    const events = await runs.listRunEvents(started.run!.id);
+    expect(
+      events.find((event) => event.type === "tool_error")?.payload
+    ).toMatchObject({ errorKind: "validation" });
+  });
+
+  it("records Tool cancellation separately from completion", async () => {
+    const store = new MemoryStoreFixture();
+    const toolGateway: ToolGateway = {
+      execute(request) {
+        return new Promise<ToolExecutionResult>((resolve) => {
+          if (request.signal?.aborted) {
+            resolve({
+              content: "Tool call cancelled.",
+              isError: true,
+              errorKind: "cancelled"
+            });
+            return;
+          }
+          request.signal?.addEventListener(
+            "abort",
+            () =>
+              resolve({
+                content: "Tool call cancelled.",
+                isError: true,
+                errorKind: "cancelled"
+              }),
+            { once: true }
+          );
+        });
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      toolModelGateway("current_time", {}, () => "cancelled"),
+      { toolGateway }
+    );
+    const started = await runs.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice wait inside a Tool" }
+    );
+    const processing = runs.processRun(started.run!.id);
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const startedTool = await store.read((state) =>
+        state.runEvents.some(
+          (event) =>
+            event.runId === started.run!.id && event.type === "tool_started"
+        )
+      );
+      if (startedTool) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    await runs.cancelRun(started.run!.id);
+    await processing;
+
+    expect((await runs.getRunById(started.run!.id))?.status).toBe("cancelled");
+    expect(
+      (await runs.listRunEvents(started.run!.id)).map((event) => event.type)
+    ).toEqual(
+      expect.arrayContaining([
+        "tool_started",
+        "tool_completed",
+        "tool_cancelled"
+      ])
+    );
   });
 
   it("retries a transient model failure when no output was produced", async () => {
@@ -321,13 +525,19 @@ describe("ConversationRun", () => {
         taskId: task.id,
         status: "completed"
       })
-    ).rejects.toThrow("Task status is not allowed for Employee updates");
+    ).resolves.toMatchObject({
+      isError: true,
+      errorKind: "validation"
+    });
     await expect(
       employeeTool.execute("tool-call", {
         taskId: task.id,
         status: "cancelled"
       })
-    ).rejects.toThrow("Task status is not allowed for Employee updates");
+    ).resolves.toMatchObject({
+      isError: true,
+      errorKind: "validation"
+    });
     expect(
       (await store.read((current) =>
         current.tasks.find((item) => item.id === task.id)
@@ -460,7 +670,7 @@ describe("ConversationRun", () => {
         assigneeIds: ["20000000-0000-4000-8000-000000000001"]
       }
     );
-    const failures: string[] = [];
+    const failures: ToolExecutionResult[] = [];
     const gateway: ModelGateway = {
       async *run(request) {
         const tool = request.tools.find(
@@ -487,11 +697,7 @@ describe("ConversationRun", () => {
             content: { bytes: [0, 1, 2, 3] }
           }
         ]) {
-          try {
-            await tool.execute("invalid-tool", args);
-          } catch (error) {
-            failures.push(error instanceof Error ? error.message : String(error));
-          }
+          failures.push(await tool.execute("invalid-tool", args));
         }
         yield { type: "text_delta", delta: "Validation complete." };
         yield { type: "text_completed", text: "Validation complete." };
@@ -509,10 +715,15 @@ describe("ConversationRun", () => {
 
     await runs.processRun(started.run!.id);
 
-    expect(failures).toEqual([
-      "Unsupported Artifact type",
+    expect(failures.map((result) => result.content)).toEqual([
+      "Invalid Tool arguments: /type must be equal to one of the allowed values",
       "JSON Artifact content is invalid",
-      "Artifact name and content must be strings"
+      "Invalid Tool arguments: /content must be string"
+    ]);
+    expect(failures.map((result) => result.errorKind)).toEqual([
+      "validation",
+      "validation",
+      "validation"
     ]);
     expect(await store.read((current) => current.artifacts)).toEqual([]);
   });
@@ -877,4 +1088,39 @@ class MemoryStoreFixture extends MemoryStore {
   constructor() {
     super(createFixtureState());
   }
+}
+
+function toolModelGateway(
+  toolName: string,
+  args: Record<string, unknown>,
+  format: (content: string) => string
+): ModelGateway {
+  return {
+    async *run(request) {
+      const tool = request.tools.find((item) => item.name === toolName);
+      if (!tool) throw new Error(`${toolName} Tool was not available`);
+      yield {
+        type: "tool_started",
+        toolCallId: "test-tool-call",
+        toolName,
+        args
+      };
+      const result = await tool.execute(
+        "test-tool-call",
+        args,
+        request.signal
+      );
+      yield {
+        type: "tool_completed",
+        toolCallId: "test-tool-call",
+        toolName,
+        result: result.content,
+        isError: Boolean(result.isError),
+        errorKind: result.errorKind
+      };
+      const text = `The Tool returned ${format(result.content)}.`;
+      yield { type: "text_delta", delta: text };
+      yield { type: "text_completed", text };
+    }
+  };
 }
