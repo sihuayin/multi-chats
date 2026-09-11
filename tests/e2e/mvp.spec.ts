@@ -59,12 +59,29 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   await page.getByLabel("Group name").fill(`Research Team ${suffix}`);
   await page.getByLabel(employeeName).check();
   await page.getByRole("button", { name: "Create Group" }).click();
-  await expect(page.getByText(`Research Team ${suffix}`)).toBeVisible();
+  const groupName = `Research Team ${suffix}`;
+  const editedGroupName = `${groupName} V2`;
+  await expect(page.getByText(groupName)).toBeVisible();
+
+  const groupCard = page.locator(".list-card").filter({ hasText: groupName });
+  let groupDialogIndex = 0;
+  const groupDialogHandler = async (
+    dialog: import("@playwright/test").Dialog
+  ) => {
+    await dialog.accept(
+      groupDialogIndex === 0 ? editedGroupName : employeeName
+    );
+    groupDialogIndex += 1;
+  };
+  page.on("dialog", groupDialogHandler);
+  await groupCard.getByTitle("Edit Group").click();
+  page.off("dialog", groupDialogHandler);
+  await expect(page.getByText(editedGroupName)).toBeVisible();
 
   await page.goto("/");
   await page.getByTitle("New conversation").click();
   await expect(
-    page.getByRole("heading", { name: `Research Team ${suffix} Conversation` })
+    page.getByRole("heading", { name: `${editedGroupName} Conversation` })
   ).toBeVisible();
   await page
     .getByPlaceholder("Message the group or mention @employee")
@@ -82,6 +99,26 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   await page.getByRole("button", { name: "Add Task" }).click();
   await expect(page.getByText("Review launch brief")).toBeVisible();
 
+  await page.goto("/");
+  await page
+    .getByLabel("Conversation", { exact: true })
+    .selectOption("ad-hoc");
+  await page.getByTitle("New conversation").click();
+  await expect(
+    page.getByRole("heading", { name: "Ad hoc conversation" })
+  ).toBeVisible();
+  const adHocDialogHandler = async (
+    dialog: import("@playwright/test").Dialog
+  ) => {
+    await dialog.accept(employeeName);
+  };
+  page.on("dialog", adHocDialogHandler);
+  await page.getByTitle("Edit Conversation members").click();
+  page.off("dialog", adHocDialogHandler);
+  await expect(
+    page.locator(".member-stack").filter({ hasText: employeeName })
+  ).toBeVisible();
+
   await page.goto("/employees");
   const employeeCard = page.locator(".list-card").filter({ hasText: employeeName });
   const editedEmployeeName = `${employeeName} Edited`;
@@ -98,10 +135,14 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   await editedCard.getByRole("button", { name: "Disable" }).click();
   await expect(editedCard.getByRole("button", { name: "Enable" })).toBeVisible();
 
+  await page.goto("/");
+  await page.locator(".conversation-item").last().click();
+  await expect(page.locator('.member-state[title="disabled"]')).toHaveCount(1);
+
   await page.getByRole("button", { name: "中文" }).click();
   await expect(page.getByRole("link", { name: "员工" })).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "员工", exact: true })
+    page.getByRole("heading", { name: "会话", exact: true })
   ).toBeVisible();
 
   await page.getByRole("button", { name: "EN", exact: true }).click();

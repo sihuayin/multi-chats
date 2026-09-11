@@ -351,6 +351,18 @@ button {
   border-radius: 999px;
 }
 
+.member-state {
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  background: #9aa5a1;
+  border-radius: 50%;
+}
+
+.member-state.active {
+  background: #27a269;
+}
+
 .status-pill.completed {
   color: #0b6e5e;
   background: #dff3eb;

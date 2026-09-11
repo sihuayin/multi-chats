@@ -393,6 +393,18 @@ export function ChatWorkspace() {
                   );
                   return (
                     <span key={memberId} className="member-chip">
+                      <i
+                        className={
+                          employee?.active
+                            ? "member-state active"
+                            : "member-state"
+                        }
+                        title={
+                          employee?.active
+                            ? t("common.active")
+                            : t("common.disabled")
+                        }
+                      />
                       {employee?.name ?? t("common.unknown")}
                     </span>
                   );
