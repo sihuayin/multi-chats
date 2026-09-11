@@ -88,7 +88,11 @@ describe("ConversationRun", () => {
       async *run() {
         attempts += 1;
         if (attempts === 1) {
-          yield { type: "error", message: "temporary model failure" };
+          yield {
+            type: "error",
+            message: "temporary model failure",
+            kind: "retryable"
+          };
           return;
         }
         yield { type: "text_delta", delta: "recovered" };
@@ -119,7 +123,11 @@ describe("ConversationRun", () => {
     const gateway: ModelGateway = {
       async *run() {
         yield { type: "text_delta", delta: "partial output" };
-        yield { type: "error", message: "model failed after output" };
+        yield {
+          type: "error",
+          message: "model failed after output",
+          kind: "terminal"
+        };
       }
     };
     const runService = new ConversationRunService(
@@ -293,6 +301,64 @@ describe("ConversationRun", () => {
     ).toBe(true);
   });
 
+  it("does not resume or complete a Run cancelled while awaiting approval", async () => {
+    const state = createFixtureState();
+    const customSkillId = "40000000-0000-4000-8000-000000000002";
+    state.skills.push({
+      id: customSkillId,
+      workspaceId: state.workspace.id,
+      name: "Publisher",
+      description: "Posts approved updates.",
+      instructions: "Publish only after approval.",
+      inputs: ["payload"],
+      outputs: ["receipt"],
+      toolNames: ["post_webhook"],
+      builtIn: false,
+      createdAt: state.workspace.createdAt,
+      updatedAt: state.workspace.updatedAt
+    });
+    state.employees[0].skillIds.push(customSkillId);
+    const store = new MemoryStore(state);
+    const runService = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      new ToolCallingModelGateway()
+    );
+    const started = await runService.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice publish the update" }
+    );
+    const processing = runService.processRun(started.run!.id);
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const pending = await store.read((current) =>
+        current.approvals.some(
+          (approval) =>
+            approval.runId === started.run!.id && approval.status === "pending"
+        )
+      );
+      if (pending) break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+
+    await runService.cancelRun(started.run!.id);
+    await processing;
+
+    expect((await runService.getRunById(started.run!.id))?.status).toBe(
+      "cancelled"
+    );
+    expect(
+      (await runService.listMessages(started.message.conversationId)).at(-1)
+        ?.status
+    ).toBe("cancelled");
+    expect(
+      await store.read((current) =>
+        current.approvals
+          .filter((approval) => approval.runId === started.run!.id)
+          .every((approval) => approval.status === "cancelled")
+      )
+    ).toBe(true);
+  });
+
   it("claims a queued Run only once when workers process it concurrently", async () => {
     const store = new MemoryStoreFixture();
     let attempts = 0;
@@ -337,6 +403,16 @@ describe("ConversationRun", () => {
       createdAt: state.workspace.createdAt,
       updatedAt: state.workspace.updatedAt
     });
+    state.approvals.push({
+      id: "pending-approval",
+      workspaceId: state.workspace.id,
+      runId: "50000000-0000-4000-8000-000000000001",
+      messageId: "streaming-message",
+      toolName: "post_webhook",
+      args: {},
+      status: "pending",
+      createdAt: state.workspace.createdAt
+    });
     state.runs.push({
       id: "50000000-0000-4000-8000-000000000001",
       workspaceId: state.workspace.id,
@@ -373,6 +449,14 @@ describe("ConversationRun", () => {
     expect(events.map((event) => event.type)).toContain(
       "employee_turn_interrupted"
     );
+    expect(
+      await store.read(
+        (current) =>
+          current.approvals.find(
+            (approval) => approval.id === "pending-approval"
+          )?.status
+      )
+    ).toBe("cancelled");
     expect(gateway.requests).toHaveLength(0);
   });
 
@@ -434,8 +518,10 @@ describe("ConversationRun", () => {
 
   it("observes a cancellation written by another service instance", async () => {
     const store = new MemoryStoreFixture();
+    let calls = 0;
     const engine: ModelGateway = {
       async *run(request) {
+        calls += 1;
         await new Promise<void>((resolve, reject) => {
           const timer = setTimeout(resolve, 500);
           request.signal?.addEventListener(
@@ -474,6 +560,10 @@ describe("ConversationRun", () => {
     await processing;
 
     expect((await worker.getRunById(started.run!.id))?.status).toBe("cancelled");
+    expect(calls).toBe(1);
+    expect(
+      (await worker.listMessages(started.message.conversationId)).at(-1)?.status
+    ).toBe("cancelled");
   });
 
   it("resumes an interrupted Run and skips already completed Employees", async () => {

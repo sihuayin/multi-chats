@@ -198,6 +198,17 @@ export class ConversationRunService {
               });
             }
           }
+          for (const approval of state.approvals) {
+            if (approval.runId === run.id && approval.status === "pending") {
+              approval.status = "cancelled";
+              approval.resolvedAt = run.completedAt;
+              appendEvent(state, run, "approval_resolved", {
+                approvalId: approval.id,
+                status: "cancelled",
+                reason: "worker_restart"
+              });
+            }
+          }
           appendEvent(state, run, "run_error", {
             message: run.error,
             interrupted: true
@@ -586,6 +597,7 @@ export class ConversationRunService {
     while (attempt < 2 && !completed) {
       attempt += 1;
       let producedOutput = false;
+      let retryableError = false;
       try {
         for await (const event of this.gateway.run({
           provider: context.provider,
@@ -603,12 +615,16 @@ export class ConversationRunService {
           if (event.type === "text_delta") finalText += event.delta;
           if (event.type === "text_completed" && event.text) finalText = event.text;
           if (event.type === "error") {
+            retryableError = event.kind === "retryable";
             throw new Error(event.message);
           }
         }
+        if (signal.aborted) throw new Error("Run cancelled");
         completed = true;
       } catch (error) {
-        if (attempt >= 2 || producedOutput) throw error;
+        if (signal.aborted || !retryableError || attempt >= 2 || producedOutput) {
+          throw error;
+        }
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
     }
@@ -674,7 +690,8 @@ export class ConversationRunService {
       if (event.type === "error") {
         appendEvent(state, run, "model_error", {
           messageId,
-          message: event.message
+          message: event.message,
+          kind: event.kind ?? "terminal"
         });
       }
     });
@@ -877,7 +894,9 @@ export class ConversationRunService {
         await this.store.update((state) => {
           const run = state.runs.find((item) => item.id === runId);
           if (!run) return;
-          run.status = "running";
+          if (run.status !== "cancelled") {
+            run.status = "running";
+          }
           appendEvent(state, run, "approval_resolved", {
             approvalId: current.id,
             status: current.status
@@ -894,7 +913,9 @@ export class ConversationRunService {
       current.resolvedAt = now();
       const run = state.runs.find((item) => item.id === runId);
       if (run) {
-        run.status = "running";
+        if (run.status !== "cancelled") {
+          run.status = "running";
+        }
         appendEvent(state, run, "approval_resolved", {
           approvalId: current.id,
           status: current.status

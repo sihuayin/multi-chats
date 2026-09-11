@@ -167,6 +167,10 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   await expect(
     page.locator('.message-bubble[data-status="cancelled"]')
   ).toBeVisible();
+  await page.waitForTimeout(800);
+  await expect(
+    page.locator('.message-bubble[data-status="cancelled"]')
+  ).toBeVisible();
 
   await page
     .getByPlaceholder("Message the group or mention @employee")

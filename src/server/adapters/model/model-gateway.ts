@@ -15,7 +15,11 @@ export class FakeModelGateway implements ModelGateway {
   async *run(request: ModelRequest): AsyncIterable<ModelEvent> {
     if (request.prompt.includes("FAIL_MODEL")) {
       yield { type: "text_delta", delta: "Partial failure output." };
-      yield { type: "error", message: "model failed after partial output" };
+      yield {
+        type: "error",
+        message: "model failed after partial output",
+        kind: "terminal"
+      };
       return;
     }
     const employee = request.systemPrompt
@@ -24,7 +28,9 @@ export class FakeModelGateway implements ModelGateway {
       .replace(/\.$/, "");
     const text = `${employee} reviewed the request and prepared a structured response.`;
     for (const delta of text.match(/.{1,18}/g) ?? [text]) {
+      if (request.signal?.aborted) throw new Error("aborted");
       await new Promise((resolve) => setTimeout(resolve, this.delayMs));
+      if (request.signal?.aborted) throw new Error("aborted");
       yield { type: "text_delta", delta };
     }
     yield { type: "text_completed", text };
@@ -42,7 +48,11 @@ export class PiModelGateway implements ModelGateway {
     const models = createProviderModels(request.provider, request.credential);
     const model = models.getModel(request.provider, request.modelId);
     if (!model) {
-      yield { type: "error", message: `Model ${request.modelId} is not available` };
+      yield {
+        type: "error",
+        message: `Model ${request.modelId} is not available`,
+        kind: "terminal"
+      };
       return;
     }
 
@@ -93,7 +103,7 @@ export class PiModelGateway implements ModelGateway {
         }
         if (update.type === "error") {
           const message = update.error.errorMessage ?? "Model request failed";
-          push({ type: "error", message });
+          push({ type: "error", message, kind: "terminal" });
         }
       }
 
@@ -139,7 +149,8 @@ export class PiModelGateway implements ModelGateway {
     const runPromise = agent.prompt(request.prompt).catch((error: unknown) => {
       push({
         type: "error",
-        message: error instanceof Error ? error.message : String(error)
+        message: error instanceof Error ? error.message : String(error),
+        kind: "terminal"
       });
       finished = true;
       wake?.();

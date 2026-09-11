@@ -39,7 +39,11 @@ export type ModelEvent =
       result: string;
       isError: boolean;
     }
-  | { type: "error"; message: string };
+  | {
+      type: "error";
+      message: string;
+      kind?: "retryable" | "terminal" | "cancelled";
+    };
 
 export interface ModelGateway {
   run(request: ModelRequest): AsyncIterable<ModelEvent>;
