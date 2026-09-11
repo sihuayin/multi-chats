@@ -81,6 +81,70 @@ describe("ConversationRun", () => {
     ]);
   });
 
+  it("retries a transient model failure when no output was produced", async () => {
+    const store = new MemoryStoreFixture();
+    let attempts = 0;
+    const gateway: ModelGateway = {
+      async *run() {
+        attempts += 1;
+        if (attempts === 1) {
+          yield { type: "error", message: "temporary model failure" };
+          return;
+        }
+        yield { type: "text_delta", delta: "recovered" };
+        yield { type: "text_completed", text: "recovered" };
+      }
+    };
+    const runService = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway
+    );
+    const started = await runService.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice retry this" }
+    );
+
+    const completed = await runService.processRun(started.run!.id);
+
+    expect(completed.status).toBe("completed");
+    expect(attempts).toBe(2);
+    expect(
+      (await runService.listRunEvents(started.run!.id)).map((event) => event.type)
+    ).toContain("model_error");
+  });
+
+  it("keeps partial output when a model fails after streaming starts", async () => {
+    const store = new MemoryStoreFixture();
+    const gateway: ModelGateway = {
+      async *run() {
+        yield { type: "text_delta", delta: "partial output" };
+        yield { type: "error", message: "model failed after output" };
+      }
+    };
+    const runService = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway
+    );
+    const started = await runService.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice fail after output" }
+    );
+
+    const failed = await runService.processRun(started.run!.id);
+    const messages = await runService.listMessages(started.message.conversationId);
+
+    expect(failed.status).toBe("failed");
+    expect(messages.at(-1)).toMatchObject({
+      content: "partial output",
+      status: "failed"
+    });
+    expect(
+      (await runService.listRunEvents(started.run!.id)).map((event) => event.type)
+    ).toEqual(expect.arrayContaining(["model_error", "run_error"]));
+  });
+
   it("executes @all members sequentially and gives later members earlier responses", async () => {
     const store = new MemoryStoreFixture();
     const engine = new RecordingModelGateway(() => ["response"]);
@@ -223,6 +287,7 @@ describe("ConversationRun", () => {
     const events = await runService.listRunEvents(started.run!.id);
     expect(events.map((event) => event.type)).toContain("approval_requested");
     expect(events.map((event) => event.type)).toContain("approval_resolved");
+    expect(events.map((event) => event.type)).toContain("tool_error");
     expect(
       events.find((event) => event.type === "tool_completed")?.payload.isError
     ).toBe(true);
@@ -260,6 +325,18 @@ describe("ConversationRun", () => {
 
   it("marks active Runs as interrupted after a worker restart", async () => {
     const state = createFixtureState();
+    state.messages.push({
+      id: "streaming-message",
+      workspaceId: state.workspace.id,
+      conversationId: "30000000-0000-4000-8000-000000000001",
+      authorType: "employee",
+      authorId: "20000000-0000-4000-8000-000000000001",
+      content: "partial",
+      runId: "50000000-0000-4000-8000-000000000001",
+      status: "streaming",
+      createdAt: state.workspace.createdAt,
+      updatedAt: state.workspace.updatedAt
+    });
     state.runs.push({
       id: "50000000-0000-4000-8000-000000000001",
       workspaceId: state.workspace.id,
@@ -269,10 +346,12 @@ describe("ConversationRun", () => {
       status: "running",
       createdAt: state.workspace.createdAt
     });
+    const store = new MemoryStore(state);
+    const gateway = new RecordingModelGateway();
     const runService = new ConversationRunService(
-      new MemoryStore(state),
+      store,
       new AesCredentialCipher(TEST_KEY),
-      new RecordingModelGateway()
+      gateway
     );
 
     await runService.recoverInterruptedRuns();
@@ -281,6 +360,20 @@ describe("ConversationRun", () => {
       (await runService.getRunById("50000000-0000-4000-8000-000000000001"))
         ?.status
     ).toBe("interrupted");
+    expect(
+      await store.read(
+        (current) =>
+          current.messages.find((message) => message.id === "streaming-message")
+            ?.status
+      )
+    ).toBe("interrupted");
+    const events = await runService.listRunEvents(
+      "50000000-0000-4000-8000-000000000001"
+    );
+    expect(events.map((event) => event.type)).toContain(
+      "employee_turn_interrupted"
+    );
+    expect(gateway.requests).toHaveLength(0);
   });
 
   it("cancels an active Model Gateway and marks partial Messages as cancelled", async () => {
@@ -327,9 +420,16 @@ describe("ConversationRun", () => {
     expect((await runService.getRunById(started.run!.id))?.status).toBe("cancelled");
     const messages = await runService.listMessages(started.message.conversationId);
     expect(messages.at(-1)?.status).toBe("cancelled");
+    const events = await runService.listRunEvents(started.run!.id);
+    expect(events.map((event) => event.type)).toContain(
+      "employee_turn_cancelled"
+    );
     expect(
-      (await runService.listRunEvents(started.run!.id)).map((event) => event.type)
-    ).toContain("employee_turn_cancelled");
+      events.find((event) => event.type === "run_cancelled")?.payload
+    ).toMatchObject({
+      cooperative: true,
+      stopRequested: true
+    });
   });
 
   it("observes a cancellation written by another service instance", async () => {

@@ -474,6 +474,11 @@ export function ChatWorkspace() {
             </header>
 
             <div className="message-stream">
+              {latestRun?.status === "failed" && latestRun.error ? (
+                <div className="error-banner compact">
+                  {latestRun.error}
+                </div>
+              ) : null}
               {messages.map((item) => (
                 <article
                   key={item.id}

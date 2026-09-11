@@ -13,6 +13,11 @@ export class FakeModelGateway implements ModelGateway {
   ) {}
 
   async *run(request: ModelRequest): AsyncIterable<ModelEvent> {
+    if (request.prompt.includes("FAIL_MODEL")) {
+      yield { type: "text_delta", delta: "Partial failure output." };
+      yield { type: "error", message: "model failed after partial output" };
+      return;
+    }
     const employee = request.systemPrompt
       .split("\n")[0]
       .replace("You are ", "")

@@ -162,7 +162,8 @@ const en = {
   "turn.active": "Active",
   "turn.completed": "Completed",
   "turn.failed": "Failed",
-  "turn.cancelled": "Cancelled"
+  "turn.cancelled": "Cancelled",
+  "turn.interrupted": "Interrupted"
 } as const;
 
 export type TranslationKey = keyof typeof en;
@@ -328,7 +329,8 @@ const zh: Record<TranslationKey, string> = {
   "turn.active": "进行中",
   "turn.completed": "已完成",
   "turn.failed": "失败",
-  "turn.cancelled": "已取消"
+  "turn.cancelled": "已取消",
+  "turn.interrupted": "已中断"
 };
 
 const dictionaries: Record<Locale, Record<TranslationKey, string>> = {

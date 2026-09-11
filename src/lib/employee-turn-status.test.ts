@@ -60,4 +60,13 @@ describe("employeeTurnStatuses", () => {
 
     expect(statuses.get("alice")).toBe("cancelled");
   });
+
+  it("marks an interrupted Employee turn explicitly", () => {
+    const statuses = employeeTurnStatuses(run, [
+      event(1, "employee_turn_started", { employeeId: "alice" }),
+      event(2, "employee_turn_interrupted", { employeeId: "alice" })
+    ]);
+
+    expect(statuses.get("alice")).toBe("interrupted");
+  });
 });

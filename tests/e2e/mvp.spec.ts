@@ -156,6 +156,32 @@ test("configures an Employee Group and completes a mentioned Run", async ({
     page.locator(".member-stack").filter({ hasText: employeeName })
   ).toBeVisible();
 
+  await page
+    .getByPlaceholder("Message the group or mention @employee")
+    .fill(`@researcher-${suffix} slow request`);
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(
+    page.locator('.message-bubble[data-status="streaming"]')
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Stop" }).click();
+  await expect(
+    page.locator('.message-bubble[data-status="cancelled"]')
+  ).toBeVisible();
+
+  await page
+    .getByPlaceholder("Message the group or mention @employee")
+    .fill(`@researcher-${suffix} FAIL_MODEL`);
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Partial failure output.")).toBeVisible({
+    timeout: 10_000
+  });
+  await expect(
+    page.locator('.message-bubble[data-status="failed"]')
+  ).toBeVisible();
+  await expect(
+    page.getByText("model failed after partial output")
+  ).toBeVisible();
+
   await page.goto("/employees");
   const employeeCard = page.locator(".list-card").filter({ hasText: employeeName });
   const editedEmployeeName = `${employeeName} Edited`;

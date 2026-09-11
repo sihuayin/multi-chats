@@ -86,7 +86,7 @@ export type Message = {
   authorId: string;
   content: string;
   runId?: string;
-  status: "complete" | "streaming" | "failed" | "cancelled";
+  status: "complete" | "streaming" | "failed" | "cancelled" | "interrupted";
   createdAt: IsoDate;
   updatedAt: IsoDate;
 };
@@ -124,6 +124,7 @@ export type RunEvent = {
     | "employee_turn_completed"
     | "employee_turn_failed"
     | "employee_turn_cancelled"
+    | "employee_turn_interrupted"
     | "message_delta"
     | "message_completed"
     | "tool_started"
@@ -132,6 +133,8 @@ export type RunEvent = {
     | "approval_resolved"
     | "task_changed"
     | "artifact_created"
+    | "model_error"
+    | "tool_error"
     | "run_error"
     | "run_cancelled"
     | "run_completed";

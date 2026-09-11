@@ -5,7 +5,8 @@ export type EmployeeTurnStatus =
   | "active"
   | "completed"
   | "failed"
-  | "cancelled";
+  | "cancelled"
+  | "interrupted";
 
 export function employeeTurnStatuses(
   run: Run,
@@ -36,6 +37,8 @@ export function employeeTurnStatuses(
       statuses.set(employeeId, "failed");
     } else if (event.type === "employee_turn_cancelled") {
       statuses.set(employeeId, "cancelled");
+    } else if (event.type === "employee_turn_interrupted") {
+      statuses.set(employeeId, "interrupted");
     }
   }
 

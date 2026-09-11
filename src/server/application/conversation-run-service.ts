@@ -188,6 +188,16 @@ export class ConversationRunService {
           run.status = "interrupted";
           run.error = "Worker restarted while the Run was active";
           run.completedAt = now();
+          for (const message of state.messages) {
+            if (message.runId === run.id && message.status === "streaming") {
+              message.status = "interrupted";
+              message.updatedAt = run.completedAt;
+              appendEvent(state, run, "employee_turn_interrupted", {
+                employeeId: message.authorId,
+                messageId: message.id
+              });
+            }
+          }
           appendEvent(state, run, "run_error", {
             message: run.error,
             interrupted: true
@@ -288,7 +298,9 @@ export class ConversationRunService {
   }
 
   async cancelRun(runId: string): Promise<Run> {
-    this.activeControllers.get(runId)?.abort();
+    const controller = this.activeControllers.get(runId);
+    controller?.abort();
+    const stopRequested = Boolean(controller);
     return this.store.update((state) => {
       const run = state.runs.find((item) => item.id === runId);
       if (!run) notFound("Run");
@@ -307,12 +319,17 @@ export class ConversationRunService {
           appendEvent(state, run, "employee_turn_cancelled", {
             employeeId: message.authorId,
             messageId: message.id,
+            cooperative: true,
+            stopRequested
           });
         }
       }
       run.status = "cancelled";
       run.completedAt = timestamp;
-      appendEvent(state, run, "run_cancelled", {});
+      appendEvent(state, run, "run_cancelled", {
+        cooperative: true,
+        stopRequested
+      });
       state.workspace.updatedAt = timestamp;
       return run;
     });
@@ -647,9 +664,15 @@ export class ConversationRunService {
           messageId,
           ...event
         });
+        if (event.isError) {
+          appendEvent(state, run, "tool_error", {
+            messageId,
+            ...event
+          });
+        }
       }
       if (event.type === "error") {
-        appendEvent(state, run, "run_error", {
+        appendEvent(state, run, "model_error", {
           messageId,
           message: event.message
         });
