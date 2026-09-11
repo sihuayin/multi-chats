@@ -104,4 +104,31 @@ export async function validateProviderCredential(
   if (models.getModels(providerId).length === 0) {
     throw new Error("No models are available for this provider");
   }
+  if (process.env.MODEL_MODE === "fake") return;
+
+  const model = models.getModels(providerId)[0];
+  try {
+    await models.completeSimple(
+      model,
+      {
+        messages: [
+          {
+            role: "user",
+            content: "Reply with OK.",
+            timestamp: Date.now()
+          }
+        ]
+      },
+      {
+        apiKey: credential,
+        maxTokens: 1
+      }
+    );
+  } catch (error) {
+    throw new Error(
+      `Provider credential validation failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
 }

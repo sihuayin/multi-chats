@@ -23,7 +23,11 @@ export function ToolsView() {
             <p>{tool.description}</p>
             <div className="button-row">
               <span className={`status-pill ${tool.requiresApproval ? "review" : "completed"}`}>
-                {tool.requiresApproval ? "Requires approval" : "Read-only"}
+                {tool.requiresApproval
+                  ? "Requires approval"
+                  : tool.risk === "write"
+                    ? "Internal write"
+                    : "Read-only"}
               </span>
               <span className="status-pill">
                 {tool.replay === "safe" ? "Safe replay" : "No replay"}

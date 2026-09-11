@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, Check, LoaderCircle, Power } from "lucide-react";
+import { Bot, Check, LoaderCircle, Pencil, Power } from "lucide-react";
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api";
 import { useWorkspace } from "@/components/workspace-provider";
@@ -90,6 +90,31 @@ export function EmployeesManager() {
     }
   }
 
+  async function editEmployee(id: string) {
+    const employee = data?.employees.find((item) => item.id === id);
+    if (!employee) return;
+    const nextName = window.prompt("Employee name", employee.name);
+    if (!nextName) return;
+    const nextIdentity = window.prompt("Employee identity", employee.identity);
+    if (!nextIdentity) return;
+    setBusy(true);
+    try {
+      await apiRequest(`/api/employees/${id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          ...employee,
+          name: nextName,
+          identity: nextIdentity
+        })
+      });
+      await refresh();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="page-content">
       <PageHeader
@@ -137,6 +162,12 @@ export function EmployeesManager() {
                   <option key={model.id} value={model.id}>
                     {model.name}
                     {model.reasoning ? " - reasoning" : ""}
+                    {model.contextWindow
+                      ? ` - ${Math.round(model.contextWindow / 1000)}k context`
+                      : ""}
+                    {model.maxTokens
+                      ? ` - ${Math.round(model.maxTokens / 1000)}k output`
+                      : ""}
                   </option>
                 ))}
               </select>
@@ -189,14 +220,24 @@ export function EmployeesManager() {
                   </span>
                   <small>{employee.skillIds.length} Skills</small>
                 </div>
-                <button
-                  className={employee.active ? "button quiet" : "button secondary"}
-                  onClick={() => toggleEmployee(employee.id, employee.active)}
-                  disabled={busy}
-                >
-                  <Power size={15} />
-                  {employee.active ? "Disable" : "Enable"}
-                </button>
+                <div className="button-row">
+                  <button
+                    className="icon-button"
+                    title="Edit Employee"
+                    onClick={() => editEmployee(employee.id)}
+                    disabled={busy}
+                  >
+                    <Pencil size={15} />
+                  </button>
+                  <button
+                    className={employee.active ? "button quiet" : "button secondary"}
+                    onClick={() => toggleEmployee(employee.id, employee.active)}
+                    disabled={busy}
+                  >
+                    <Power size={15} />
+                    {employee.active ? "Disable" : "Enable"}
+                  </button>
+                </div>
               </article>
             ))}
           </div>

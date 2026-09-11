@@ -157,7 +157,12 @@ export type Task = {
   goal: string;
   assigneeIds: string[];
   status: TaskStatus;
-  history: Array<{ status: TaskStatus; at: IsoDate; actorId: string }>;
+  history: Array<{
+    status: TaskStatus;
+    at: IsoDate;
+    actorId: string;
+    action?: string;
+  }>;
   createdAt: IsoDate;
   updatedAt: IsoDate;
 };

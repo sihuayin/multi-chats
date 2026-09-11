@@ -10,8 +10,10 @@ import {
   Hash,
   LoaderCircle,
   MessageSquarePlus,
+  PanelRight,
   Send,
   ShieldAlert,
+  UserPen,
   UsersRound,
   X
 } from "lucide-react";
@@ -37,6 +39,7 @@ export function ChatWorkspace() {
   const [taskGoal, setTaskGoal] = useState("");
   const [startedRunId, setStartedRunId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [taskPanelOpen, setTaskPanelOpen] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
 
@@ -209,6 +212,44 @@ export function ChatWorkspace() {
     }
   }
 
+  async function editMembers() {
+    if (!selected) return;
+    const current = selected.memberIds
+      .map(
+        (memberId) =>
+          data?.employees.find((employee) => employee.id === memberId)?.name ?? ""
+      )
+      .filter(Boolean);
+    const next = window.prompt(
+      "Conversation member names, separated by commas",
+      current.join(", ")
+    );
+    if (next === null) return;
+    setBusy(true);
+    try {
+      const memberIds = next
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .map((value) => {
+          const employee = data?.employees.find(
+            (item) => item.name.toLowerCase() === value.toLowerCase()
+          );
+          if (!employee) throw new Error(`Unknown Employee: ${value}`);
+          return employee.id;
+        });
+      await apiRequest(`/api/conversations/${selected.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ memberIds })
+      });
+      await refresh();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function updateTask(task: Task, status: Task["status"]) {
     setBusy(true);
     try {
@@ -244,7 +285,7 @@ export function ChatWorkspace() {
   }
 
   return (
-    <div className="workspace-grid">
+    <div className={taskPanelOpen ? "workspace-grid" : "workspace-grid tasks-collapsed"}>
       <section className="conversation-rail">
         <div className="section-heading">
           <div>
@@ -316,6 +357,21 @@ export function ChatWorkspace() {
                   Stop
                 </button>
               ) : null}
+              <button
+                className="icon-button"
+                title="Edit Conversation members"
+                onClick={editMembers}
+                disabled={busy}
+              >
+                <UserPen size={16} />
+              </button>
+              <button
+                className="icon-button"
+                title="Toggle Tasks panel"
+                onClick={() => setTaskPanelOpen((open) => !open)}
+              >
+                <PanelRight size={16} />
+              </button>
             </header>
 
             <div className="message-stream">
@@ -434,6 +490,28 @@ export function ChatWorkspace() {
             </button>
           </div>
         ) : null}
+        {pendingApprovals.map((approval) => (
+          <article key={approval.id} className="approval-card task-approval">
+            <div className="approval-title">
+              <ShieldAlert size={16} />
+              <strong>{approval.toolName}</strong>
+            </div>
+            <div className="button-row">
+              <button
+                className="button primary"
+                onClick={() => resolveApproval(approval.id, "approved")}
+              >
+                Approve
+              </button>
+              <button
+                className="button danger"
+                onClick={() => resolveApproval(approval.id, "rejected")}
+              >
+                Reject
+              </button>
+            </div>
+          </article>
+        ))}
         <div className="task-list">
           {tasks.map((task) => {
             const artifacts = (data?.artifacts ?? []).filter(

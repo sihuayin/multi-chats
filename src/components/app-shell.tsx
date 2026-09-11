@@ -16,7 +16,7 @@ import type { ReactNode } from "react";
 import { useWorkspace } from "@/components/workspace-provider";
 
 const navItems = [
-  { href: "/", label: "Chat", icon: LayoutDashboard },
+  { href: "/", label: "Conversation", icon: LayoutDashboard },
   { href: "/employees", label: "Employees", icon: Bot },
   { href: "/groups", label: "Groups", icon: UsersRound },
   { href: "/skills", label: "Skills", icon: Braces },

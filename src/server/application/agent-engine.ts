@@ -170,6 +170,8 @@ export class PiAgentEngine implements AgentEngine {
         wake = undefined;
       }
     });
+    const abortAgent = () => agent.abort();
+    request.signal?.addEventListener("abort", abortAgent, { once: true });
 
     const runPromise = agent.prompt(request.prompt).catch((error: unknown) => {
       push({
@@ -194,10 +196,8 @@ export class PiAgentEngine implements AgentEngine {
       }
       await runPromise;
     } finally {
+      request.signal?.removeEventListener("abort", abortAgent);
       unsubscribe();
-      if (request.signal?.aborted) {
-        agent.abort();
-      }
     }
   }
 }

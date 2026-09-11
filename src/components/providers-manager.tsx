@@ -1,6 +1,6 @@
 "use client";
 
-import { KeyRound, LoaderCircle, Trash2 } from "lucide-react";
+import { KeyRound, LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { apiRequest } from "@/lib/api";
 import { useWorkspace } from "@/components/workspace-provider";
@@ -46,6 +46,30 @@ export function ProvidersManager() {
     setError(null);
     try {
       await apiRequest(`/api/providers/${id}`, { method: "DELETE" });
+      await refresh();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function rotateProvider(id: string) {
+    const provider = data?.providers.find((item) => item.id === id);
+    if (!provider) return;
+    const credential = window.prompt("New API credential");
+    if (!credential) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await apiRequest(`/api/providers/${id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          provider: provider.provider,
+          label: provider.label,
+          credential
+        })
+      });
       await refresh();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
@@ -113,14 +137,24 @@ export function ProvidersManager() {
                   <strong>{item.label}</strong>
                   <span>{item.provider}</span>
                 </div>
-                <button
-                  className="icon-button danger-text"
-                  title="Delete provider"
-                  onClick={() => removeProvider(item.id)}
-                  disabled={busy}
-                >
-                  <Trash2 size={16} />
-                </button>
+                <div className="button-row">
+                  <button
+                    className="icon-button"
+                    title="Rotate credential"
+                    onClick={() => rotateProvider(item.id)}
+                    disabled={busy}
+                  >
+                    <RefreshCw size={16} />
+                  </button>
+                  <button
+                    className="icon-button danger-text"
+                    title="Delete provider"
+                    onClick={() => removeProvider(item.id)}
+                    disabled={busy}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
               </article>
             ))}
             {data?.providers.length === 0 ? (

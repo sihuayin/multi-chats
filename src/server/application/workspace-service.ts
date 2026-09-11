@@ -4,10 +4,7 @@ import type {
   Conversation,
   Employee,
   Group,
-  Message,
   ProviderCredential,
-  Run,
-  RunEvent,
   Skill,
   Task,
   TaskStatus
@@ -27,32 +24,12 @@ import {
   validateProviderCredential
 } from "@/server/adapters/model/provider-registry";
 import { ApiError, notFound } from "@/server/application/errors";
+import type { WorkspaceView } from "@/lib/workspace-view";
 import type { CredentialCipher } from "@/server/security/credential-cipher";
 import { BUILT_IN_TOOLS } from "@/server/store/initial-state";
 import type { StateStore } from "@/server/store/store";
 
-export type PublicProvider = Omit<ProviderCredential, "encryptedCredential"> & {
-  configured: true;
-};
-
-export type WorkspaceView = {
-  workspace: {
-    id: string;
-    name: string;
-  };
-  providers: PublicProvider[];
-  employees: Employee[];
-  skills: Skill[];
-  tools: typeof BUILT_IN_TOOLS;
-  groups: Group[];
-  conversations: Conversation[];
-  messages: Message[];
-  runs: Run[];
-  runEvents: RunEvent[];
-  tasks: Task[];
-  artifacts: Artifact[];
-  approvals: Approval[];
-};
+export type PublicProvider = WorkspaceView["providers"][number];
 
 function now(): string {
   return new Date().toISOString();
@@ -360,9 +337,31 @@ export class WorkspaceService {
       if (parsed.assigneeIds) {
         this.assertEmployees(state.employees, parsed.assigneeIds);
         task.assigneeIds = parsed.assigneeIds;
+        task.history.push({
+          status: task.status,
+          at: now(),
+          actorId,
+          action: "assignees_updated"
+        });
       }
-      if (parsed.title) task.title = parsed.title;
-      if (parsed.goal) task.goal = parsed.goal;
+      if (parsed.title) {
+        task.title = parsed.title;
+        task.history.push({
+          status: task.status,
+          at: now(),
+          actorId,
+          action: "title_updated"
+        });
+      }
+      if (parsed.goal) {
+        task.goal = parsed.goal;
+        task.history.push({
+          status: task.status,
+          at: now(),
+          actorId,
+          action: "goal_updated"
+        });
+      }
       if (parsed.status) {
         this.assertTaskTransition(task.status, parsed.status, actorId);
         task.status = parsed.status;

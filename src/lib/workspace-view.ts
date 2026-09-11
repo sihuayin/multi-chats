@@ -13,7 +13,12 @@ import type {
   ToolDefinition
 } from "@/server/domain/types";
 
-export type PublicProvider = Omit<ProviderCredential, "encryptedCredential">;
+export type PublicProvider = Omit<
+  ProviderCredential,
+  "encryptedCredential"
+> & {
+  configured: true;
+};
 
 export type WorkspaceView = {
   workspace: {

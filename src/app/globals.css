@@ -146,6 +146,14 @@ button {
   min-height: 100vh;
 }
 
+.workspace-grid.tasks-collapsed {
+  grid-template-columns: 260px minmax(420px, 1fr);
+}
+
+.workspace-grid.tasks-collapsed .task-panel {
+  display: none;
+}
+
 .conversation-rail,
 .task-panel {
   min-width: 0;
@@ -489,6 +497,10 @@ select:focus {
   border: 1px solid var(--line);
   border-radius: 8px;
   box-shadow: 0 1px 0 rgb(23 32 31 / 2%);
+}
+
+.task-approval {
+  margin-top: 14px;
 }
 
 .task-card {

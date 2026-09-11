@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test.setTimeout(90_000);
 
-test("configures an Employee team and completes a mentioned Run", async ({
+test("configures an Employee Group and completes a mentioned Run", async ({
   page
 }) => {
   const suffix = Date.now().toString(36);

@@ -12,7 +12,7 @@ export default defineConfig({
     command: "MODEL_MODE=fake npm run dev",
     url: "http://localhost:3000/api/health",
     reuseExistingServer: true,
-    timeout: 120_000
+    timeout: 180_000
   },
   projects: [
     {

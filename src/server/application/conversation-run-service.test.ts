@@ -12,6 +12,7 @@ import {
 } from "@/server/test-support/fixtures";
 import { MemoryStore } from "@/server/store/memory-store";
 import { WorkspaceService } from "@/server/application/workspace-service";
+import type { AgentEngine } from "@/server/application/agent-engine";
 
 describe("ConversationRun", () => {
   it("stores a Message without starting a Run when no Employee is mentioned", async () => {
@@ -153,6 +154,61 @@ describe("ConversationRun", () => {
     expect(
       events.find((event) => event.type === "tool_completed")?.payload.isError
     ).toBe(true);
+  });
+
+  it("claims a queued Run only once when workers process it concurrently", async () => {
+    const store = new MemoryStoreFixture();
+    let attempts = 0;
+    const engine: AgentEngine = {
+      async *run() {
+        attempts += 1;
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        yield { type: "text_delta", delta: "single" };
+        yield { type: "text_completed", text: "single" };
+      }
+    };
+    const runService = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      engine
+    );
+
+    const started = await runService.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice run once" }
+    );
+    await Promise.all([
+      runService.processRun(started.run!.id),
+      runService.processRun(started.run!.id)
+    ]);
+
+    expect(attempts).toBe(1);
+    expect((await runService.getRunById(started.run!.id))?.status).toBe("completed");
+  });
+
+  it("marks active Runs as interrupted after a worker restart", async () => {
+    const state = createFixtureState();
+    state.runs.push({
+      id: "50000000-0000-4000-8000-000000000001",
+      workspaceId: state.workspace.id,
+      conversationId: "30000000-0000-4000-8000-000000000001",
+      triggerMessageId: "trigger",
+      memberSnapshot: ["20000000-0000-4000-8000-000000000001"],
+      status: "running",
+      createdAt: state.workspace.createdAt
+    });
+    const runService = new ConversationRunService(
+      new MemoryStore(state),
+      new AesCredentialCipher(TEST_KEY),
+      new RecordingEngine()
+    );
+
+    await runService.recoverInterruptedRuns();
+
+    expect(
+      (await runService.getRunById("50000000-0000-4000-8000-000000000001"))
+        ?.status
+    ).toBe("interrupted");
   });
 });
 

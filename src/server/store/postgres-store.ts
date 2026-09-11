@@ -40,7 +40,7 @@ export class PostgresStore implements StateStore {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      const state = await this.loadForUpdate(client);
+      const state = await this.load(client);
       const result = await updater(state);
       await client.query(
         "UPDATE app_state SET state = $2::jsonb, updated_at = now() WHERE workspace_id = $1",
@@ -60,21 +60,11 @@ export class PostgresStore implements StateStore {
     await this.pool.end();
   }
 
-  private async load(): Promise<AppState> {
-    const result = await this.pool.query<{ state: AppState }>(
-      "SELECT state FROM app_state ORDER BY updated_at LIMIT 1"
-    );
-    const state = result.rows[0]?.state;
-    if (!state) {
-      throw new Error("Workspace state is not initialized. Run migrations first.");
-    }
-    return state;
-  }
-
-  private async loadForUpdate(client: PoolClient): Promise<AppState> {
-    const result = await client.query<{ state: AppState }>(
-      "SELECT state FROM app_state ORDER BY updated_at LIMIT 1 FOR UPDATE"
-    );
+  private async load(client?: PoolClient): Promise<AppState> {
+    const query =
+      "SELECT state FROM app_state ORDER BY updated_at LIMIT 1" +
+      (client ? " FOR UPDATE" : "");
+    const result = await (client ?? this.pool).query<{ state: AppState }>(query);
     const state = result.rows[0]?.state;
     if (!state) {
       throw new Error("Workspace state is not initialized. Run migrations first.");

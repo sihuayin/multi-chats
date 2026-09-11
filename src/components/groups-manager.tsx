@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, LoaderCircle, UsersRound } from "lucide-react";
+import { Check, LoaderCircle, Pencil, UsersRound } from "lucide-react";
 import { useState } from "react";
 import { apiRequest } from "@/lib/api";
 import { useWorkspace } from "@/components/workspace-provider";
@@ -23,6 +23,47 @@ export function GroupsManager() {
       });
       setName("");
       setMemberIds([]);
+      await refresh();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function editGroup(id: string) {
+    const group = data?.groups.find((item) => item.id === id);
+    if (!group) return;
+    const nextName = window.prompt("Group name", group.name);
+    if (!nextName) return;
+    const currentMembers = group.memberIds
+      .map(
+        (memberId) =>
+          data?.employees.find((employee) => employee.id === memberId)?.name ?? ""
+      )
+      .filter(Boolean);
+    const nextMembers = window.prompt(
+      "Default member names, separated by commas",
+      currentMembers.join(", ")
+    );
+    if (nextMembers === null) return;
+    const memberIds = nextMembers
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .map((entry) => {
+        const employee = data?.employees.find(
+          (item) => item.name.toLowerCase() === entry.toLowerCase()
+        );
+        if (!employee) throw new Error(`Unknown Employee: ${entry}`);
+        return employee.id;
+      });
+    setBusy(true);
+    try {
+      await apiRequest(`/api/groups/${id}`, {
+        method: "PUT",
+        body: JSON.stringify({ name: nextName, memberIds })
+      });
       await refresh();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
@@ -98,6 +139,14 @@ export function GroupsManager() {
                       .join(", ") || "No default members"}
                   </span>
                 </div>
+                <button
+                  className="icon-button"
+                  title="Edit Group"
+                  onClick={() => editGroup(group.id)}
+                  disabled={busy}
+                >
+                  <Pencil size={15} />
+                </button>
               </article>
             ))}
           </div>
