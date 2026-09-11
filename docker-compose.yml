@@ -1,0 +1,43 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: multi_chats
+      POSTGRES_USER: multi_chats
+      POSTGRES_PASSWORD: multi_chats
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U multi_chats -d multi_chats"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  web:
+    build:
+      context: .
+    environment:
+      DATABASE_URL: postgres://multi_chats:multi_chats@postgres:5432/multi_chats
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-ZGV2ZWxvcG1lbnQta2V5LW11c3QtYmUtcmVwbGFjZWQ=}
+    command: sh -c "npm run db:migrate && npm run start"
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+    environment:
+      DATABASE_URL: postgres://multi_chats:multi_chats@postgres:5432/multi_chats
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-ZGV2ZWxvcG1lbnQta2V5LW11c3QtYmUtcmVwbGFjZWQ=}
+    command: sh -c "npm run db:migrate && npm run worker"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-data:

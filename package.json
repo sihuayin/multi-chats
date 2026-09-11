@@ -1,0 +1,48 @@
+{
+  "name": "multi-chats",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev --hostname 0.0.0.0",
+    "build": "next build",
+    "start": "next start",
+    "worker": "tsx src/worker/index.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:backup": "tsx scripts/backup.ts",
+    "db:restore": "tsx scripts/restore.ts"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "0.85.1",
+    "@earendil-works/pi-ai": "0.85.1",
+    "lucide-react": "0.545.0",
+    "next": "16.3.4",
+    "pg": "8.18.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "server-only": "0.0.1",
+    "zod": "4.6.2"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
+    "@playwright/test": "1.56.1",
+    "@types/node": "24.13.4",
+    "@types/pg": "8.23.1",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "eslint": "9.39.2",
+    "eslint-config-next": "16.3.4",
+    "jsdom": "27.2.0",
+    "tsx": "4.21.0",
+    "typescript": "5.9.3",
+    "vitest": "5.0.0"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}
