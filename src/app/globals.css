@@ -119,14 +119,48 @@ button {
   background: var(--teal-soft);
 }
 
+.sidebar-footer {
+  display: grid;
+  gap: 10px;
+  margin-top: auto;
+}
+
 .sidebar-status {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: auto;
   padding: 10px;
   color: var(--muted);
   font-size: 11px;
+}
+
+.language-switch {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr;
+  align-items: center;
+  gap: 4px;
+  padding: 8px;
+  color: var(--muted);
+  background: rgb(255 255 255 / 62%);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+.language-switch button {
+  min-height: 26px;
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.language-switch button.active {
+  color: #0b625b;
+  background: var(--teal-soft);
 }
 
 .status-dot {

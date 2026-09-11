@@ -20,20 +20,27 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiRequest } from "@/lib/api";
+import { useI18n } from "@/components/i18n-provider";
 import type {
   Artifact,
   Conversation,
   Task
 } from "@/server/domain/types";
 import { useWorkspace } from "@/components/workspace-provider";
+import type { TranslationKey } from "@/lib/i18n";
 
 function MessageIcon({ artifact }: { artifact: Artifact }) {
   if (artifact.type === "json") return <FileJson size={16} />;
   return <FileText size={16} />;
 }
 
+function statusKey(status: string): TranslationKey {
+  return `status.${status}` as TranslationKey;
+}
+
 export function ChatWorkspace() {
   const { data, refresh } = useWorkspace();
+  const { t } = useI18n();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [groupChoice, setGroupChoice] = useState("");
@@ -125,7 +132,9 @@ export function ChatWorkspace() {
         ? undefined
         : data?.groups.find((item) => item.id === groupChoice) ??
           data?.groups.at(-1);
-    const title = group ? `${group.name} session` : "Ad hoc conversation";
+    const title = group
+      ? `${group.name} ${t("chat.conversation")}`
+      : t("chat.adHocConversation");
     setBusy(true);
     try {
       const conversation = await apiRequest<Conversation>("/api/conversations", {
@@ -241,7 +250,7 @@ export function ChatWorkspace() {
       )
       .filter(Boolean);
     const next = window.prompt(
-      "Conversation member names, separated by commas",
+      t("chat.editMembersPrompt"),
       current.join(", ")
     );
     if (next === null) return;
@@ -255,7 +264,9 @@ export function ChatWorkspace() {
           const employee = data?.employees.find(
             (item) => item.name.toLowerCase() === value.toLowerCase()
           );
-          if (!employee) throw new Error(`Unknown Employee: ${value}`);
+          if (!employee) {
+            throw new Error(`${t("common.unknown")}: ${value}`);
+          }
           return employee.id;
         });
       await apiRequest(`/api/conversations/${selected.id}`, {
@@ -286,9 +297,9 @@ export function ChatWorkspace() {
   }
 
   async function attachArtifact(task: Task, type: Artifact["type"]) {
-    const name = window.prompt("Artifact name");
+    const name = window.prompt(t("chat.artifactName"));
     if (!name) return;
-    const content = window.prompt("Artifact content");
+    const content = window.prompt(t("chat.artifactContent"));
     if (content === null) return;
     setBusy(true);
     try {
@@ -309,13 +320,13 @@ export function ChatWorkspace() {
       <section className="conversation-rail">
         <div className="section-heading">
           <div>
-            <span className="eyebrow">Workspace</span>
-            <h1>Conversations</h1>
+            <span className="eyebrow">{t("common.workspace")}</span>
+            <h1>{t("chat.conversations")}</h1>
           </div>
           <button
             className="icon-button"
             onClick={createConversation}
-            title="New conversation"
+            title={t("chat.newConversation")}
             disabled={busy}
           >
             <MessageSquarePlus size={18} />
@@ -324,12 +335,12 @@ export function ChatWorkspace() {
         <div className="conversation-list">
           <select
             className="rail-select"
-            aria-label="Conversation source"
+            aria-label={t("chat.conversation")}
             value={groupChoice}
             onChange={(event) => setGroupChoice(event.target.value)}
           >
-            <option value="">Latest Group</option>
-            <option value="ad-hoc">Ad hoc</option>
+            <option value="">{t("chat.latestGroup")}</option>
+            <option value="ad-hoc">{t("chat.adHoc")}</option>
             {data?.groups.map((group) => (
               <option key={group.id} value={group.id}>
                 {group.name}
@@ -351,14 +362,16 @@ export function ChatWorkspace() {
               </span>
               <span>
                 <strong>{conversation.title}</strong>
-                <small>{conversation.memberIds.length} members</small>
+                <small>
+                  {conversation.memberIds.length} {t("chat.members")}
+                </small>
               </span>
             </button>
           ))}
           {conversations.length === 0 ? (
             <div className="rail-empty">
               <UsersRound size={20} />
-              <span>No conversations yet</span>
+              <span>{t("chat.noConversations")}</span>
             </div>
           ) : null}
         </div>
@@ -370,17 +383,17 @@ export function ChatWorkspace() {
           <>
             <header className="conversation-header">
               <div>
-                <span className="eyebrow">Conversation</span>
+                <span className="eyebrow">{t("chat.conversation")}</span>
                 <h2>{selected.title}</h2>
               </div>
-              <div className="member-stack" aria-label="Conversation members">
+              <div className="member-stack" aria-label={t("chat.editMembers")}>
                 {selected.memberIds.map((memberId) => {
                   const employee = data?.employees.find(
                     (item) => item.id === memberId
                   );
                   return (
                     <span key={memberId} className="member-chip">
-                      {employee?.name ?? "Unknown"}
+                      {employee?.name ?? t("common.unknown")}
                     </span>
                   );
                 })}
@@ -388,18 +401,18 @@ export function ChatWorkspace() {
               {activeRunId ? (
                 <button className="button secondary" onClick={cancelRun}>
                   <CircleStop size={16} />
-                  Stop
+                  {t("chat.stop")}
                 </button>
               ) : null}
               {latestRun?.status === "interrupted" ? (
                 <button className="button secondary" onClick={resumeRun}>
                   <RotateCcw size={16} />
-                  Resume
+                  {t("chat.resume")}
                 </button>
               ) : null}
               <button
                 className="icon-button"
-                title="Edit Conversation members"
+                title={t("chat.editMembers")}
                 onClick={editMembers}
                 disabled={busy}
               >
@@ -407,7 +420,7 @@ export function ChatWorkspace() {
               </button>
               <button
                 className="icon-button"
-                title="Toggle Tasks panel"
+                title={t("chat.toggleTasks")}
                 onClick={() => setTaskPanelOpen((open) => !open)}
               >
                 <PanelRight size={16} />
@@ -424,10 +437,10 @@ export function ChatWorkspace() {
                   <div className="message-meta">
                     <strong>
                       {item.authorType === "user"
-                        ? "You"
+                        ? t("chat.you")
                         : data?.employees.find(
                             (employee) => employee.id === item.authorId
-                          )?.name ?? "Employee"}
+                          )?.name ?? t("chat.employee")}
                     </strong>
                     <time>{new Date(item.createdAt).toLocaleTimeString()}</time>
                     {item.status === "streaming" ? (
@@ -440,7 +453,7 @@ export function ChatWorkspace() {
               {messages.length === 0 ? (
                 <div className="empty-state compact">
                   <MessageSquarePlus size={22} />
-                  <span>Mention an Employee to begin.</span>
+                  <span>{t("chat.mentionPrompt")}</span>
                 </div>
               ) : null}
 
@@ -448,7 +461,9 @@ export function ChatWorkspace() {
                 <article key={approval.id} className="approval-card">
                   <div className="approval-title">
                     <ShieldAlert size={17} />
-                    <strong>Approval required: {approval.toolName}</strong>
+                    <strong>
+                      {t("chat.approvalRequired", { tool: approval.toolName })}
+                    </strong>
                   </div>
                   <pre>{JSON.stringify(approval.args, null, 2)}</pre>
                   <div className="button-row">
@@ -457,14 +472,14 @@ export function ChatWorkspace() {
                       onClick={() => resolveApproval(approval.id, "approved")}
                     >
                       <Check size={16} />
-                      Approve
+                      {t("chat.approve")}
                     </button>
                     <button
                       className="button danger"
                       onClick={() => resolveApproval(approval.id, "rejected")}
                     >
                       <X size={16} />
-                      Reject
+                      {t("chat.reject")}
                     </button>
                   </div>
                 </article>
@@ -475,7 +490,7 @@ export function ChatWorkspace() {
               <textarea
                 value={message}
                 onChange={(event) => setMessage(event.target.value)}
-                placeholder="Message the group or mention @employee"
+                placeholder={t("chat.messagePlaceholder")}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
@@ -489,15 +504,15 @@ export function ChatWorkspace() {
                 disabled={busy || !message.trim()}
               >
                 {busy ? <LoaderCircle className="spin" size={16} /> : <Send size={16} />}
-                Send
+                {t("chat.send")}
               </button>
             </div>
           </>
         ) : (
           <div className="empty-state">
             <Hash size={24} />
-            <strong>Create a conversation</strong>
-            <span>Start with a Group or add Employees directly.</span>
+            <strong>{t("chat.createConversation")}</strong>
+            <span>{t("chat.createConversationHint")}</span>
           </div>
         )}
       </section>
@@ -505,8 +520,8 @@ export function ChatWorkspace() {
       <aside className="task-panel">
         <div className="section-heading">
           <div>
-            <span className="eyebrow">Accountability</span>
-            <h2>Tasks</h2>
+            <span className="eyebrow">{t("common.accountability")}</span>
+            <h2>{t("chat.tasks")}</h2>
           </div>
         </div>
         {selected ? (
@@ -514,19 +529,19 @@ export function ChatWorkspace() {
             <input
               value={taskTitle}
               onChange={(event) => setTaskTitle(event.target.value)}
-              placeholder="Task title"
+              placeholder={t("chat.taskTitle")}
             />
             <textarea
               value={taskGoal}
               onChange={(event) => setTaskGoal(event.target.value)}
-              placeholder="Goal and expected result"
+              placeholder={t("chat.taskGoal")}
             />
             <button
               className="button secondary"
               onClick={createTask}
               disabled={busy || !taskTitle.trim() || !taskGoal.trim()}
             >
-              Add Task
+              {t("chat.addTask")}
             </button>
           </div>
         ) : null}
@@ -541,13 +556,13 @@ export function ChatWorkspace() {
                 className="button primary"
                 onClick={() => resolveApproval(approval.id, "approved")}
               >
-                Approve
+                {t("chat.approve")}
               </button>
               <button
                 className="button danger"
                 onClick={() => resolveApproval(approval.id, "rejected")}
               >
-                Reject
+                {t("chat.reject")}
               </button>
             </div>
           </article>
@@ -561,7 +576,9 @@ export function ChatWorkspace() {
               <article key={task.id} className="task-card">
                 <div className="task-card-header">
                   <strong>{task.title}</strong>
-                  <span className={`status-pill ${task.status}`}>{task.status}</span>
+                  <span className={`status-pill ${task.status}`}>
+                    {t(statusKey(task.status))}
+                  </span>
                 </div>
                 <p>{task.goal}</p>
                 <div className="button-row wrap">
@@ -570,7 +587,7 @@ export function ChatWorkspace() {
                       className="button quiet"
                       onClick={() => updateTask(task, "in_progress")}
                     >
-                      Start
+                      {t("chat.start")}
                     </button>
                   ) : null}
                   {task.status === "in_progress" ? (
@@ -578,7 +595,7 @@ export function ChatWorkspace() {
                       className="button quiet"
                       onClick={() => updateTask(task, "review")}
                     >
-                      Review
+                      {t("chat.review")}
                     </button>
                   ) : null}
                   {task.status === "review" ? (
@@ -587,7 +604,7 @@ export function ChatWorkspace() {
                       onClick={() => updateTask(task, "completed")}
                     >
                       <Check size={14} />
-                      Complete
+                      {t("chat.complete")}
                     </button>
                   ) : null}
                   {["draft", "in_progress", "blocked", "review"].includes(
@@ -598,7 +615,7 @@ export function ChatWorkspace() {
                       onClick={() => updateTask(task, "cancelled")}
                     >
                       <Ban size={14} />
-                      Cancel
+                      {t("chat.cancel")}
                     </button>
                   ) : null}
                   <button
@@ -606,7 +623,7 @@ export function ChatWorkspace() {
                     onClick={() => attachArtifact(task, "markdown")}
                   >
                     <FileText size={14} />
-                    Artifact
+                    {t("chat.artifact")}
                   </button>
                 </div>
                 {artifacts.length > 0 ? (
@@ -629,15 +646,15 @@ export function ChatWorkspace() {
           {tasks.length === 0 ? (
             <div className="empty-state compact">
               <FileText size={20} />
-              <span>No Tasks in this Conversation</span>
+              <span>{t("chat.noTasks")}</span>
             </div>
           ) : null}
           {latestRun ? (
             <details className="run-timeline">
               <summary>
                 <Clock3 size={15} />
-                Run timeline
-                <span>{latestRun.status}</span>
+                {t("chat.runTimeline")}
+                <span>{t(statusKey(latestRun.status))}</span>
               </summary>
               <ol>
                 {latestRunEvents.map((event) => (

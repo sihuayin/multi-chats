@@ -3,11 +3,13 @@
 import { Check, LoaderCircle, Pencil, UsersRound } from "lucide-react";
 import { useState } from "react";
 import { apiRequest } from "@/lib/api";
+import { useI18n } from "@/components/i18n-provider";
 import { useWorkspace } from "@/components/workspace-provider";
 import { PageHeader } from "@/components/page-header";
 
 export function GroupsManager() {
   const { data, refresh } = useWorkspace();
+  const { t } = useI18n();
   const [name, setName] = useState("");
   const [memberIds, setMemberIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -34,7 +36,7 @@ export function GroupsManager() {
   async function editGroup(id: string) {
     const group = data?.groups.find((item) => item.id === id);
     if (!group) return;
-    const nextName = window.prompt("Group name", group.name);
+    const nextName = window.prompt(t("groups.name"), group.name);
     if (!nextName) return;
     const currentMembers = group.memberIds
       .map(
@@ -43,7 +45,7 @@ export function GroupsManager() {
       )
       .filter(Boolean);
     const nextMembers = window.prompt(
-      "Default member names, separated by commas",
+      t("groups.editMembersPrompt"),
       currentMembers.join(", ")
     );
     if (nextMembers === null) return;
@@ -55,7 +57,9 @@ export function GroupsManager() {
         const employee = data?.employees.find(
           (item) => item.name.toLowerCase() === entry.toLowerCase()
         );
-        if (!employee) throw new Error(`Unknown Employee: ${entry}`);
+        if (!employee) {
+          throw new Error(`${t("common.unknown")}: ${entry}`);
+        }
         return employee.id;
       });
     setBusy(true);
@@ -75,23 +79,23 @@ export function GroupsManager() {
   return (
     <div className="page-content">
       <PageHeader
-        eyebrow="Workspace organization"
-        title="Groups"
-        description="Groups are reusable member templates. Existing Conversations keep their copied membership."
+        eyebrow={t("groups.eyebrow")}
+        title={t("groups.title")}
+        description={t("groups.description")}
       />
       {error ? <div className="error-banner">{error}</div> : null}
       <div className="two-column wide-form">
         <section className="panel">
           <div className="panel-title">
             <UsersRound size={17} />
-            <h2>Create Group</h2>
+            <h2>{t("groups.create")}</h2>
           </div>
           <label>
-            Group name
+            {t("groups.name")}
             <input value={name} onChange={(event) => setName(event.target.value)} />
           </label>
           <fieldset className="choice-fieldset">
-            <legend>Default members</legend>
+            <legend>{t("groups.defaultMembers")}</legend>
             {(data?.employees ?? []).map((employee) => (
               <label key={employee.id} className="check-row">
                 <input
@@ -106,7 +110,9 @@ export function GroupsManager() {
                   }
                 />
                 <span>{employee.name}</span>
-                <small>{employee.active ? "active" : "disabled"}</small>
+                <small>
+                  {employee.active ? t("common.active") : t("common.disabled")}
+                </small>
               </label>
             ))}
           </fieldset>
@@ -116,13 +122,13 @@ export function GroupsManager() {
             disabled={busy || !name.trim()}
           >
             {busy ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}
-            Create Group
+            {t("groups.create")}
           </button>
         </section>
         <section className="panel">
           <div className="panel-title">
             <UsersRound size={17} />
-            <h2>Group library</h2>
+            <h2>{t("groups.library")}</h2>
           </div>
           <div className="stack-list">
             {(data?.groups ?? []).map((group) => (
@@ -134,14 +140,14 @@ export function GroupsManager() {
                       .map(
                         (id) =>
                           data?.employees.find((employee) => employee.id === id)
-                            ?.name ?? "Unknown"
+                            ?.name ?? t("common.unknown")
                       )
-                      .join(", ") || "No default members"}
+                      .join(", ") || t("groups.noDefaultMembers")}
                   </span>
                 </div>
                 <button
                   className="icon-button"
-                  title="Edit Group"
+                  title={t("groups.edit")}
                   onClick={() => editGroup(group.id)}
                   disabled={busy}
                 >

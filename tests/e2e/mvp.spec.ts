@@ -8,6 +8,13 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   const suffix = Date.now().toString(36);
   const employeeName = `Researcher ${suffix}`;
 
+  await page.context().addCookies([
+    {
+      name: "locale",
+      value: "en",
+      url: "http://localhost:3000"
+    }
+  ]);
   await page.goto("/providers");
   await page.getByLabel("Label").fill(`Test Provider ${suffix}`);
   await page.getByLabel("API credential").fill("test-key");
@@ -29,7 +36,9 @@ test("configures an Employee Group and completes a mentioned Run", async ({
 
   await page.goto("/");
   await page.getByTitle("New conversation").click();
-  await expect(page.getByRole("heading", { name: `Research Team ${suffix} session` })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: `Research Team ${suffix} Conversation` })
+  ).toBeVisible();
   await page
     .getByPlaceholder("Message the group or mention @employee")
     .fill(`@researcher-${suffix} prepare the launch brief`);
@@ -45,4 +54,11 @@ test("configures an Employee Group and completes a mentioned Run", async ({
     .fill("Confirm the brief is complete and consistent.");
   await page.getByRole("button", { name: "Add Task" }).click();
   await expect(page.getByText("Review launch brief")).toBeVisible();
+
+  await page.getByRole("button", { name: "中文" }).click();
+  await expect(page.getByRole("link", { name: "员工" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "会话" })).toBeVisible();
+
+  await page.getByRole("button", { name: "EN", exact: true }).click();
+  await expect(page.getByRole("link", { name: "Employees" })).toBeVisible();
 });

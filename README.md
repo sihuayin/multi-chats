@@ -25,6 +25,8 @@ npm run worker
 
 Set `MODEL_MODE=fake` to use deterministic test responses instead of a model provider.
 
+The UI supports English and Chinese. The initial language comes from the `locale` cookie or the browser's `Accept-Language` header, and can be changed from the sidebar.
+
 ## PostgreSQL
 
 Set `DATABASE_URL` to switch the same application and worker to PostgreSQL:

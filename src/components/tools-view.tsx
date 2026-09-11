@@ -2,35 +2,40 @@
 
 import { ShieldCheck, ShieldEllipsis, Wrench } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
+import { useI18n } from "@/components/i18n-provider";
+import { toolDescription, toolLabel } from "@/lib/tool-labels";
 import { useWorkspace } from "@/components/workspace-provider";
 
 export function ToolsView() {
   const { data } = useWorkspace();
+  const { t } = useI18n();
   return (
     <div className="page-content">
       <PageHeader
-        eyebrow="Controlled execution"
-        title="Tools"
-        description="Every external action must exist in this registry before a Skill can use it."
+        eyebrow={t("tools.eyebrow")}
+        title={t("tools.title")}
+        description={t("tools.description")}
       />
       <div className="card-grid">
         {(data?.tools ?? []).map((tool) => (
           <article key={tool.name} className="panel tool-card">
             <div className="panel-title">
               <Wrench size={17} />
-              <h2>{tool.label}</h2>
+              <h2>{toolLabel(t, tool)}</h2>
             </div>
-            <p>{tool.description}</p>
+            <p>{toolDescription(t, tool)}</p>
             <div className="button-row">
               <span className={`status-pill ${tool.requiresApproval ? "review" : "completed"}`}>
                 {tool.requiresApproval
-                  ? "Requires approval"
+                  ? t("tools.requiresApproval")
                   : tool.risk === "write"
-                    ? "Internal write"
-                    : "Read-only"}
+                    ? t("tools.internalWrite")
+                    : t("tools.readOnly")}
               </span>
               <span className="status-pill">
-                {tool.replay === "safe" ? "Safe replay" : "No replay"}
+                {tool.replay === "safe"
+                  ? t("tools.safeReplay")
+                  : t("tools.noReplay")}
               </span>
             </div>
             <div className="tool-schema">
@@ -42,7 +47,7 @@ export function ToolsView() {
               <code>{tool.name}</code>
             </div>
             <details className="tool-schema-details">
-              <summary>Input schema</summary>
+              <summary>{t("tools.inputSchema")}</summary>
               <pre>{JSON.stringify(tool.inputSchema, null, 2)}</pre>
             </details>
           </article>

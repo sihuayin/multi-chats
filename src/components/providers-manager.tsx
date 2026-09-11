@@ -4,13 +4,15 @@ import { KeyRound, LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { apiRequest } from "@/lib/api";
 import { providerCatalog } from "@/lib/provider-catalog";
+import { useI18n } from "@/components/i18n-provider";
 import { useWorkspace } from "@/components/workspace-provider";
 import { PageHeader } from "@/components/page-header";
 
 export function ProvidersManager() {
   const { data, refresh } = useWorkspace();
+  const { t } = useI18n();
   const [provider, setProvider] = useState("openai");
-  const [label, setLabel] = useState("Primary provider");
+  const [label, setLabel] = useState("");
   const [credential, setCredential] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -21,7 +23,11 @@ export function ProvidersManager() {
     try {
       await apiRequest("/api/providers", {
         method: "POST",
-        body: JSON.stringify({ provider, label, credential })
+        body: JSON.stringify({
+          provider,
+          label: label || t("providers.defaultLabel"),
+          credential
+        })
       });
       setCredential("");
       await refresh();
@@ -48,7 +54,7 @@ export function ProvidersManager() {
   async function rotateProvider(id: string) {
     const provider = data?.providers.find((item) => item.id === id);
     if (!provider) return;
-    const credential = window.prompt("New API credential");
+    const credential = window.prompt(t("providers.newCredential"));
     if (!credential) return;
     setBusy(true);
     setError(null);
@@ -72,19 +78,19 @@ export function ProvidersManager() {
   return (
     <div className="page-content">
       <PageHeader
-        eyebrow="Workspace configuration"
-        title="Providers"
-        description="Credentials stay encrypted on the server and are never returned to the browser."
+        eyebrow={t("providers.eyebrow")}
+        title={t("providers.title")}
+        description={t("providers.description")}
       />
       {error ? <div className="error-banner">{error}</div> : null}
       <div className="two-column">
         <section className="panel">
           <div className="panel-title">
             <KeyRound size={17} />
-            <h2>Add provider</h2>
+            <h2>{t("providers.add")}</h2>
           </div>
           <label>
-            Provider
+            {t("providers.provider")}
             <select value={provider} onChange={(event) => setProvider(event.target.value)}>
               {providerCatalog.map((item) => (
                 <option key={item.id} value={item.id}>
@@ -94,11 +100,15 @@ export function ProvidersManager() {
             </select>
           </label>
           <label>
-            Label
-            <input value={label} onChange={(event) => setLabel(event.target.value)} />
+            {t("providers.label")}
+            <input
+              value={label}
+              placeholder={t("providers.defaultLabel")}
+              onChange={(event) => setLabel(event.target.value)}
+            />
           </label>
           <label>
-            API credential
+            {t("providers.apiCredential")}
             <input
               type="password"
               value={credential}
@@ -112,14 +122,14 @@ export function ProvidersManager() {
             disabled={busy || !credential.trim()}
           >
             {busy ? <LoaderCircle className="spin" size={16} /> : <KeyRound size={16} />}
-            Validate and save
+            {t("providers.validateSave")}
           </button>
         </section>
 
         <section className="panel">
           <div className="panel-title">
             <KeyRound size={17} />
-            <h2>Configured providers</h2>
+            <h2>{t("providers.configured")}</h2>
           </div>
           <div className="stack-list">
             {(data?.providers ?? []).map((item) => (
@@ -131,7 +141,7 @@ export function ProvidersManager() {
                 <div className="button-row">
                   <button
                     className="icon-button"
-                    title="Rotate credential"
+                    title={t("providers.rotate")}
                     onClick={() => rotateProvider(item.id)}
                     disabled={busy}
                   >
@@ -139,7 +149,7 @@ export function ProvidersManager() {
                   </button>
                   <button
                     className="icon-button danger-text"
-                    title="Delete provider"
+                    title={t("providers.delete")}
                     onClick={() => removeProvider(item.id)}
                     disabled={busy}
                   >
@@ -149,7 +159,7 @@ export function ProvidersManager() {
               </article>
             ))}
             {data?.providers.length === 0 ? (
-              <p className="muted">No credentials configured.</p>
+              <p className="muted">{t("providers.none")}</p>
             ) : null}
           </div>
         </section>

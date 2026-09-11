@@ -3,6 +3,8 @@
 import { Bot, Check, LoaderCircle, Pencil, Power } from "lucide-react";
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api";
+import { useI18n } from "@/components/i18n-provider";
+import { skillLabel } from "@/lib/skill-labels";
 import { useWorkspace } from "@/components/workspace-provider";
 import { PageHeader } from "@/components/page-header";
 
@@ -16,10 +18,9 @@ type ModelSummary = {
 
 export function EmployeesManager() {
   const { data, refresh } = useWorkspace();
+  const { t } = useI18n();
   const [name, setName] = useState("");
-  const [identity, setIdentity] = useState(
-    "You are a focused analyst. Be precise and surface uncertainty."
-  );
+  const [identity, setIdentity] = useState("");
   const [providerId, setProviderId] = useState("");
   const [modelId, setModelId] = useState("");
   const [skillIds, setSkillIds] = useState<string[]>([]);
@@ -56,7 +57,7 @@ export function EmployeesManager() {
         method: "POST",
         body: JSON.stringify({
           name,
-          identity,
+          identity: identity || t("employees.defaultIdentity"),
           providerCredentialId: effectiveProviderId,
           modelId,
           skillIds,
@@ -93,9 +94,12 @@ export function EmployeesManager() {
   async function editEmployee(id: string) {
     const employee = data?.employees.find((item) => item.id === id);
     if (!employee) return;
-    const nextName = window.prompt("Employee name", employee.name);
+    const nextName = window.prompt(t("employees.editNamePrompt"), employee.name);
     if (!nextName) return;
-    const nextIdentity = window.prompt("Employee identity", employee.identity);
+    const nextIdentity = window.prompt(
+      t("employees.editIdentityPrompt"),
+      employee.identity
+    );
     if (!nextIdentity) return;
     setBusy(true);
     try {
@@ -118,32 +122,33 @@ export function EmployeesManager() {
   return (
     <div className="page-content">
       <PageHeader
-        eyebrow="Workspace configuration"
-        title="Employees"
-        description="Each Employee has one model configuration and a reviewable set of Skills."
+        eyebrow={t("employees.eyebrow")}
+        title={t("employees.title")}
+        description={t("employees.description")}
       />
       {error ? <div className="error-banner">{error}</div> : null}
       <div className="two-column wide-form">
         <section className="panel">
           <div className="panel-title">
             <Bot size={17} />
-            <h2>Create Employee</h2>
+            <h2>{t("employees.create")}</h2>
           </div>
           <label>
-            Name
+            {t("employees.name")}
             <input value={name} onChange={(event) => setName(event.target.value)} />
           </label>
           <label>
-            Identity
+            {t("employees.identity")}
             <textarea
               rows={4}
               value={identity}
+              placeholder={t("employees.defaultIdentity")}
               onChange={(event) => setIdentity(event.target.value)}
             />
           </label>
           <div className="field-grid">
             <label>
-              Provider
+              {t("employees.provider")}
               <select
                 value={effectiveProviderId}
                 onChange={(event) => setProviderId(event.target.value)}
@@ -156,17 +161,23 @@ export function EmployeesManager() {
               </select>
             </label>
             <label>
-              Model
+              {t("employees.model")}
               <select value={modelId} onChange={(event) => setModelId(event.target.value)}>
                 {models.map((model) => (
                   <option key={model.id} value={model.id}>
                     {model.name}
-                    {model.reasoning ? " - reasoning" : ""}
+                    {model.reasoning
+                      ? ` - ${t("employees.reasoning")}`
+                      : ""}
                     {model.contextWindow
-                      ? ` - ${Math.round(model.contextWindow / 1000)}k context`
+                      ? ` - ${t("employees.context", {
+                          count: Math.round(model.contextWindow / 1000)
+                        })}`
                       : ""}
                     {model.maxTokens
-                      ? ` - ${Math.round(model.maxTokens / 1000)}k output`
+                      ? ` - ${t("employees.output", {
+                          count: Math.round(model.maxTokens / 1000)
+                        })}`
                       : ""}
                   </option>
                 ))}
@@ -174,7 +185,7 @@ export function EmployeesManager() {
             </label>
           </div>
           <fieldset className="choice-fieldset">
-            <legend>Skills</legend>
+            <legend>{t("employees.skills")}</legend>
             {(data?.skills ?? []).map((skill) => (
               <label key={skill.id} className="check-row">
                 <input
@@ -188,7 +199,7 @@ export function EmployeesManager() {
                     )
                   }
                 />
-                <span>{skill.name}</span>
+                <span>{skillLabel(t, skill)}</span>
               </label>
             ))}
           </fieldset>
@@ -198,14 +209,14 @@ export function EmployeesManager() {
             disabled={busy || !name.trim() || !effectiveProviderId || !modelId}
           >
             {busy ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}
-            Create Employee
+            {t("employees.create")}
           </button>
         </section>
 
         <section className="panel">
           <div className="panel-title">
             <Bot size={17} />
-            <h2>Employee roster</h2>
+            <h2>{t("employees.roster")}</h2>
           </div>
           <div className="stack-list">
             {(data?.employees ?? []).map((employee) => (
@@ -215,15 +226,17 @@ export function EmployeesManager() {
                   <span>
                     {data?.providers.find(
                       (provider) => provider.id === employee.providerCredentialId
-                    )?.label ?? "Unknown provider"}{" "}
+                    )?.label ?? t("common.unknownProvider")}{" "}
                     / {employee.modelId}
                   </span>
-                  <small>{employee.skillIds.length} Skills</small>
+                  <small>
+                    {employee.skillIds.length} {t("employees.skills")}
+                  </small>
                 </div>
                 <div className="button-row">
                   <button
                     className="icon-button"
-                    title="Edit Employee"
+                    title={t("employees.edit")}
                     onClick={() => editEmployee(employee.id)}
                     disabled={busy}
                   >
@@ -235,7 +248,9 @@ export function EmployeesManager() {
                     disabled={busy}
                   >
                     <Power size={15} />
-                    {employee.active ? "Disable" : "Enable"}
+                    {employee.active
+                      ? t("employees.disable")
+                      : t("employees.enable")}
                   </button>
                 </div>
               </article>

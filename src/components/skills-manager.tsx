@@ -3,6 +3,9 @@
 import { Braces, Check, LoaderCircle } from "lucide-react";
 import { useState } from "react";
 import { apiRequest } from "@/lib/api";
+import { useI18n } from "@/components/i18n-provider";
+import { skillLabel } from "@/lib/skill-labels";
+import { toolLabel } from "@/lib/tool-labels";
 import { useWorkspace } from "@/components/workspace-provider";
 import { PageHeader } from "@/components/page-header";
 
@@ -15,6 +18,7 @@ function csv(value: string): string[] {
 
 export function SkillsManager() {
   const { data, refresh } = useWorkspace();
+  const { t } = useI18n();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [instructions, setInstructions] = useState("");
@@ -54,30 +58,30 @@ export function SkillsManager() {
   return (
     <div className="page-content">
       <PageHeader
-        eyebrow="Workspace configuration"
-        title="Skills"
-        description="Skills are declarative instructions and Tool allowlists. They never contain executable code."
+        eyebrow={t("skills.eyebrow")}
+        title={t("skills.title")}
+        description={t("skills.description")}
       />
       {error ? <div className="error-banner">{error}</div> : null}
       <div className="two-column wide-form">
         <section className="panel">
           <div className="panel-title">
             <Braces size={17} />
-            <h2>Create custom Skill</h2>
+            <h2>{t("skills.create")}</h2>
           </div>
           <label>
-            Name
+            {t("skills.name")}
             <input value={name} onChange={(event) => setName(event.target.value)} />
           </label>
           <label>
-            Description
+            {t("skills.descriptionField")}
             <input
               value={description}
               onChange={(event) => setDescription(event.target.value)}
             />
           </label>
           <label>
-            Instructions
+            {t("skills.instructions")}
             <textarea
               rows={5}
               value={instructions}
@@ -86,16 +90,16 @@ export function SkillsManager() {
           </label>
           <div className="field-grid">
             <label>
-              Inputs
+              {t("skills.inputs")}
               <input value={inputs} onChange={(event) => setInputs(event.target.value)} />
             </label>
             <label>
-              Outputs
+              {t("skills.outputs")}
               <input value={outputs} onChange={(event) => setOutputs(event.target.value)} />
             </label>
           </div>
           <fieldset className="choice-fieldset">
-            <legend>Allowed Tools</legend>
+            <legend>{t("skills.allowedTools")}</legend>
             {(data?.tools ?? []).map((tool) => (
               <label key={tool.name} className="check-row">
                 <input
@@ -109,7 +113,7 @@ export function SkillsManager() {
                     )
                   }
                 />
-                <span>{tool.label}</span>
+                <span>{toolLabel(t, tool)}</span>
                 <small>{tool.requiresApproval ? "approval" : tool.risk}</small>
               </label>
             ))}
@@ -120,23 +124,26 @@ export function SkillsManager() {
             disabled={busy || !name.trim() || !instructions.trim()}
           >
             {busy ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}
-            Create Skill
+            {t("skills.create")}
           </button>
         </section>
 
         <section className="panel">
           <div className="panel-title">
             <Braces size={17} />
-            <h2>Skill library</h2>
+            <h2>{t("skills.library")}</h2>
           </div>
           <div className="stack-list">
             {(data?.skills ?? []).map((skill) => (
               <article key={skill.id} className="list-card">
                 <div>
-                  <strong>{skill.name}</strong>
+                  <strong>{skillLabel(t, skill)}</strong>
                   <span>{skill.description}</span>
                   <small>
-                    {skill.builtIn ? "Built-in" : "Custom"} /{" "}
+                    {skill.builtIn
+                      ? t("common.builtIn")
+                      : t("common.custom")}{" "}
+                    /{" "}
                     {skill.toolNames.length} Tools
                   </small>
                 </div>
