@@ -135,6 +135,14 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   await editedCard.getByRole("button", { name: "Disable" }).click();
   await expect(editedCard.getByRole("button", { name: "Enable" })).toBeVisible();
 
+  await page.goto("/groups");
+  await expect(
+    page
+      .locator(".list-card")
+      .filter({ hasText: editedGroupName })
+      .locator('.member-state[title="disabled"]')
+  ).toHaveCount(1);
+
   await page.goto("/");
   await page.locator(".conversation-item").last().click();
   await expect(page.locator('.member-state[title="disabled"]')).toHaveCount(1);

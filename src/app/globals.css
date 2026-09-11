@@ -363,6 +363,17 @@ button {
   background: #27a269;
 }
 
+.group-members {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+}
+
+.group-member {
+  display: inline-flex;
+  align-items: center;
+}
+
 .status-pill.completed {
   color: #0b6e5e;
   background: #dff3eb;

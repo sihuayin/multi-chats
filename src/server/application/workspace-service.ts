@@ -254,7 +254,7 @@ export class WorkspaceService {
   async createGroup(input: unknown): Promise<Group> {
     const parsed = groupInputSchema.parse(input);
     return this.store.update((state) => {
-      this.assertEmployees(state.employees, parsed.memberIds);
+      this.assertKnownEmployees(state.employees, parsed.memberIds);
       const timestamp = now();
       const group: Group = {
         id: crypto.randomUUID(),
@@ -275,7 +275,7 @@ export class WorkspaceService {
     return this.store.update((state) => {
       const group = state.groups.find((item) => item.id === id);
       if (!group) notFound("Group");
-      this.assertEmployees(state.employees, parsed.memberIds);
+      this.assertKnownEmployees(state.employees, parsed.memberIds);
       group.name = parsed.name;
       group.memberIds = parsed.memberIds;
       group.updatedAt = now();
@@ -291,8 +291,16 @@ export class WorkspaceService {
         ? state.groups.find((item) => item.id === parsed.groupId)
         : undefined;
       if (parsed.groupId && !group) notFound("Group");
-      const memberIds = group ? [...group.memberIds] : parsed.memberIds;
-      this.assertEmployees(state.employees, memberIds);
+      const memberIds = group
+        ? group.memberIds.filter((id) =>
+            state.employees.some(
+              (employee) => employee.id === id && employee.active
+            )
+          )
+        : parsed.memberIds;
+      if (!group) {
+        this.assertEmployees(state.employees, memberIds);
+      }
       const timestamp = now();
       const conversation: Conversation = {
         id: crypto.randomUUID(),
@@ -454,6 +462,17 @@ export class WorkspaceService {
     );
     if (ids.some((id) => !activeIds.has(id))) {
       throw new ApiError(400, "One or more Employees are unknown or inactive", "invalid_employee");
+    }
+  }
+
+  private assertKnownEmployees(employees: Employee[], ids: string[]): void {
+    const knownIds = new Set(employees.map((employee) => employee.id));
+    if (ids.some((id) => !knownIds.has(id))) {
+      throw new ApiError(
+        400,
+        "One or more Employees are unknown",
+        "invalid_employee"
+      );
     }
   }
 

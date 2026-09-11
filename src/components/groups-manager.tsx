@@ -135,14 +135,31 @@ export function GroupsManager() {
               <article key={group.id} className="list-card">
                 <div>
                   <strong>{group.name}</strong>
-                  <span>
-                    {group.memberIds
-                      .map(
-                        (id) =>
-                          data?.employees.find((employee) => employee.id === id)
-                            ?.name ?? t("common.unknown")
-                      )
-                      .join(", ") || t("groups.noDefaultMembers")}
+                  <span className="group-members">
+                    {group.memberIds.length > 0
+                      ? group.memberIds.map((id) => {
+                          const employee = data?.employees.find(
+                            (item) => item.id === id
+                          );
+                          return (
+                            <span key={id} className="group-member">
+                              <i
+                                className={
+                                  employee?.active
+                                    ? "member-state active"
+                                    : "member-state"
+                                }
+                                title={
+                                  employee?.active
+                                    ? t("common.active")
+                                    : t("common.disabled")
+                                }
+                              />
+                              {employee?.name ?? t("common.unknown")}
+                            </span>
+                          );
+                        })
+                      : t("groups.noDefaultMembers")}
                   </span>
                 </div>
                 <button
