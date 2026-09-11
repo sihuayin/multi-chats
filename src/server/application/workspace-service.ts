@@ -19,8 +19,8 @@ import {
   taskPatchSchema
 } from "@/server/domain/schemas";
 import {
-  listProviderModels,
-  validateProviderCredential
+  piProviderRegistry,
+  type ProviderRegistry
 } from "@/server/adapters/model/provider-registry";
 import { ApiError, notFound } from "@/server/application/errors";
 import { transitionTask } from "@/server/application/task-ledger";
@@ -50,7 +50,8 @@ function publicProvider(provider: ProviderCredential): PublicProvider {
 export class WorkspaceService {
   constructor(
     private readonly store: StateStore,
-    private readonly cipher: CredentialCipher
+    private readonly cipher: CredentialCipher,
+    private readonly providers: ProviderRegistry = piProviderRegistry
   ) {}
 
   async getWorkspaceView(): Promise<WorkspaceView> {
@@ -80,7 +81,7 @@ export class WorkspaceService {
 
   async createProvider(input: unknown): Promise<PublicProvider> {
     const parsed = providerInputSchema.parse(input);
-    await validateProviderCredential(parsed.provider, parsed.credential);
+    await this.providers.validateCredential(parsed.provider, parsed.credential);
     return this.store.update((state) => {
       const timestamp = now();
       const provider: ProviderCredential = {
@@ -100,7 +101,7 @@ export class WorkspaceService {
 
   async updateProvider(id: string, input: unknown): Promise<PublicProvider> {
     const parsed = providerInputSchema.parse(input);
-    await validateProviderCredential(parsed.provider, parsed.credential);
+    await this.providers.validateCredential(parsed.provider, parsed.credential);
     return this.store.update((state) => {
       const provider = state.providers.find((item) => item.id === id);
       if (!provider) notFound("Provider");
@@ -135,7 +136,7 @@ export class WorkspaceService {
         (item) => item.id === providerCredentialId
       );
       if (!provider) notFound("Provider");
-      return listProviderModels(
+      return this.providers.listModels(
         provider.provider,
         this.cipher.decrypt(provider.encryptedCredential)
       );

@@ -48,6 +48,25 @@ class StaticCredentialStore implements CredentialStore {
 
 export const providerDescriptions = providerCatalog;
 
+export type ProviderModelSummary = {
+  id: string;
+  name: string;
+  contextWindow?: number;
+  maxTokens?: number;
+  reasoning: boolean;
+};
+
+export interface ProviderRegistry {
+  validateCredential(
+    providerId: ProviderId,
+    credential: string
+  ): Promise<void>;
+  listModels(
+    providerId: ProviderId,
+    credential?: string
+  ): Promise<ProviderModelSummary[]>;
+}
+
 export function createProviderModels(
   providerId: ProviderId,
   credential?: string
@@ -64,13 +83,7 @@ export function createProviderModels(
 export function listProviderModels(
   providerId: ProviderId,
   credential?: string
-): Array<{
-  id: string;
-  name: string;
-  contextWindow?: number;
-  maxTokens?: number;
-  reasoning: boolean;
-}> {
+): ProviderModelSummary[] {
   return createProviderModels(providerId, credential)
     .getModels(providerId)
     .map((model) => ({
@@ -81,6 +94,13 @@ export function listProviderModels(
       reasoning: Boolean(model.reasoning)
     }));
 }
+
+export const piProviderRegistry: ProviderRegistry = {
+  validateCredential: validateProviderCredential,
+  async listModels(providerId, credential) {
+    return listProviderModels(providerId, credential);
+  }
+};
 
 export async function validateProviderCredential(
   providerId: ProviderId,
