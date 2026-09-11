@@ -1,6 +1,6 @@
 "use client";
 
-import { Braces, Check, LoaderCircle } from "lucide-react";
+import { Braces, Check, LoaderCircle, Pencil } from "lucide-react";
 import { useState } from "react";
 import { apiRequest } from "@/lib/api";
 import { useI18n } from "@/components/i18n-provider";
@@ -20,6 +20,7 @@ export function SkillsManager() {
   const { data, refresh } = useWorkspace();
   const { t } = useI18n();
   const [name, setName] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [description, setDescription] = useState("");
   const [instructions, setInstructions] = useState("");
   const [inputs, setInputs] = useState("brief, context");
@@ -28,12 +29,22 @@ export function SkillsManager() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function createSkill() {
+  function resetForm() {
+    setEditingId(null);
+    setName("");
+    setDescription("");
+    setInstructions("");
+    setInputs("brief, context");
+    setOutputs("draft");
+    setToolNames([]);
+  }
+
+  async function saveSkill() {
     setBusy(true);
     setError(null);
     try {
-      await apiRequest("/api/skills", {
-        method: "POST",
+      await apiRequest(editingId ? `/api/skills/${editingId}` : "/api/skills", {
+        method: editingId ? "PUT" : "POST",
         body: JSON.stringify({
           name,
           description,
@@ -43,16 +54,25 @@ export function SkillsManager() {
           toolNames
         })
       });
-      setName("");
-      setDescription("");
-      setInstructions("");
-      setToolNames([]);
+      resetForm();
       await refresh();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
       setBusy(false);
     }
+  }
+
+  function editSkill(id: string) {
+    const skill = data?.skills.find((item) => item.id === id);
+    if (!skill || skill.builtIn) return;
+    setEditingId(skill.id);
+    setName(skill.name);
+    setDescription(skill.description);
+    setInstructions(skill.instructions);
+    setInputs(skill.inputs.join(", "));
+    setOutputs(skill.outputs.join(", "));
+    setToolNames(skill.toolNames);
   }
 
   return (
@@ -67,7 +87,9 @@ export function SkillsManager() {
         <section className="panel">
           <div className="panel-title">
             <Braces size={17} />
-            <h2>{t("skills.create")}</h2>
+            <h2>
+              {editingId ? t("skills.editTitle") : t("skills.create")}
+            </h2>
           </div>
           <label>
             {t("skills.name")}
@@ -118,14 +140,21 @@ export function SkillsManager() {
               </label>
             ))}
           </fieldset>
-          <button
-            className="button primary"
-            onClick={createSkill}
-            disabled={busy || !name.trim() || !instructions.trim()}
-          >
-            {busy ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}
-            {t("skills.create")}
-          </button>
+          <div className="button-row">
+            <button
+              className="button primary"
+              onClick={saveSkill}
+              disabled={busy || !name.trim() || !instructions.trim()}
+            >
+              {busy ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}
+              {editingId ? t("skills.saveChanges") : t("skills.create")}
+            </button>
+            {editingId ? (
+              <button className="button quiet" onClick={resetForm}>
+                {t("skills.cancelEdit")}
+              </button>
+            ) : null}
+          </div>
         </section>
 
         <section className="panel">
@@ -147,6 +176,16 @@ export function SkillsManager() {
                     {skill.toolNames.length} Tools
                   </small>
                 </div>
+                {!skill.builtIn ? (
+                  <button
+                    className="icon-button"
+                    title={t("skills.editTitle")}
+                    onClick={() => editSkill(skill.id)}
+                    disabled={busy}
+                  >
+                    <Pencil size={15} />
+                  </button>
+                ) : null}
               </article>
             ))}
           </div>

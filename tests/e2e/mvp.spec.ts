@@ -21,9 +21,29 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   await page.getByRole("button", { name: "Validate and save" }).click();
   await expect(page.getByText(`Test Provider ${suffix}`)).toBeVisible();
 
+  const customSkillName = `Fact Checker ${suffix}`;
+  await page.goto("/skills");
+  await page.getByLabel("Name").fill(customSkillName);
+  await page.getByLabel("Description").fill("Checks claims against sources.");
+  await page
+    .getByLabel("Instructions")
+    .fill("Check every claim and report uncertainty.");
+  await page.getByLabel(/Fetch URL/).check();
+  await page.getByRole("button", { name: "Create custom Skill" }).click();
+  await expect(page.getByText(customSkillName)).toBeVisible();
+
+  const skillCard = page.locator(".list-card").filter({ hasText: customSkillName });
+  await skillCard.getByTitle("Edit Skill").click();
+  await page
+    .getByLabel("Description")
+    .fill("Updated custom Skill description.");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByText("Updated custom Skill description.")).toBeVisible();
+
   await page.goto("/employees");
   await page.getByLabel("Name").fill(employeeName);
   await page.getByLabel("Researcher").check();
+  await page.getByLabel(customSkillName).check();
   const modelSelect = page.getByLabel("Model");
   await expect(modelSelect.locator("option")).not.toHaveCount(0);
   await modelSelect.selectOption({ index: 0 });
@@ -69,6 +89,7 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   await expect(page.getByRole("heading", { name: "Edit Employee" })).toBeVisible();
   await page.getByLabel("Name").fill(editedEmployeeName);
   await page.getByLabel("Identity").fill("Updated employee identity.");
+  await expect(page.getByLabel(customSkillName)).toBeChecked();
   await page.getByLabel("Writer").check();
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(page.getByText(editedEmployeeName)).toBeVisible();

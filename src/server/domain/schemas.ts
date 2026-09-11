@@ -25,7 +25,7 @@ export const skillInputSchema = z.object({
   inputs: z.array(z.string().trim().min(1)).default([]),
   outputs: z.array(z.string().trim().min(1)).default([]),
   toolNames: z.array(z.string().trim().min(1)).default([])
-});
+}).strict();
 
 export const groupInputSchema = z.object({
   name: z.string().trim().min(1).max(80),
