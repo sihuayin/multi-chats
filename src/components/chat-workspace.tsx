@@ -662,7 +662,10 @@ export function ChatWorkspace() {
             </div>
           ) : null}
           {latestRun ? (
-            <details className="run-timeline">
+            <details
+              className="run-timeline"
+              data-run-status={latestRun.status}
+            >
               <summary>
                 <Clock3 size={15} />
                 {t("chat.runTimeline")}

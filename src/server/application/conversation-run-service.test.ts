@@ -7,18 +7,18 @@ import { AesCredentialCipher } from "@/server/security/credential-cipher";
 import {
   createFixtureState,
   noopProviderRegistry,
-  RecordingEngine,
+  RecordingModelGateway,
   TEST_KEY,
-  ToolCallingEngine
+  ToolCallingModelGateway
 } from "@/server/test-support/fixtures";
 import { MemoryStore } from "@/server/store/memory-store";
 import { WorkspaceService } from "@/server/application/workspace-service";
-import type { EmployeeEngine } from "@/server/application/employee-engine";
+import type { ModelGateway } from "@/server/application/model-gateway";
 
 describe("ConversationRun", () => {
   it("stores a Message without starting a Run when no Employee is mentioned", async () => {
     const store = new MemoryStoreFixture();
-    const engine = new RecordingEngine();
+    const engine = new RecordingModelGateway();
     const runService = new ConversationRunService(
       store,
       new AesCredentialCipher(TEST_KEY),
@@ -37,7 +37,7 @@ describe("ConversationRun", () => {
 
   it("streams and persists a single Employee response", async () => {
     const store = new MemoryStoreFixture();
-    const engine = new RecordingEngine(() => ["Hello", " from Alice"]);
+    const engine = new RecordingModelGateway(() => ["Hello", " from Alice"]);
     const runService = new ConversationRunService(
       store,
       new AesCredentialCipher(TEST_KEY),
@@ -55,6 +55,11 @@ describe("ConversationRun", () => {
     const completed = await runService.processRun(started.run!.id);
     expect(completed.error).toBeUndefined();
     expect(completed.status).toBe("completed");
+    expect(engine.requests[0]).toMatchObject({
+      provider: "openai",
+      credential: "test-api-key",
+      modelId: "test-model"
+    });
 
     const messages = await runService.listMessages(started.message.conversationId);
     expect(messages.at(-1)).toMatchObject({
@@ -77,7 +82,7 @@ describe("ConversationRun", () => {
 
   it("executes @all members sequentially and gives later members earlier responses", async () => {
     const store = new MemoryStoreFixture();
-    const engine = new RecordingEngine(() => ["response"]);
+    const engine = new RecordingModelGateway(() => ["response"]);
     const runService = new ConversationRunService(
       store,
       new AesCredentialCipher(TEST_KEY),
@@ -128,7 +133,11 @@ describe("ConversationRun", () => {
     state.employees[0].skillIds.push(customSkillId);
     const store = new MemoryStore(state);
     const cipher = new AesCredentialCipher(TEST_KEY);
-    const runService = new ConversationRunService(store, cipher, new ToolCallingEngine());
+    const runService = new ConversationRunService(
+      store,
+      cipher,
+      new ToolCallingModelGateway()
+    );
     const workspace = new WorkspaceService(store, cipher, noopProviderRegistry);
 
     const started = await runService.startTurn(
@@ -160,7 +169,7 @@ describe("ConversationRun", () => {
   it("claims a queued Run only once when workers process it concurrently", async () => {
     const store = new MemoryStoreFixture();
     let attempts = 0;
-    const engine: EmployeeEngine = {
+    const engine: ModelGateway = {
       async *run() {
         attempts += 1;
         await new Promise((resolve) => setTimeout(resolve, 30));
@@ -201,7 +210,7 @@ describe("ConversationRun", () => {
     const runService = new ConversationRunService(
       new MemoryStore(state),
       new AesCredentialCipher(TEST_KEY),
-      new RecordingEngine()
+      new RecordingModelGateway()
     );
 
     await runService.recoverInterruptedRuns();
@@ -214,7 +223,7 @@ describe("ConversationRun", () => {
 
   it("cancels an active Engine and marks partial Messages as cancelled", async () => {
     const store = new MemoryStoreFixture();
-    const engine: EmployeeEngine = {
+    const engine: ModelGateway = {
       async *run(request) {
         if (request.signal?.aborted) throw new Error("aborted");
         await new Promise<void>((resolve, reject) => {
@@ -260,7 +269,7 @@ describe("ConversationRun", () => {
 
   it("observes a cancellation written by another service instance", async () => {
     const store = new MemoryStoreFixture();
-    const engine: EmployeeEngine = {
+    const engine: ModelGateway = {
       async *run(request) {
         await new Promise<void>((resolve, reject) => {
           const timer = setTimeout(resolve, 500);
@@ -288,7 +297,7 @@ describe("ConversationRun", () => {
     const web = new ConversationRunService(
       store,
       new AesCredentialCipher(TEST_KEY),
-      new RecordingEngine()
+      new RecordingModelGateway()
     );
     const started = await worker.startTurn(
       "30000000-0000-4000-8000-000000000001",
@@ -304,7 +313,7 @@ describe("ConversationRun", () => {
 
   it("resumes an interrupted Run and skips already completed Employees", async () => {
     const store = new MemoryStoreFixture();
-    const engine = new RecordingEngine(() => ["resumed"]);
+    const engine = new RecordingModelGateway(() => ["resumed"]);
     const runService = new ConversationRunService(
       store,
       new AesCredentialCipher(TEST_KEY),

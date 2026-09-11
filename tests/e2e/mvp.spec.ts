@@ -88,6 +88,9 @@ test("configures an Employee Group and completes a mentioned Run", async ({
     .fill(`@researcher-${suffix} prepare the launch brief`);
   await page.getByRole("button", { name: "Send" }).click();
 
+  await expect(page.getByText(`${employeeName} reviewed`)).toBeVisible({
+    timeout: 10_000
+  });
   const employeeResponse = `${employeeName} reviewed the request and prepared a structured response.`;
   await expect(page.getByText(employeeResponse)).toBeVisible({
     timeout: 10_000
@@ -99,6 +102,9 @@ test("configures an Employee Group and completes a mentioned Run", async ({
     .filter({ hasText: `${editedGroupName} Conversation` })
     .click();
   await expect(page.getByText(employeeResponse)).toBeVisible();
+  await expect(
+    page.locator('.run-timeline[data-run-status="completed"]')
+  ).toBeVisible();
   await expect(
     page.locator('.message-bubble[data-status="streaming"]')
   ).toHaveCount(0);

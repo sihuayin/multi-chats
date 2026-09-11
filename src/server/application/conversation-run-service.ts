@@ -9,10 +9,10 @@ import type {
   ToolDefinition
 } from "@/server/domain/types";
 import type {
-  EmployeeEngine,
-  EngineEvent,
-  EngineTool
-} from "@/server/application/employee-engine";
+  ModelEvent,
+  ModelGateway,
+  ModelTool
+} from "@/server/application/model-gateway";
 import { ApiError, notFound } from "@/server/application/errors";
 import { transitionTask } from "@/server/application/task-ledger";
 import { messageInputSchema } from "@/server/domain/schemas";
@@ -177,7 +177,7 @@ export class ConversationRunService {
   constructor(
     private readonly store: StateStore,
     private readonly cipher: CredentialCipher,
-    private readonly engine: EmployeeEngine,
+    private readonly gateway: ModelGateway,
     private readonly options: { approvalTimeoutMs?: number } = {}
   ) {}
 
@@ -508,7 +508,7 @@ export class ConversationRunService {
       return structuredClone(message);
     });
 
-    const engineTools: EngineTool[] = context.tools.map((tool) => ({
+    const modelTools: ModelTool[] = context.tools.map((tool) => ({
       name: tool.name,
       label: tool.label,
       description: tool.description,
@@ -551,16 +551,16 @@ export class ConversationRunService {
       attempt += 1;
       let producedOutput = false;
       try {
-        for await (const event of this.engine.run({
+        for await (const event of this.gateway.run({
           provider: context.provider,
           credential: this.cipher.decrypt(context.encryptedCredential),
           modelId: context.employee.modelId,
           systemPrompt,
           prompt,
-          tools: engineTools,
+          tools: modelTools,
           signal
         })) {
-          await this.recordEngineEvent(runId, message.id, event);
+          await this.recordModelEvent(runId, message.id, event);
           if (event.type === "text_delta" || event.type === "tool_started") {
             producedOutput = true;
           }
@@ -595,10 +595,10 @@ export class ConversationRunService {
     });
   }
 
-  private async recordEngineEvent(
+  private async recordModelEvent(
     runId: string,
     messageId: string,
-    event: EngineEvent
+    event: ModelEvent
   ): Promise<void> {
     await this.store.update((state) => {
       const run = state.runs.find((item) => item.id === runId);

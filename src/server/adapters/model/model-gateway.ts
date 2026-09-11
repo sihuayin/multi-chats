@@ -1,68 +1,25 @@
 import { Agent, type AgentEvent, type AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
-import type { ProviderId } from "@/server/domain/types";
 import { createProviderModels } from "@/server/adapters/model/provider-registry";
+import type {
+  ModelEvent,
+  ModelGateway,
+  ModelRequest
+} from "@/server/application/model-gateway";
 
-export type EngineMessage = {
-  role: "user" | "assistant";
-  author: string;
-  content: string;
-};
+export class FakeModelGateway implements ModelGateway {
+  constructor(
+    private readonly delayMs = Number(process.env.MODEL_STREAM_DELAY_MS ?? 15)
+  ) {}
 
-export type EngineTool = {
-  name: string;
-  label: string;
-  description: string;
-  inputSchema: Record<string, unknown>;
-  replay: "never" | "safe";
-  execute: (
-    toolCallId: string,
-    args: Record<string, unknown>,
-    signal?: AbortSignal
-  ) => Promise<{ content: string; details?: unknown; isError?: boolean }>;
-};
-
-export type EngineRequest = {
-  provider: ProviderId;
-  credential: string;
-  modelId: string;
-  systemPrompt: string;
-  prompt: string;
-  tools: EngineTool[];
-  signal?: AbortSignal;
-};
-
-export type EngineEvent =
-  | { type: "text_delta"; delta: string }
-  | { type: "text_completed"; text: string }
-  | {
-      type: "tool_started";
-      toolCallId: string;
-      toolName: string;
-      args: Record<string, unknown>;
-    }
-  | {
-      type: "tool_completed";
-      toolCallId: string;
-      toolName: string;
-      result: string;
-      isError: boolean;
-    }
-  | { type: "error"; message: string };
-
-export interface EmployeeEngine {
-  run(request: EngineRequest): AsyncIterable<EngineEvent>;
-}
-
-export class FakeEmployeeEngine implements EmployeeEngine {
-  async *run(request: EngineRequest): AsyncIterable<EngineEvent> {
+  async *run(request: ModelRequest): AsyncIterable<ModelEvent> {
     const employee = request.systemPrompt
       .split("\n")[0]
       .replace("You are ", "")
       .replace(/\.$/, "");
     const text = `${employee} reviewed the request and prepared a structured response.`;
     for (const delta of text.match(/.{1,18}/g) ?? [text]) {
-      await new Promise((resolve) => setTimeout(resolve, 15));
+      await new Promise((resolve) => setTimeout(resolve, this.delayMs));
       yield { type: "text_delta", delta };
     }
     yield { type: "text_completed", text };
@@ -75,8 +32,8 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
-export class PiEmployeeEngine implements EmployeeEngine {
-  async *run(request: EngineRequest): AsyncIterable<EngineEvent> {
+export class PiModelGateway implements ModelGateway {
+  async *run(request: ModelRequest): AsyncIterable<ModelEvent> {
     const models = createProviderModels(request.provider, request.credential);
     const model = models.getModel(request.provider, request.modelId);
     if (!model) {
@@ -84,12 +41,12 @@ export class PiEmployeeEngine implements EmployeeEngine {
       return;
     }
 
-    const queue: EngineEvent[] = [];
+    const queue: ModelEvent[] = [];
     let wake: (() => void) | undefined;
     let finished = false;
     let finalText = "";
 
-    const push = (event: EngineEvent) => {
+    const push = (event: ModelEvent) => {
       queue.push(event);
       wake?.();
       wake = undefined;
@@ -192,7 +149,7 @@ export class PiEmployeeEngine implements EmployeeEngine {
           });
         }
         while (queue.length > 0) {
-          yield queue.shift() as EngineEvent;
+          yield queue.shift() as ModelEvent;
         }
       }
       await runPromise;

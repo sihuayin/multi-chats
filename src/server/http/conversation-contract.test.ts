@@ -9,7 +9,7 @@ import {
 } from "@/server/test-support/fixtures";
 import { AesCredentialCipher } from "@/server/security/credential-cipher";
 import { ConversationRunService } from "@/server/application/conversation-run-service";
-import { FakeEmployeeEngine } from "@/server/application/employee-engine";
+import { FakeModelGateway } from "@/server/adapters/model/model-gateway";
 
 const originalModelMode = process.env.MODEL_MODE;
 const originalDatabaseUrl = process.env.DATABASE_URL;
@@ -33,7 +33,7 @@ describe("Conversation HTTP and SSE contract", () => {
       runs: new ConversationRunService(
         store,
         new AesCredentialCipher(TEST_KEY),
-        new FakeEmployeeEngine()
+        new FakeModelGateway()
       )
     });
 
@@ -58,9 +58,6 @@ describe("Conversation HTTP and SSE contract", () => {
     expect(started.run.id).toBeTruthy();
 
     const { runs } = getServices();
-    const completed = await runs.processRun(started.run.id);
-    expect(completed.status).toBe("completed");
-
     const streamResponse = await handleApiRequest(
       new Request(
         `http://localhost/api/runs/${started.run.id}/events?after=0`
@@ -68,7 +65,18 @@ describe("Conversation HTTP and SSE contract", () => {
       ["runs", started.run.id, "events"]
     );
     expect(streamResponse.status).toBe(200);
-    const streamText = await streamResponse.text();
+    const reader = streamResponse.body!.getReader();
+    const decoder = new TextDecoder();
+    const processing = runs.processRun(started.run.id);
+    let streamText = "";
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      streamText += decoder.decode(chunk.value, { stream: true });
+      if (streamText.includes("run_completed")) break;
+    }
+    const completed = await processing;
+    expect(completed.status).toBe("completed");
     const events = streamText
       .split("\n\n")
       .map((frame) =>
@@ -83,15 +91,14 @@ describe("Conversation HTTP and SSE contract", () => {
     expect(events.map((event) => event.sequence)).toEqual(
       [...events].map((event) => event.sequence).sort((left, right) => left - right)
     );
-    expect(events.map((event) => event.type)).toEqual(
-      expect.arrayContaining([
-        "run_started",
-        "employee_turn_started",
-        "message_delta",
-        "message_completed",
-        "run_completed"
-      ])
+    const eventTypes = events.map((event) => event.type);
+    expect(eventTypes[0]).toBe("run_started");
+    expect(eventTypes[1]).toBe("employee_turn_started");
+    expect(eventTypes.slice(2, -2).every((type) => type === "message_delta")).toBe(
+      true
     );
+    expect(eventTypes.at(-2)).toBe("message_completed");
+    expect(eventTypes.at(-1)).toBe("run_completed");
 
     const messages = await runs.listMessages(
       "30000000-0000-4000-8000-000000000001"

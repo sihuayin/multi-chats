@@ -1,8 +1,8 @@
 import { ConversationRunService } from "@/server/application/conversation-run-service";
 import {
-  FakeEmployeeEngine,
-  PiEmployeeEngine
-} from "@/server/application/employee-engine";
+  FakeModelGateway,
+  PiModelGateway
+} from "@/server/adapters/model/model-gateway";
 import { logger } from "@/server/observability/logger";
 import { createCredentialCipher } from "@/server/security/credential-cipher";
 import { getStore } from "@/server/store";
@@ -13,8 +13,8 @@ async function main(): Promise<void> {
     store,
     createCredentialCipher(),
     process.env.MODEL_MODE === "fake"
-      ? new FakeEmployeeEngine()
-      : new PiEmployeeEngine()
+      ? new FakeModelGateway()
+      : new PiModelGateway()
   );
   await runs.recoverInterruptedRuns();
 

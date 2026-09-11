@@ -1,8 +1,8 @@
 import type {
-  EmployeeEngine,
-  EngineRequest,
-  EngineTool
-} from "@/server/application/employee-engine";
+  ModelGateway,
+  ModelRequest,
+  ModelTool
+} from "@/server/application/model-gateway";
 import type { ProviderRegistry } from "@/server/application/provider-gateway";
 import type { AppState, Employee } from "@/server/domain/types";
 import { AesCredentialCipher } from "@/server/security/credential-cipher";
@@ -72,20 +72,20 @@ export function createFixtureState(): AppState {
   return state;
 }
 
-export class RecordingEngine implements EmployeeEngine {
+export class RecordingModelGateway implements ModelGateway {
   readonly requests: Array<
-    Omit<EngineRequest, "tools"> & {
-      tools: Array<Omit<EngineTool, "execute">>;
+    Omit<ModelRequest, "tools"> & {
+      tools: Array<Omit<ModelTool, "execute">>;
     }
   > = [];
 
   constructor(
-    private readonly respond: (request: EngineRequest) => string[] = (request) => [
+    private readonly respond: (request: ModelRequest) => string[] = (request) => [
       `${request.systemPrompt.split("\n")[0]} response`
     ]
   ) {}
 
-  async *run(request: EngineRequest) {
+  async *run(request: ModelRequest) {
     this.requests.push({
       ...request,
       tools: request.tools.map((tool) => ({
@@ -104,8 +104,8 @@ export class RecordingEngine implements EmployeeEngine {
   }
 }
 
-export class ToolCallingEngine implements EmployeeEngine {
-  async *run(request: EngineRequest) {
+export class ToolCallingModelGateway implements ModelGateway {
+  async *run(request: ModelRequest) {
     const tool = request.tools.find((item) => item.name === "post_webhook");
     if (!tool) throw new Error("Test engine expected post_webhook");
     yield {
