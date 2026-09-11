@@ -112,12 +112,13 @@ export async function handleApiRequest(
   segments: string[]
 ): Promise<Response> {
   try {
-    const { workspace, runs } = getServices();
     const [resource, id, child] = segments;
 
     if (request.method === "GET" && resource === "health") {
       return health();
     }
+
+    const { workspace, runs } = getServices();
 
     if (request.method === "GET" && resource === "workspace") {
       return json(await workspace.getWorkspaceView());
