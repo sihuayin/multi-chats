@@ -9,13 +9,15 @@ import { createCredentialCipher } from "@/server/security/credential-cipher";
 import { getStore } from "@/server/store";
 
 type ServicesGlobal = typeof globalThis & {
-  __multiChatsServices?: {
-    workspace: WorkspaceService;
-    runs: ConversationRunService;
-  };
+  __multiChatsServices?: AppServices;
 };
 
-export function getServices() {
+export type AppServices = {
+  workspace: WorkspaceService;
+  runs: ConversationRunService;
+};
+
+export function getServices(): AppServices {
   const globalState = globalThis as ServicesGlobal;
   if (!globalState.__multiChatsServices) {
     const store = getStore();
@@ -30,4 +32,10 @@ export function getServices() {
     };
   }
   return globalState.__multiChatsServices;
+}
+
+export function setServicesForTests(
+  services: AppServices | undefined
+): void {
+  (globalThis as ServicesGlobal).__multiChatsServices = services;
 }

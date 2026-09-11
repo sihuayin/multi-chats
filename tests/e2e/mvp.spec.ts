@@ -88,9 +88,20 @@ test("configures an Employee Group and completes a mentioned Run", async ({
     .fill(`@researcher-${suffix} prepare the launch brief`);
   await page.getByRole("button", { name: "Send" }).click();
 
+  const employeeResponse = `${employeeName} reviewed the request and prepared a structured response.`;
+  await expect(page.getByText(employeeResponse)).toBeVisible({
+    timeout: 10_000
+  });
+
+  await page.reload();
+  await page
+    .locator(".conversation-item")
+    .filter({ hasText: `${editedGroupName} Conversation` })
+    .click();
+  await expect(page.getByText(employeeResponse)).toBeVisible();
   await expect(
-    page.getByText(`${employeeName} reviewed the request and prepared a structured response.`)
-  ).toBeVisible({ timeout: 10_000 });
+    page.locator('.message-bubble[data-status="streaming"]')
+  ).toHaveCount(0);
 
   await page.getByPlaceholder("Task title").fill("Review launch brief");
   await page
