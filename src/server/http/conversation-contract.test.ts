@@ -94,7 +94,8 @@ describe("Conversation HTTP and SSE contract", () => {
     const eventTypes = events.map((event) => event.type);
     expect(eventTypes[0]).toBe("run_started");
     expect(eventTypes[1]).toBe("employee_turn_started");
-    expect(eventTypes.slice(2, -3).every((type) => type === "message_delta")).toBe(
+    expect(eventTypes[2]).toBe("skill_loaded");
+    expect(eventTypes.slice(3, -3).every((type) => type === "message_delta")).toBe(
       true
     );
     expect(eventTypes.at(-3)).toBe("message_completed");

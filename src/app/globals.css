@@ -736,12 +736,72 @@ select:focus {
   list-style: none;
 }
 
-.run-timeline li {
+.timeline-entry {
+  display: grid;
+  gap: 5px;
+  padding: 7px 8px;
+  background: white;
+  border-left: 3px solid #b8c4bf;
+  border-radius: 5px;
+}
+
+.timeline-entry.error {
+  border-left-color: var(--danger);
+}
+
+.timeline-entry.partial {
+  border-left-color: #b05e00;
+}
+
+.timeline-entry.approval {
+  border-left-color: var(--amber);
+}
+
+.timeline-entry.tool,
+.timeline-entry.artifact,
+.timeline-entry.task {
+  border-left-color: #0f5f87;
+}
+
+.timeline-entry-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   font-size: 10px;
+}
+
+.timeline-entry-heading code {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.timeline-entry p {
+  margin: 0;
+  color: #384340;
+  font-size: 10px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.timeline-entry small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.timeline-associations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.timeline-associations span {
+  padding: 2px 5px;
+  color: var(--muted);
+  font-size: 8px;
+  background: #eef2ee;
+  border-radius: 4px;
 }
 
 .run-timeline time {

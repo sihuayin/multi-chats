@@ -134,9 +134,19 @@ function settleApproval(
     run.status = "running";
   }
   appendEvent(state, run, "approval_resolved", {
-    approvalId: approval.id,
-    status: approval.status
+    ...approvalPayload(approval)
   });
+}
+
+function approvalPayload(approval: Approval): Record<string, unknown> {
+  return {
+    approvalId: approval.id,
+    status: approval.status,
+    employeeId: approval.employeeId,
+    toolCallId: approval.toolCallId,
+    messageId: approval.messageId,
+    taskId: approval.taskId
+  };
 }
 
 export class ConversationRunService {
@@ -165,6 +175,13 @@ export class ConversationRunService {
           run.completedAt = now();
           for (const message of state.messages) {
             if (message.runId === run.id && message.status === "streaming") {
+              if (message.content) {
+                appendEvent(state, run, "employee_turn_partial", {
+                  employeeId: message.authorId,
+                  messageId: message.id,
+                  reason: "worker_restart"
+                });
+              }
               message.status = "interrupted";
               message.updatedAt = run.completedAt;
               appendEvent(state, run, "employee_turn_interrupted", {
@@ -178,8 +195,7 @@ export class ConversationRunService {
               approval.status = "cancelled";
               approval.resolvedAt = run.completedAt;
               appendEvent(state, run, "approval_resolved", {
-                approvalId: approval.id,
-                status: "cancelled",
+                ...approvalPayload(approval),
                 reason: "worker_restart"
               });
             }
@@ -296,10 +312,21 @@ export class ConversationRunService {
         if (approval.runId === runId && approval.status === "pending") {
           approval.status = "cancelled";
           approval.resolvedAt = timestamp;
+          appendEvent(state, run, "approval_resolved", {
+            ...approvalPayload(approval),
+            reason: "run_cancelled"
+          });
         }
       }
       for (const message of state.messages) {
         if (message.runId === runId && message.status === "streaming") {
+          if (message.content) {
+            appendEvent(state, run, "employee_turn_partial", {
+              employeeId: message.authorId,
+              messageId: message.id,
+              reason: "cancelled"
+            });
+          }
           message.status = "cancelled";
           message.updatedAt = timestamp;
           appendEvent(state, run, "employee_turn_cancelled", {
@@ -432,6 +459,13 @@ export class ConversationRunService {
             run.completedAt = now();
             for (const message of state.messages) {
               if (message.runId === runId && message.status === "streaming") {
+                if (message.content) {
+                  appendEvent(state, run, "employee_turn_partial", {
+                    employeeId: message.authorId,
+                    messageId: message.id,
+                    reason: "cancelled"
+                  });
+                }
                 message.status = "cancelled";
                 message.updatedAt = run.completedAt;
                 appendEvent(state, run, "employee_turn_cancelled", {
@@ -454,6 +488,13 @@ export class ConversationRunService {
         run.completedAt = now();
         for (const current of state.messages) {
           if (current.runId === runId && current.status === "streaming") {
+            if (current.content) {
+              appendEvent(state, run, "employee_turn_partial", {
+                employeeId: current.authorId,
+                messageId: current.id,
+                reason: message
+              });
+            }
             current.status = "failed";
             current.updatedAt = run.completedAt;
             appendEvent(state, run, "employee_turn_failed", {
@@ -527,6 +568,14 @@ export class ConversationRunService {
         employeeId,
         messageId: message.id
       });
+      for (const skill of context.skills) {
+        appendEvent(state, run, "skill_loaded", {
+          employeeId,
+          messageId: message.id,
+          skillId: skill.id,
+          skillName: skill.name
+        });
+      }
       return structuredClone(message);
     });
 
@@ -586,7 +635,7 @@ export class ConversationRunService {
           tools: modelTools,
           signal
         })) {
-          await this.recordModelEvent(runId, message.id, event);
+          await this.recordModelEvent(runId, message.id, employeeId, event);
           if (event.type === "text_delta" || event.type === "tool_started") {
             producedOutput = true;
           }
@@ -632,30 +681,32 @@ export class ConversationRunService {
   private async recordModelEvent(
     runId: string,
     messageId: string,
+    employeeId: string,
     event: ModelEvent
   ): Promise<void> {
     await this.store.update((state) => {
       const run = state.runs.find((item) => item.id === runId);
       const message = state.messages.find((item) => item.id === messageId);
       if (!run || !message) return;
+      const attribution = { messageId, employeeId };
 
       if (event.type === "text_delta") {
         message.content += event.delta;
         message.updatedAt = now();
         appendEvent(state, run, "message_delta", {
-          messageId,
+          ...attribution,
           delta: event.delta
         });
       }
       if (event.type === "tool_started") {
         appendEvent(state, run, "tool_started", {
-          messageId,
+          ...attribution,
           ...event
         });
       }
       if (event.type === "tool_completed") {
         appendEvent(state, run, "tool_completed", {
-          messageId,
+          ...attribution,
           ...event
         });
         if (event.isError) {
@@ -664,7 +715,7 @@ export class ConversationRunService {
             run,
             event.errorKind === "cancelled" ? "tool_cancelled" : "tool_error",
             {
-              messageId,
+              ...attribution,
               ...event
             }
           );
@@ -672,7 +723,7 @@ export class ConversationRunService {
       }
       if (event.type === "error") {
         appendEvent(state, run, "model_error", {
-          messageId,
+          ...attribution,
           message: event.message,
           kind: event.kind ?? "terminal"
         });
@@ -683,7 +734,8 @@ export class ConversationRunService {
   private async executeTool(
     context: ToolCallContext
   ): Promise<ToolExecutionResult> {
-    const { runId, employeeId, allowedToolNames, tool, args } = context;
+    const { runId, messageId, employeeId, allowedToolNames, tool, args } =
+      context;
     if (tool.requiresApproval) {
       const approval = await this.requestApproval(context);
       if (approval.status === "rejected") {
@@ -710,6 +762,7 @@ export class ConversationRunService {
         args,
         context: {
           runId,
+          messageId,
           employeeId,
           allowedToolNames
         },
@@ -777,6 +830,8 @@ export class ConversationRunService {
         approvalId: approval.id,
         employeeId,
         toolCallId,
+        messageId,
+        taskId: task?.id,
         toolName: tool.name,
         args
       });

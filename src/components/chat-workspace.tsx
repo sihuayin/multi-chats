@@ -31,6 +31,12 @@ import type {
 import { useWorkspace } from "@/components/workspace-provider";
 import type { TranslationKey } from "@/lib/i18n";
 import { artifactTypes } from "@/lib/artifact-types";
+import {
+  buildRunTimeline,
+  eventAssociations,
+  eventSummary,
+  type RunTimelineCategory
+} from "@/lib/run-timeline";
 import { employeeTurnStatuses } from "@/lib/employee-turn-status";
 
 function MessageIcon({ artifact }: { artifact: Artifact }) {
@@ -66,6 +72,10 @@ function statusKey(status: string): TranslationKey {
 
 function artifactTypeKey(type: Artifact["type"]): TranslationKey {
   return `artifact.${type}`;
+}
+
+function timelineCategoryKey(category: RunTimelineCategory): TranslationKey {
+  return `timeline.${category}`;
 }
 
 function ApprovalActions({
@@ -195,6 +205,10 @@ export function ChatWorkspace() {
             .sort((left, right) => left.sequence - right.sequence)
         : [],
     [data?.runEvents, latestRun]
+  );
+  const latestRunTimeline = useMemo(
+    () => buildRunTimeline(latestRunEvents),
+    [latestRunEvents]
   );
   const employeeTurnStates = useMemo(
     () =>
@@ -882,12 +896,70 @@ export function ChatWorkspace() {
                 <span>{t(statusKey(latestRun.status))}</span>
               </summary>
               <ol>
-                {latestRunEvents.map((event) => (
-                  <li key={event.id}>
-                    <strong>{event.type.replaceAll("_", " ")}</strong>
-                    <time>{new Date(event.createdAt).toLocaleTimeString()}</time>
-                  </li>
-                ))}
+                {latestRunTimeline.map((entry) => {
+                  if (entry.kind === "message") {
+                    const employee = data?.employees.find(
+                      (item) => item.id === entry.employeeId
+                    );
+                    return (
+                      <li
+                        key={`message-${entry.fromSequence}`}
+                        className="timeline-entry message"
+                        data-category="model"
+                        data-association={`message:${entry.messageId}`}
+                      >
+                        <div className="timeline-entry-heading">
+                          <strong>
+                            {employee?.name ?? t("chat.employee")} ·{" "}
+                            {t("timeline.model")}
+                          </strong>
+                          <time>
+                            {new Date(entry.createdAt).toLocaleTimeString()}
+                          </time>
+                        </div>
+                        <p>{entry.content}</p>
+                        <small>
+                          {t("timeline.message")} {entry.messageId.slice(0, 8)}
+                        </small>
+                      </li>
+                    );
+                  }
+
+                  const associations = eventAssociations(entry.event);
+                  const summary = eventSummary(entry.event);
+                  return (
+                    <li
+                      key={entry.event.id}
+                      className={`timeline-entry ${entry.category}`}
+                      data-category={entry.category}
+                    >
+                      <div className="timeline-entry-heading">
+                        <strong>
+                          {t(timelineCategoryKey(entry.category))} ·{" "}
+                          <code>{entry.event.type.replaceAll("_", " ")}</code>
+                        </strong>
+                        <time>
+                          {new Date(entry.event.createdAt).toLocaleTimeString()}
+                        </time>
+                      </div>
+                      {summary ? <p>{summary}</p> : null}
+                      {associations.length > 0 ? (
+                        <div className="timeline-associations">
+                          {associations.map((association) => (
+                            <span
+                              key={`${association.type}:${association.id}`}
+                            >
+                              {association.type === "message"
+                                ? t("timeline.message")
+                                : t("chat.tasks")}{" "}
+                              {association.id.slice(0, 8)}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </li>
+                  );
+                })}
               </ol>
             </details>
           ) : null}

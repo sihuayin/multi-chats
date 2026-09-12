@@ -98,17 +98,23 @@ test("configures an Employee Group and completes a mentioned Run", async ({
     .fill("@all prepare the launch brief");
   await page.getByRole("button", { name: "Send" }).click();
 
-  await expect(page.getByText(`${employeeName} reviewed`)).toBeVisible({
-    timeout: 10_000
-  });
+  await expect(
+    page
+      .locator(".message-bubble.employee")
+      .filter({ hasText: `${employeeName} reviewed` })
+  ).toBeVisible({ timeout: 10_000 });
   const employeeResponse = `${employeeName} reviewed the request and prepared a structured response.`;
   const secondEmployeeResponse = `${secondEmployeeName} reviewed the request and prepared a structured response.`;
-  await expect(page.getByText(employeeResponse)).toBeVisible({
-    timeout: 10_000
-  });
-  await expect(page.getByText(secondEmployeeResponse)).toBeVisible({
-    timeout: 10_000
-  });
+  await expect(
+    page
+      .locator(".message-bubble.employee")
+      .filter({ hasText: employeeResponse })
+  ).toBeVisible({ timeout: 10_000 });
+  await expect(
+    page
+      .locator(".message-bubble.employee")
+      .filter({ hasText: secondEmployeeResponse })
+  ).toBeVisible({ timeout: 10_000 });
   const employeeMessages = await page
     .locator(".message-bubble.employee")
     .allTextContents();
@@ -121,8 +127,16 @@ test("configures an Employee Group and completes a mentioned Run", async ({
     .locator(".conversation-item")
     .filter({ hasText: `${editedGroupName} Conversation` })
     .click();
-  await expect(page.getByText(employeeResponse)).toBeVisible();
-  await expect(page.getByText(secondEmployeeResponse)).toBeVisible();
+  await expect(
+    page
+      .locator(".message-bubble.employee")
+      .filter({ hasText: employeeResponse })
+  ).toBeVisible();
+  await expect(
+    page
+      .locator(".message-bubble.employee")
+      .filter({ hasText: secondEmployeeResponse })
+  ).toBeVisible();
   await expect(
     page.locator('.run-timeline[data-run-status="completed"]')
   ).toBeVisible();
@@ -230,9 +244,9 @@ test("configures an Employee Group and completes a mentioned Run", async ({
     .getByPlaceholder("Message the group or mention @employee")
     .fill(`@researcher-${suffix} USE_CURRENT_TIME`);
   await page.getByRole("button", { name: "Send" }).click();
-  await expect(page.getByText(/Current time:/)).toBeVisible({
-    timeout: 10_000
-  });
+  await expect(
+    page.locator(".message-bubble.employee").filter({ hasText: /Current time:/ })
+  ).toBeVisible({ timeout: 10_000 });
   const toolRunTimeline = page.locator(".run-timeline");
   await toolRunTimeline.locator("summary").click();
   await expect(toolRunTimeline).toContainText("tool started");
@@ -261,9 +275,11 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   await page.locator(".conversation-item").last().click();
   await expect(approvalCard).toBeVisible();
   await approvalCard.getByRole("button", { name: "Approve" }).click();
-  await expect(page.getByText(/Tool failed: Private network URLs are not allowed/)).toBeVisible({
-    timeout: 10_000
-  });
+  await expect(
+    page
+      .locator(".message-bubble.employee")
+      .filter({ hasText: /Tool failed: Private network URLs are not allowed/ })
+  ).toBeVisible({ timeout: 10_000 });
   await expect(approvalCard).toHaveCount(0);
   await expect(approvalTaskCard.locator(".status-pill.in_progress")).toBeVisible();
 
@@ -274,8 +290,33 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   await expect(approvalCard).toBeVisible();
   await approvalCard.getByRole("button", { name: "Reject" }).click();
   await expect(
-    page.getByText(/Tool failed: The user rejected this Tool call/)
+    page
+      .locator(".message-bubble.employee")
+      .filter({ hasText: /Tool failed: The user rejected this Tool call/ })
   ).toBeVisible({ timeout: 10_000 });
+  await expect(toolRunTimeline).toHaveAttribute(
+    "data-run-status",
+    "completed"
+  );
+  await toolRunTimeline.locator("summary").click();
+  await expect(
+    toolRunTimeline.locator('[data-category="model"]')
+  ).toHaveCount(1);
+  await expect(
+    toolRunTimeline.locator('[data-category="skill"]')
+  ).not.toHaveCount(0);
+  await expect(
+    toolRunTimeline.locator('[data-category="tool"]')
+  ).not.toHaveCount(0);
+  await expect(
+    toolRunTimeline.locator('[data-category="approval"]')
+  ).toHaveCount(2);
+  await expect(
+    toolRunTimeline.locator('[data-category="approval"]').first()
+  ).toContainText("Message");
+  await expect(
+    approvalTaskCard.locator(".status-pill.in_progress")
+  ).toBeVisible();
 
   await page
     .getByPlaceholder("Message the group or mention @employee")
@@ -297,14 +338,18 @@ test("configures an Employee Group and completes a mentioned Run", async ({
     .getByPlaceholder("Message the group or mention @employee")
     .fill(`@researcher-${suffix} FAIL_MODEL`);
   await page.getByRole("button", { name: "Send" }).click();
-  await expect(page.getByText("Partial failure output.")).toBeVisible({
-    timeout: 10_000
-  });
+  await expect(
+    page
+      .locator(".message-bubble.employee")
+      .filter({ hasText: "Partial failure output." })
+  ).toBeVisible({ timeout: 10_000 });
   await expect(
     page.locator('.message-bubble[data-status="failed"]')
   ).toBeVisible();
   await expect(
-    page.getByText("model failed after partial output")
+    page.locator(".error-banner").filter({
+      hasText: "model failed after partial output"
+    })
   ).toBeVisible();
 
   await page.goto("/employees");

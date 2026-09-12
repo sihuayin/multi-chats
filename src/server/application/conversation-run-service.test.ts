@@ -79,6 +79,7 @@ describe("ConversationRun", () => {
     expect(events.map((event) => event.type)).toEqual([
       "run_started",
       "employee_turn_started",
+      "skill_loaded",
       "message_delta",
       "message_delta",
       "message_completed",
@@ -355,7 +356,13 @@ describe("ConversationRun", () => {
     });
     expect(
       (await runService.listRunEvents(started.run!.id)).map((event) => event.type)
-    ).toEqual(expect.arrayContaining(["model_error", "run_error"]));
+    ).toEqual(
+      expect.arrayContaining([
+        "employee_turn_partial",
+        "model_error",
+        "run_error"
+      ])
+    );
   });
 
   it("executes @all members sequentially and gives later members earlier responses", async () => {
@@ -1039,6 +1046,17 @@ describe("ConversationRun", () => {
           .every((approval) => approval.status === "cancelled")
       )
     ).toBe(true);
+    const cancelledApproval = await store.read((current) =>
+      current.approvals.find((approval) => approval.runId === started.run!.id)
+    );
+    expect(
+      (await runService.listRunEvents(started.run!.id)).find(
+        (event) => event.type === "approval_resolved"
+      )?.payload
+    ).toMatchObject({
+      messageId: cancelledApproval?.messageId,
+      reason: "run_cancelled"
+    });
   });
 
   it("claims a queued Run only once when workers process it concurrently", async () => {
@@ -1090,6 +1108,7 @@ describe("ConversationRun", () => {
       workspaceId: state.workspace.id,
       runId: "50000000-0000-4000-8000-000000000001",
       messageId: "streaming-message",
+      taskId: "task-approval",
       toolName: "post_webhook",
       args: {},
       status: "pending",
@@ -1131,6 +1150,12 @@ describe("ConversationRun", () => {
     expect(events.map((event) => event.type)).toContain(
       "employee_turn_interrupted"
     );
+    expect(
+      events.find((event) => event.type === "approval_resolved")?.payload
+    ).toMatchObject({
+      messageId: "streaming-message",
+      taskId: "task-approval"
+    });
     expect(
       await store.read(
         (current) =>

@@ -36,6 +36,7 @@ export function isToolExecutionErrorKind(
 
 export type ToolExecutionContext = {
   runId: string;
+  messageId: string;
   employeeId: string;
   allowedToolNames: string[];
 };
@@ -265,7 +266,8 @@ export class RegisteredToolGateway implements ToolGateway {
         appendEvent(state, run, "task_changed", {
           taskId,
           status: task.status,
-          employeeId: context.employeeId
+          employeeId: context.employeeId,
+          messageId: context.messageId
         });
       });
       return { content: `Task moved to ${status}.` };
@@ -289,7 +291,8 @@ export class RegisteredToolGateway implements ToolGateway {
         appendEvent(state, run, "artifact_created", {
           taskId,
           artifactId: artifact.id,
-          employeeId: context.employeeId
+          employeeId: context.employeeId,
+          messageId: context.messageId
         });
         return artifact.id;
       });

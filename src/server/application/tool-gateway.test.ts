@@ -16,6 +16,7 @@ function tool(name: string) {
 
 const context = {
   runId: "run-1",
+  messageId: "message-1",
   employeeId: "20000000-0000-4000-8000-000000000001",
   allowedToolNames: ["current_time", "fetch_url"]
 };
