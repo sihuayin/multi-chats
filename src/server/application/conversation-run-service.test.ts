@@ -41,6 +41,29 @@ describe("ConversationRun", () => {
     expect(engine.requests).toHaveLength(0);
   });
 
+  it("keeps at most one active Run per Conversation", async () => {
+    const store = new MemoryStoreFixture();
+    const runService = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      new RecordingModelGateway()
+    );
+    const started = await runService.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice first run" },
+      { requestId: "request-one" }
+    );
+    expect(started.run?.requestId).toBe("request-one");
+
+    await expect(
+      runService.startTurn("30000000-0000-4000-8000-000000000001", {
+        content: "@alice second run"
+      })
+    ).rejects.toMatchObject({ code: "active_run" });
+
+    await runService.cancelRun(started.run!.id);
+  });
+
   it("streams and persists a single Employee response", async () => {
     const store = new MemoryStoreFixture();
     const engine = new RecordingModelGateway(() => ["Hello", " from Alice"]);

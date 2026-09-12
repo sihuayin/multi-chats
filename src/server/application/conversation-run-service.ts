@@ -24,6 +24,7 @@ import { messageInputSchema } from "@/server/domain/schemas";
 import type { CredentialCipher } from "@/server/security/credential-cipher";
 import { BUILT_IN_TOOLS } from "@/server/store/initial-state";
 import type { StateStore } from "@/server/store/store";
+import { logger } from "@/server/observability/logger";
 
 export type StartTurnResult = {
   message: Message;
@@ -32,6 +33,7 @@ export type StartTurnResult = {
 
 type ToolCallContext = {
   runId: string;
+  requestId?: string;
   messageId: string;
   employeeId: string;
   allowedToolNames: string[];
@@ -136,6 +138,13 @@ function settleApproval(
   appendEvent(state, run, "approval_resolved", {
     ...approvalPayload(approval)
   });
+  logger.info("approval.resolved", {
+    requestId: run?.requestId,
+    runId,
+    approvalId: approval.id,
+    toolCallId: approval.toolCallId,
+    status: approval.status
+  });
 }
 
 function approvalPayload(approval: Approval): Record<string, unknown> {
@@ -209,9 +218,13 @@ export class ConversationRunService {
     });
   }
 
-  async startTurn(conversationId: string, input: unknown): Promise<StartTurnResult> {
+  async startTurn(
+    conversationId: string,
+    input: unknown,
+    options: { requestId?: string } = {}
+  ): Promise<StartTurnResult> {
     const parsed = messageInputSchema.parse(input);
-    return this.store.update((state) => {
+    const result = await this.store.update((state) => {
       const conversation = state.conversations.find(
         (item) => item.id === conversationId
       );
@@ -262,6 +275,7 @@ export class ConversationRunService {
         workspaceId: state.workspace.id,
         conversationId,
         triggerMessageId: message.id,
+        requestId: options.requestId,
         memberSnapshot,
         status: "queued",
         createdAt: timestamp
@@ -275,6 +289,15 @@ export class ConversationRunService {
       state.workspace.updatedAt = timestamp;
       return { message, run };
     });
+    if (result.run) {
+      logger.info("run.started", {
+        requestId: result.run.requestId,
+        runId: result.run.id,
+        conversationId,
+        memberIds: result.run.memberSnapshot
+      });
+    }
+    return result;
   }
 
   async listMessages(conversationId: string): Promise<Message[]> {
@@ -303,7 +326,7 @@ export class ConversationRunService {
     const controller = this.activeControllers.get(runId);
     controller?.abort();
     const stopRequested = Boolean(controller);
-    return this.store.update((state) => {
+    const cancelled = await this.store.update((state) => {
       const run = state.runs.find((item) => item.id === runId);
       if (!run) notFound("Run");
       if (["completed", "failed", "cancelled"].includes(run.status)) return run;
@@ -346,6 +369,11 @@ export class ConversationRunService {
       state.workspace.updatedAt = timestamp;
       return run;
     });
+    logger.info("run.cancelled", {
+      runId,
+      cooperative: stopRequested
+    });
+    return cancelled;
   }
 
   async resumeRun(runId: string): Promise<Run> {
@@ -407,6 +435,10 @@ export class ConversationRunService {
         return structuredClone(run);
       });
       if (!claimed) return initial;
+      logger.info("run.processing", {
+        requestId: initial.requestId,
+        runId
+      });
       cancellationPoll = setInterval(() => {
         void this.store
           .read((state) => state.runs.find((item) => item.id === runId)?.status)
@@ -439,7 +471,7 @@ export class ConversationRunService {
         );
       }
 
-      return this.store.update((state) => {
+      const completed = await this.store.update((state) => {
         const run = state.runs.find((item) => item.id === runId);
         if (!run) notFound("Run");
         if (controller.signal.aborted || run.status === "cancelled") return run;
@@ -449,9 +481,14 @@ export class ConversationRunService {
         state.workspace.updatedAt = run.completedAt;
         return run;
       });
+      logger.info("run.completed", {
+        requestId: completed.requestId,
+        runId
+      });
+      return completed;
     } catch (error) {
       if (controller.signal.aborted) {
-        return this.store.update((state) => {
+        const cancelled = await this.store.update((state) => {
           const run = state.runs.find((item) => item.id === runId);
           if (!run) notFound("Run");
           if (run.status !== "cancelled") {
@@ -478,9 +515,15 @@ export class ConversationRunService {
           }
           return run;
         });
+        logger.info("run.cancelled", {
+          requestId: cancelled.requestId,
+          runId,
+          cooperative: true
+        });
+        return cancelled;
       }
       const message = error instanceof Error ? error.message : String(error);
-      return this.store.update((state) => {
+      const failed = await this.store.update((state) => {
         const run = state.runs.find((item) => item.id === runId);
         if (!run) notFound("Run");
         run.status = "failed";
@@ -508,6 +551,12 @@ export class ConversationRunService {
         state.workspace.updatedAt = run.completedAt;
         return run;
       });
+      logger.error("run.failed", {
+        requestId: failed.requestId,
+        runId,
+        message
+      });
+      return failed;
     } finally {
       if (cancellationPoll) clearInterval(cancellationPoll);
       signal?.removeEventListener("abort", abort);
@@ -589,6 +638,7 @@ export class ConversationRunService {
       execute: (toolCallId, args, toolSignal) =>
         this.executeTool({
           runId,
+          requestId: context.run.requestId,
           messageId: message.id,
           employeeId,
           allowedToolNames,
@@ -756,8 +806,16 @@ export class ConversationRunService {
       }
     }
 
+    logger.info("tool.started", {
+      requestId: context.requestId,
+      runId,
+      messageId,
+      employeeId,
+      toolName: tool.name,
+      toolCallId: context.toolCallId
+    });
     try {
-      return await this.toolGateway.execute({
+      const result = await this.toolGateway.execute({
         tool,
         args,
         context: {
@@ -768,6 +826,17 @@ export class ConversationRunService {
         },
         signal: context.signal
       });
+      logger.info("tool.completed", {
+        requestId: context.requestId,
+        runId,
+        messageId,
+        employeeId,
+        toolName: tool.name,
+        toolCallId: context.toolCallId,
+        isError: Boolean(result.isError),
+        errorKind: result.errorKind
+      });
+      return result;
     } catch (error) {
       if (context.signal?.aborted) {
         return {
@@ -834,6 +903,15 @@ export class ConversationRunService {
         taskId: task?.id,
         toolName: tool.name,
         args
+      });
+      logger.info("approval.requested", {
+        requestId: context.requestId,
+        runId,
+        approvalId: approval.id,
+        messageId,
+        employeeId,
+        toolName: tool.name,
+        toolCallId
       });
       return structuredClone(approval);
     });

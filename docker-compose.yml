@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: multi_chats
       POSTGRES_PASSWORD: multi_chats
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -21,9 +21,23 @@ services:
     environment:
       DATABASE_URL: postgres://multi_chats:multi_chats@postgres:5432/multi_chats
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-ZGV2ZWxvcG1lbnQta2V5LW11c3QtYmUtcmVwbGFjZWQ=}
+      MODEL_MODE: ${MODEL_MODE:-pi}
     command: sh -c "npm run db:migrate && npm run start"
     ports:
-      - "3000:3000"
+      - "${WEB_PORT:-3000}:3000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/health').then((response) => response.json()).then((body) => process.exit(body.status === 'ok' ? 0 : 1)).catch(() => process.exit(1))"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
@@ -34,7 +48,10 @@ services:
     environment:
       DATABASE_URL: postgres://multi_chats:multi_chats@postgres:5432/multi_chats
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-ZGV2ZWxvcG1lbnQta2V5LW11c3QtYmUtcmVwbGFjZWQ=}
+      MODEL_MODE: ${MODEL_MODE:-pi}
+      WORKER_POLL_INTERVAL_MS: ${WORKER_POLL_INTERVAL_MS:-1000}
     command: sh -c "npm run db:migrate && npm run worker"
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy

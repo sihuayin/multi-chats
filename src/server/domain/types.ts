@@ -107,6 +107,7 @@ export type Run = {
   workspaceId: string;
   conversationId: string;
   triggerMessageId: string;
+  requestId?: string;
   memberSnapshot: string[];
   status: RunStatus;
   error?: string;

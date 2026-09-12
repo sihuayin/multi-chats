@@ -120,6 +120,38 @@ describe("Skill configuration", () => {
     );
   });
 
+  it("rejects shell, host filesystem, and executable entrypoints", async () => {
+    const { service, store } = setup();
+
+    await expect(
+      service.createSkill({
+        name: "Filesystem",
+        description: "Attempts host filesystem access.",
+        instructions: "Read the host filesystem.",
+        inputs: [],
+        outputs: [],
+        toolNames: ["shell", "read_file"]
+      })
+    ).rejects.toMatchObject({ code: "invalid_tool" });
+    await expect(
+      service.createSkill({
+        name: "Entrypoint",
+        description: "Attempts an executable entrypoint.",
+        instructions: "Run the script.",
+        inputs: [],
+        outputs: [],
+        toolNames: [],
+        entrypoint: "node"
+      })
+    ).rejects.toThrow();
+
+    expect(
+      store.snapshot().skills.some((skill) =>
+        ["Filesystem", "Entrypoint"].includes(skill.name)
+      )
+    ).toBe(false);
+  });
+
   it("edits custom Skills but protects built-in Skills", async () => {
     const { service } = setup();
     const custom = await service.createSkill({

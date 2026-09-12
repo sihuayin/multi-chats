@@ -10,7 +10,7 @@ function json(data: unknown, init?: ResponseInit): Response {
   return Response.json(data, init);
 }
 
-function errorResponse(error: unknown): Response {
+function errorResponse(error: unknown, requestId: string): Response {
   if (error instanceof ApiError) {
     return json({ error: error.message, code: error.code }, { status: error.status });
   }
@@ -21,6 +21,7 @@ function errorResponse(error: unknown): Response {
     );
   }
   logger.error("http.request.failed", {
+    requestId,
     message: error instanceof Error ? error.message : String(error)
   });
   return json(
@@ -121,24 +122,24 @@ async function streamRunEvents(
   });
 }
 
-export async function handleApiRequest(
+async function handleApiRoute(
   request: Request,
-  segments: string[]
+  segments: string[],
+  requestId: string
 ): Promise<Response> {
-  try {
-    const [resource, id, child, grandchild] = segments;
+  const [resource, id, child, grandchild] = segments;
 
-    if (request.method === "GET" && resource === "health") {
-      return health();
-    }
+  if (request.method === "GET" && resource === "health") {
+    return health();
+  }
 
-    const { workspace, runs } = getServices();
+  const { workspace, runs } = getServices();
 
-    if (request.method === "GET" && resource === "workspace") {
-      return json(await workspace.getWorkspaceView());
-    }
+  if (request.method === "GET" && resource === "workspace") {
+    return json(await workspace.getWorkspaceView());
+  }
 
-    if (resource === "providers") {
+  if (resource === "providers") {
       if (request.method === "GET" && !id) {
         return json(await workspace.listProviders());
       }
@@ -157,9 +158,9 @@ export async function handleApiRequest(
       if (request.method === "GET" && id && child === "models") {
         return json(await workspace.listProviderModels(id));
       }
-    }
+  }
 
-    if (resource === "employees") {
+  if (resource === "employees") {
       if (request.method === "POST" && !id) {
         return json(await workspace.createEmployee(await body(request)), {
           status: 201
@@ -168,9 +169,9 @@ export async function handleApiRequest(
       if (request.method === "PUT" && id) {
         return json(await workspace.updateEmployee(id, await body(request)));
       }
-    }
+  }
 
-    if (resource === "skills") {
+  if (resource === "skills") {
       if (request.method === "POST" && !id) {
         return json(await workspace.createSkill(await body(request)), {
           status: 201
@@ -179,9 +180,9 @@ export async function handleApiRequest(
       if (request.method === "PUT" && id) {
         return json(await workspace.updateSkill(id, await body(request)));
       }
-    }
+  }
 
-    if (resource === "groups") {
+  if (resource === "groups") {
       if (request.method === "POST" && !id) {
         return json(await workspace.createGroup(await body(request)), {
           status: 201
@@ -190,9 +191,9 @@ export async function handleApiRequest(
       if (request.method === "PUT" && id) {
         return json(await workspace.updateGroup(id, await body(request)));
       }
-    }
+  }
 
-    if (resource === "conversations") {
+  if (resource === "conversations") {
       if (request.method === "POST" && !id) {
         return json(await workspace.createConversation(await body(request)), {
           status: 201
@@ -209,7 +210,9 @@ export async function handleApiRequest(
         return json(await runs.listMessages(id));
       }
       if (request.method === "POST" && id && child === "messages") {
-        const result = await runs.startTurn(id, await body(request));
+        const result = await runs.startTurn(id, await body(request), {
+          requestId
+        });
         if (result.run && !process.env.DATABASE_URL) {
           void runs.processRun(result.run.id);
         }
@@ -220,9 +223,9 @@ export async function handleApiRequest(
           status: 201
         });
       }
-    }
+  }
 
-    if (resource === "runs") {
+  if (resource === "runs") {
       if (request.method === "DELETE" && id && !child) {
         return json(await runs.cancelRun(id));
       }
@@ -232,9 +235,9 @@ export async function handleApiRequest(
       if (request.method === "GET" && id && child === "events") {
         return streamRunEvents(request, id);
       }
-    }
+  }
 
-    if (resource === "tasks") {
+  if (resource === "tasks") {
       if (request.method === "PATCH" && id && !child) {
         return json(await workspace.updateTask(id, await body(request), "user"));
       }
@@ -258,17 +261,45 @@ export async function handleApiRequest(
           )
         );
       }
-    }
+  }
 
-    if (resource === "approvals") {
+  if (resource === "approvals") {
       if (request.method === "PATCH" && id) {
         const parsed = approvalDecisionSchema.parse(await body(request));
         return json(await workspace.resolveApproval(id, parsed.decision));
       }
-    }
+  }
 
-    return json({ error: "Route not found", code: "not_found" }, { status: 404 });
+  return json({ error: "Route not found", code: "not_found" }, { status: 404 });
+}
+
+export async function handleApiRequest(
+  request: Request,
+  segments: string[]
+): Promise<Response> {
+  const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
+  const startedAt = Date.now();
+  try {
+    const response = await handleApiRoute(request, segments, requestId);
+    response.headers.set("x-request-id", requestId);
+    logger.info("http.request.completed", {
+      requestId,
+      method: request.method,
+      path: `/${segments.join("/")}`,
+      status: response.status,
+      durationMs: Date.now() - startedAt
+    });
+    return response;
   } catch (error) {
-    return errorResponse(error);
+    const response = errorResponse(error, requestId);
+    response.headers.set("x-request-id", requestId);
+    logger.warn("http.request.rejected", {
+      requestId,
+      method: request.method,
+      path: `/${segments.join("/")}`,
+      status: response.status,
+      durationMs: Date.now() - startedAt
+    });
+    return response;
   }
 }

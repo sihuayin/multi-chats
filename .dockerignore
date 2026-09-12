@@ -1,7 +1,10 @@
 .git
 .next
+.data
 node_modules
 coverage
 playwright-report
 test-results
-.data
+.env
+.env.*
+*.log
