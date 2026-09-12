@@ -872,6 +872,7 @@ select:focus {
 .two-column {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
   gap: 28px;
 }
 
@@ -881,6 +882,7 @@ select:focus {
 
 .panel {
   display: grid;
+  align-content: start;
   gap: 16px;
   padding: 20px 0;
   background: transparent;
@@ -888,6 +890,82 @@ select:focus {
   border-top: 1px solid var(--line);
   border-radius: 0;
   box-shadow: none;
+}
+
+.provider-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.82fr) minmax(0, 1.18fr);
+  align-items: start;
+  gap: 32px;
+}
+
+.provider-form-panel,
+.provider-list-panel {
+  min-width: 0;
+}
+
+.provider-field-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 14px;
+}
+
+.provider-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 14px;
+  border-top: 1px solid #e4eaec;
+}
+
+.provider-card {
+  min-height: 68px;
+}
+
+.provider-identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 11px;
+}
+
+.provider-identity > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.provider-mark {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  color: var(--accent-strong);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 800;
+  background: var(--accent-soft);
+  border: 1px solid #c5d9e6;
+  border-radius: 5px;
+}
+
+.provider-code {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+.provider-empty {
+  margin: 0;
+  padding: 22px 16px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+  background: #f7f9fa;
+  border: 1px dashed #cfdadd;
+  border-radius: 7px;
 }
 
 .panel-title {
@@ -1116,6 +1194,11 @@ label textarea {
     border-top: 1px solid var(--line);
     border-left: 0;
   }
+
+  .provider-layout {
+    grid-template-columns: 1fr;
+    gap: 22px;
+  }
 }
 
 @media (max-width: 900px) {
@@ -1289,6 +1372,18 @@ label textarea {
   }
 
   .composer .button {
+    width: 100%;
+  }
+
+  .provider-field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .provider-form-actions {
+    border-top: 0;
+  }
+
+  .provider-form-actions .button {
     width: 100%;
   }
 

@@ -83,30 +83,35 @@ export function ProvidersManager() {
         description={t("providers.description")}
       />
       {error ? <div className="error-banner">{error}</div> : null}
-      <div className="two-column">
-        <section className="panel">
+      <div className="provider-layout">
+        <section className="panel provider-form-panel">
           <div className="panel-title">
             <KeyRound size={17} />
             <h2>{t("providers.add")}</h2>
           </div>
-          <label>
-            {t("providers.provider")}
-            <select value={provider} onChange={(event) => setProvider(event.target.value)}>
-              {providerCatalog.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            {t("providers.label")}
-            <input
-              value={label}
-              placeholder={t("providers.defaultLabel")}
-              onChange={(event) => setLabel(event.target.value)}
-            />
-          </label>
+          <div className="provider-field-grid">
+            <label>
+              {t("providers.provider")}
+              <select
+                value={provider}
+                onChange={(event) => setProvider(event.target.value)}
+              >
+                {providerCatalog.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              {t("providers.label")}
+              <input
+                value={label}
+                placeholder={t("providers.defaultLabel")}
+                onChange={(event) => setLabel(event.target.value)}
+              />
+            </label>
+          </div>
           <label>
             {t("providers.apiCredential")}
             <input
@@ -116,27 +121,38 @@ export function ProvidersManager() {
               autoComplete="off"
             />
           </label>
-          <button
-            className="button primary"
-            onClick={createProvider}
-            disabled={busy || !credential.trim()}
-          >
-            {busy ? <LoaderCircle className="spin" size={16} /> : <KeyRound size={16} />}
-            {t("providers.validateSave")}
-          </button>
+          <div className="provider-form-actions">
+            <button
+              className="button primary"
+              onClick={createProvider}
+              disabled={busy || !credential.trim()}
+            >
+              {busy ? (
+                <LoaderCircle className="spin" size={16} />
+              ) : (
+                <KeyRound size={16} />
+              )}
+              {t("providers.validateSave")}
+            </button>
+          </div>
         </section>
 
-        <section className="panel">
+        <section className="panel provider-list-panel">
           <div className="panel-title">
             <KeyRound size={17} />
             <h2>{t("providers.configured")}</h2>
           </div>
           <div className="stack-list">
             {(data?.providers ?? []).map((item) => (
-              <article key={item.id} className="list-card">
-                <div>
-                  <strong>{item.label}</strong>
-                  <span>{item.provider}</span>
+              <article key={item.id} className="list-card provider-card">
+                <div className="provider-identity">
+                  <span className="provider-mark" aria-hidden="true">
+                    {item.provider.slice(0, 2).toUpperCase()}
+                  </span>
+                  <div>
+                    <strong>{item.label}</strong>
+                    <span className="provider-code">{item.provider}</span>
+                  </div>
                 </div>
                 <div className="button-row">
                   <button
@@ -159,7 +175,7 @@ export function ProvidersManager() {
               </article>
             ))}
             {data?.providers.length === 0 ? (
-              <p className="muted">{t("providers.none")}</p>
+              <p className="provider-empty">{t("providers.none")}</p>
             ) : null}
           </div>
         </section>
