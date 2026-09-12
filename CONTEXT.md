@@ -40,6 +40,10 @@ _Avoid_: Job, issue, ticket
 A bounded attempt to process a conversation turn, including employee responses and tool activity.
 _Avoid_: Job, execution
 
+**Run outcome**:
+The terminal disposition of a Run: completed, failed, cancelled, or interrupted.
+_Avoid_: Result, status
+
 **Approval**:
 A user decision required before an employee invokes a side-effecting tool.
 _Avoid_: Permission, confirmation

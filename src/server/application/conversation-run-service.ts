@@ -14,6 +14,10 @@ import type {
 } from "@/server/application/model-gateway";
 import { ApiError, notFound } from "@/server/application/errors";
 import { appendEvent } from "@/server/application/run-ledger";
+import {
+  settleRun,
+  type RunSettlementResult
+} from "@/server/application/run-settlement";
 import { transitionTask } from "@/server/application/task-ledger";
 import {
   RegisteredToolGateway,
@@ -158,6 +162,29 @@ function approvalPayload(approval: Approval): Record<string, unknown> {
   };
 }
 
+function logRunSettlement(
+  result: RunSettlementResult,
+  requestId?: string,
+  fields: Record<string, unknown> = {}
+): void {
+  if (!result.settled) return;
+  const data = {
+    requestId,
+    runId: result.runId,
+    outcome: result.outcome,
+    affectedMessageIds: result.affectedMessageIds,
+    affectedApprovalIds: result.affectedApprovalIds,
+    ...fields
+  };
+  if (result.outcome === "failed") {
+    logger.error("run.failed", data);
+  } else if (result.outcome === "interrupted") {
+    logger.warn("run.interrupted", data);
+  } else {
+    logger.info(`run.${result.outcome}`, data);
+  }
+}
+
 export class ConversationRunService {
   private readonly activeControllers = new Map<string, AbortController>();
   private readonly toolGateway: ToolGateway;
@@ -176,46 +203,26 @@ export class ConversationRunService {
   }
 
   async recoverInterruptedRuns(): Promise<void> {
-    await this.store.update((state) => {
-      for (const run of state.runs) {
-        if (run.status === "running" || run.status === "waiting_approval") {
-          run.status = "interrupted";
-          run.error = "Worker restarted while the Run was active";
-          run.completedAt = now();
-          for (const message of state.messages) {
-            if (message.runId === run.id && message.status === "streaming") {
-              if (message.content) {
-                appendEvent(state, run, "employee_turn_partial", {
-                  employeeId: message.authorId,
-                  messageId: message.id,
-                  reason: "worker_restart"
-                });
-              }
-              message.status = "interrupted";
-              message.updatedAt = run.completedAt;
-              appendEvent(state, run, "employee_turn_interrupted", {
-                employeeId: message.authorId,
-                messageId: message.id
-              });
-            }
-          }
-          for (const approval of state.approvals) {
-            if (approval.runId === run.id && approval.status === "pending") {
-              approval.status = "cancelled";
-              approval.resolvedAt = run.completedAt;
-              appendEvent(state, run, "approval_resolved", {
-                ...approvalPayload(approval),
-                reason: "worker_restart"
-              });
-            }
-          }
-          appendEvent(state, run, "run_error", {
-            message: run.error,
-            interrupted: true
-          });
-        }
-      }
+    const settlements = await this.store.update((state) => {
+      const activeRuns = state.runs.filter(
+        (run) => run.status === "running" || run.status === "waiting_approval"
+      );
+      return activeRuns.map((run) => ({
+        requestId: run.requestId,
+        result: settleRun(state, {
+          runId: run.id,
+          outcome: "interrupted",
+          reason: "worker_restart",
+          error: "Worker restarted while the Run was active",
+          interrupted: true
+        })
+      }));
     });
+    for (const settlement of settlements) {
+      logRunSettlement(settlement.result, settlement.requestId, {
+        message: "Worker restarted while the Run was active"
+      });
+    }
   }
 
   async startTurn(
@@ -329,51 +336,20 @@ export class ConversationRunService {
     const cancelled = await this.store.update((state) => {
       const run = state.runs.find((item) => item.id === runId);
       if (!run) notFound("Run");
-      if (["completed", "failed", "cancelled"].includes(run.status)) return run;
-      const timestamp = now();
-      for (const approval of state.approvals) {
-        if (approval.runId === runId && approval.status === "pending") {
-          approval.status = "cancelled";
-          approval.resolvedAt = timestamp;
-          appendEvent(state, run, "approval_resolved", {
-            ...approvalPayload(approval),
-            reason: "run_cancelled"
-          });
-        }
-      }
-      for (const message of state.messages) {
-        if (message.runId === runId && message.status === "streaming") {
-          if (message.content) {
-            appendEvent(state, run, "employee_turn_partial", {
-              employeeId: message.authorId,
-              messageId: message.id,
-              reason: "cancelled"
-            });
-          }
-          message.status = "cancelled";
-          message.updatedAt = timestamp;
-          appendEvent(state, run, "employee_turn_cancelled", {
-            employeeId: message.authorId,
-            messageId: message.id,
-            cooperative: true,
-            stopRequested
-          });
-        }
-      }
-      run.status = "cancelled";
-      run.completedAt = timestamp;
-      appendEvent(state, run, "run_cancelled", {
+      const settlement = settleRun(state, {
+        runId,
+        outcome: "cancelled",
+        reason: "run_cancelled",
         cooperative: true,
         stopRequested
       });
-      state.workspace.updatedAt = timestamp;
-      return run;
+      return { run: structuredClone(run), settlement };
     });
-    logger.info("run.cancelled", {
-      runId,
-      cooperative: stopRequested
+    logRunSettlement(cancelled.settlement, cancelled.run.requestId, {
+      cooperative: true,
+      stopRequested
     });
-    return cancelled;
+    return cancelled.run;
   }
 
   async resumeRun(runId: string): Promise<Run> {
@@ -471,92 +447,65 @@ export class ConversationRunService {
         );
       }
 
-      const completed = await this.store.update((state) => {
+      const completion = await this.store.update((state) => {
         const run = state.runs.find((item) => item.id === runId);
         if (!run) notFound("Run");
-        if (controller.signal.aborted || run.status === "cancelled") return run;
-        run.status = "completed";
-        run.completedAt = now();
-        appendEvent(state, run, "run_completed", {});
-        state.workspace.updatedAt = run.completedAt;
-        return run;
+        if (controller.signal.aborted || run.status === "cancelled") {
+          return { run: structuredClone(run), settlement: null };
+        }
+        const settlement = settleRun(state, {
+          runId,
+          outcome: "completed",
+          reason: "run_completed"
+        });
+        return { run: structuredClone(run), settlement };
       });
-      logger.info("run.completed", {
-        requestId: completed.requestId,
-        runId
-      });
-      return completed;
+      if (completion.settlement) {
+        logRunSettlement(
+          completion.settlement,
+          completion.run.requestId
+        );
+      }
+      return completion.run;
     } catch (error) {
       if (controller.signal.aborted) {
-        const cancelled = await this.store.update((state) => {
+        const cancellation = await this.store.update((state) => {
           const run = state.runs.find((item) => item.id === runId);
           if (!run) notFound("Run");
-          if (run.status !== "cancelled") {
-            run.status = "cancelled";
-            run.completedAt = now();
-            for (const message of state.messages) {
-              if (message.runId === runId && message.status === "streaming") {
-                if (message.content) {
-                  appendEvent(state, run, "employee_turn_partial", {
-                    employeeId: message.authorId,
-                    messageId: message.id,
-                    reason: "cancelled"
-                  });
-                }
-                message.status = "cancelled";
-                message.updatedAt = run.completedAt;
-                appendEvent(state, run, "employee_turn_cancelled", {
-                  employeeId: message.authorId,
-                  messageId: message.id
-                });
-              }
-            }
-            appendEvent(state, run, "run_cancelled", {});
+          const settlement = settleRun(state, {
+            runId,
+            outcome: "cancelled",
+            reason: "run_cancelled",
+            cooperative: true,
+            stopRequested: false
+          });
+          return { run: structuredClone(run), settlement };
+        });
+        logRunSettlement(
+          cancellation.settlement,
+          cancellation.run.requestId,
+          {
+            cooperative: true
           }
-          return run;
-        });
-        logger.info("run.cancelled", {
-          requestId: cancelled.requestId,
-          runId,
-          cooperative: true
-        });
-        return cancelled;
+        );
+        return cancellation.run;
       }
       const message = error instanceof Error ? error.message : String(error);
-      const failed = await this.store.update((state) => {
+      const failure = await this.store.update((state) => {
         const run = state.runs.find((item) => item.id === runId);
         if (!run) notFound("Run");
-        run.status = "failed";
-        run.error = message;
-        run.completedAt = now();
-        for (const current of state.messages) {
-          if (current.runId === runId && current.status === "streaming") {
-            if (current.content) {
-              appendEvent(state, run, "employee_turn_partial", {
-                employeeId: current.authorId,
-                messageId: current.id,
-                reason: message
-              });
-            }
-            current.status = "failed";
-            current.updatedAt = run.completedAt;
-            appendEvent(state, run, "employee_turn_failed", {
-              employeeId: current.authorId,
-              messageId: current.id,
-              message
-            });
-          }
-        }
-        appendEvent(state, run, "run_error", { message });
-        state.workspace.updatedAt = run.completedAt;
-        return run;
+        const settlement = settleRun(state, {
+          runId,
+          outcome: "failed",
+          reason: "model_error",
+          error: message
+        });
+        return { run: structuredClone(run), settlement };
       });
-      logger.error("run.failed", {
-        requestId: failed.requestId,
-        runId,
+      logRunSettlement(failure.settlement, failure.run.requestId, {
         message
       });
-      return failed;
+      return failure.run;
     } finally {
       if (cancellationPoll) clearInterval(cancellationPoll);
       signal?.removeEventListener("abort", abort);
