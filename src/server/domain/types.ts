@@ -308,6 +308,7 @@ export const DISCUSSION_EVENT_TYPES = [
   "discussion_budget_exhausted",
   "participant_skipped",
   "facilitator_replaced",
+  "constraints_updated",
   "discussion_review_requested"
 ] as const;
 
@@ -337,6 +338,9 @@ export type Discussion = {
   currentRound: number;
   latestBriefArtifactId?: string;
   confirmedBriefArtifactId?: string;
+  constraints?: string[];
+  questions?: string[];
+  note?: string;
   sourceTaskId?: string;
   confirmedTaskId?: string;
   participants: DiscussionParticipant[];
@@ -366,6 +370,16 @@ export type Approval = {
 
 export type ApprovalDecision = "approved" | "rejected" | "cancelled";
 
+export type IdempotencyRecord = {
+  id: string;
+  scope: string;
+  key: string;
+  status: number;
+  body: unknown;
+  createdAt: IsoDate;
+  expiresAt: IsoDate;
+};
+
 export type AppState = {
   schemaVersion: number;
   workspace: Workspace;
@@ -381,4 +395,5 @@ export type AppState = {
   artifacts: Artifact[];
   discussions: Discussion[];
   approvals: Approval[];
+  idempotencyRecords?: IdempotencyRecord[];
 };

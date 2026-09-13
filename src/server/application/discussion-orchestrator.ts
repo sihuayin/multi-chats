@@ -9,6 +9,10 @@ import { parseDiscussionBrief } from "@/server/application/discussion-brief";
 import { mapDiscussionBriefToTask } from "@/server/application/discussion-task-handoff";
 import { createDraftTask } from "@/server/application/task-factory";
 import {
+  buildDiscussionRoundDetail,
+  buildDiscussionView
+} from "@/server/application/discussion-view";
+import {
   contentAvailability,
   contentRounds,
   DEFAULT_DISCUSSION_CONTENT_ROUNDS,
@@ -32,7 +36,12 @@ import type {
   Run
 } from "@/server/domain/types";
 import type { StateStore } from "@/server/store/store";
-import { taskInputSchema } from "@/server/domain/schemas";
+import {
+  discussionConstraintsSchema,
+  discussionCreateSchema,
+  discussionPatchSchema,
+  taskInputSchema
+} from "@/server/domain/schemas";
 
 type DiscussionRunPort = Pick<
   ConversationRunService,
@@ -110,6 +119,338 @@ export class DiscussionOrchestrator {
       ...options.eventFactory,
       now: options.eventFactory?.now ?? this.clock
     };
+  }
+
+  async createDiscussion(
+    conversationId: string,
+    input: unknown
+  ) {
+    const parsed = discussionCreateSchema.parse(input);
+    const discussionId = await this.store.update((state) => {
+      const conversation = state.conversations.find(
+        (item) => item.id === conversationId
+      );
+      if (!conversation) notFound("Conversation");
+      if (
+        state.discussions.some(
+          (discussion) =>
+            discussion.conversationId === conversationId &&
+            ["draft", "running", "review", "interrupted"].includes(
+              discussion.status
+            )
+        )
+      ) {
+        throw new ApiError(
+          409,
+          "Conversation already has an active Discussion",
+          "discussion_active_conflict"
+        );
+      }
+      const participants = parsed.participants.map(
+        (participant, index) => {
+          const employee = state.employees.find(
+            (item) =>
+              item.id === participant.employeeId && item.active
+          );
+          if (
+            !employee ||
+            !conversation.memberIds.includes(employee.id)
+          ) {
+            throw new ApiError(
+              400,
+              "Discussion Participants must be active Conversation Employees",
+              "discussion_invalid_participants"
+            );
+          }
+          return {
+            id: crypto.randomUUID(),
+            employeeId: participant.employeeId,
+            role: participant.role,
+            objective:
+              participant.objective ??
+              `Contribute to ${parsed.title} from your assigned role.`,
+            order: index + 1
+          };
+        }
+      );
+      const facilitators = participants.filter(
+        (participant) => participant.role === "facilitator"
+      );
+      if (
+        facilitators.length !== 1 ||
+        !participants.some(
+          (participant) =>
+            participant.role === "facilitator" &&
+            participant.employeeId === parsed.facilitatorId
+        )
+      ) {
+        throw new ApiError(
+          400,
+          "Discussion requires the selected Facilitator Participant",
+          "discussion_invalid_participants"
+        );
+      }
+      const timestamp = this.clock();
+      const discussion: Discussion = {
+        id: crypto.randomUUID(),
+        workspaceId: state.workspace.id,
+        conversationId,
+        title: parsed.title,
+        mode: parsed.mode,
+        language: parsed.language,
+        promptProfileVersion: DISCUSSION_PROMPT_PROFILE_VERSION,
+        status: "draft",
+        facilitatorParticipantId: facilitators[0].id,
+        maxRounds: parsed.maxRounds,
+        currentRound: 0,
+        sourceTaskId: parsed.sourceTaskId,
+        participants,
+        rounds: [],
+        events: [],
+        createdAt: timestamp,
+        updatedAt: timestamp
+      };
+      state.discussions.push(discussion);
+      state.workspace.updatedAt = timestamp;
+      return discussion.id;
+    });
+    return this.getDiscussionView(discussionId);
+  }
+
+  async updateDiscussion(
+    discussionId: string,
+    input: unknown
+  ) {
+    const parsed = discussionPatchSchema.parse(input);
+    await this.store.update((state) => {
+      const discussion = discussionById(state, discussionId);
+      if (discussion.status !== "draft") {
+        throw new ApiError(
+          409,
+          "Only draft Discussions can be edited",
+          "discussion_invalid_state"
+        );
+      }
+      const previousFacilitatorEmployeeId = discussion.participants.find(
+        (participant) =>
+          participant.id === discussion.facilitatorParticipantId
+      )?.employeeId;
+      if (parsed.participants) {
+        const conversation = state.conversations.find(
+          (item) => item.id === discussion.conversationId
+        );
+        if (!conversation) notFound("Conversation");
+        discussion.participants = parsed.participants.map(
+          (participant, index) => {
+            const employee = state.employees.find(
+              (item) =>
+                item.id === participant.employeeId && item.active
+            );
+            if (
+              !employee ||
+              !conversation.memberIds.includes(employee.id)
+            ) {
+              throw new ApiError(
+                400,
+                "Discussion Participants must be active Conversation Employees",
+                "discussion_invalid_participants"
+              );
+            }
+            return {
+              id:
+                discussion.participants.find(
+                  (existing) =>
+                    existing.employeeId === participant.employeeId
+                )?.id ?? crypto.randomUUID(),
+              employeeId: participant.employeeId,
+              role: participant.role,
+              objective:
+                participant.objective ??
+                `Contribute to ${parsed.title ?? discussion.title} from your assigned role.`,
+              order: index + 1
+            };
+          }
+        );
+      }
+      if (parsed.title !== undefined) discussion.title = parsed.title;
+      if (parsed.mode !== undefined) discussion.mode = parsed.mode;
+      if (parsed.language !== undefined) {
+        discussion.language = parsed.language;
+      }
+      if (parsed.maxRounds !== undefined) {
+        discussion.maxRounds = parsed.maxRounds;
+      }
+      const facilitatorEmployeeId =
+        parsed.facilitatorId ??
+        previousFacilitatorEmployeeId;
+      const facilitator = discussion.participants.find(
+        (participant) =>
+          participant.employeeId === facilitatorEmployeeId &&
+          participant.role === "facilitator"
+      );
+      if (
+        !facilitator ||
+        discussion.participants.filter(
+          (participant) => participant.role === "facilitator"
+        ).length !== 1
+      ) {
+        throw new ApiError(
+          400,
+          "Discussion requires the selected Facilitator Participant",
+          "discussion_invalid_participants"
+        );
+      }
+      discussion.facilitatorParticipantId = facilitator.id;
+      discussion.updatedAt = this.clock();
+      state.workspace.updatedAt = discussion.updatedAt;
+    });
+    return this.getDiscussionView(discussionId);
+  }
+
+  async addConstraints(
+    discussionId: string,
+    input: unknown
+  ) {
+    const parsed = discussionConstraintsSchema.parse(input);
+    await this.store.update((state) => {
+      const discussion = discussionById(state, discussionId);
+      if (
+        discussion.status === "completed" ||
+        discussion.status === "cancelled"
+      ) {
+        throw new ApiError(
+          409,
+          "Terminal Discussions cannot accept constraints",
+          "discussion_invalid_state"
+        );
+      }
+      const timestamp = this.clock();
+      if (parsed.constraints) {
+        discussion.constraints = [
+          ...(discussion.constraints ?? []),
+          ...parsed.constraints
+        ];
+      }
+      if (parsed.questions) {
+        discussion.questions = [
+          ...(discussion.questions ?? []),
+          ...parsed.questions
+        ];
+      }
+      if (parsed.note) discussion.note = parsed.note;
+      discussion.updatedAt = timestamp;
+      appendDiscussionEvent(
+        discussion,
+        "constraints_updated",
+        {
+          constraints: parsed.constraints,
+          questions: parsed.questions,
+          note: parsed.note
+        },
+        this.eventFactory
+      );
+      state.workspace.updatedAt = timestamp;
+    });
+    return this.getDiscussionView(discussionId);
+  }
+
+  async extendDiscussion(discussionId: string) {
+    const extension = await this.store.update((state) => {
+      const discussion = discussionById(state, discussionId);
+      if (discussion.status !== "review") {
+        throw new ApiError(
+          409,
+          "Only Discussions in review can be extended",
+          "discussion_invalid_state"
+        );
+      }
+      const usedContentRounds = contentRounds(discussion.rounds).length;
+      if (usedContentRounds >= 5) {
+        throw new ApiError(
+          409,
+          "Discussion reached the absolute content-round limit",
+          "discussion_budget_exhausted"
+        );
+      }
+      const timestamp = this.clock();
+      const round: DiscussionRound = {
+        id: phaseRoundId(
+          discussion.id,
+          usedContentRounds + 1,
+          "cross_response"
+        ),
+        roundNumber: usedContentRounds + 1,
+        phase: "cross_response",
+        status: "pending",
+        participantSnapshot: structuredClone(discussion.participants),
+        turns: [],
+        createdAt: timestamp
+      };
+      discussion.rounds.push(round);
+      discussion.currentRound = round.roundNumber;
+      discussion.status = "running";
+      discussion.updatedAt = timestamp;
+      appendDiscussionEvent(
+        discussion,
+        "discussion_resumed",
+        {
+          operation: "extend",
+          roundId: round.id,
+          roundNumber: round.roundNumber
+        },
+        this.eventFactory
+      );
+      state.workspace.updatedAt = timestamp;
+      return round.id;
+    });
+    await this.startPreparedPhase(discussionId, {
+      expectedRoundId: extension
+    });
+    return this.getDiscussionView(discussionId);
+  }
+
+  async getDiscussionView(discussionId: string) {
+    return this.store.read((state) =>
+      buildDiscussionView(state, discussionId)
+    );
+  }
+
+  async listDiscussionViews(conversationId: string) {
+    return this.store.read((state) => {
+      if (
+        !state.conversations.some(
+          (conversation) => conversation.id === conversationId
+        )
+      ) {
+        notFound("Conversation");
+      }
+      return state.discussions
+        .filter(
+          (discussion) => discussion.conversationId === conversationId
+        )
+        .map((discussion) => buildDiscussionView(state, discussion.id));
+    });
+  }
+
+  async getDiscussionRound(
+    discussionId: string,
+    roundId: string
+  ) {
+    return this.store.read((state) =>
+      buildDiscussionRoundDetail(state, discussionId, roundId)
+    );
+  }
+
+  async listDiscussionEvents(
+    discussionId: string,
+    afterSequence = 0
+  ) {
+    return this.store.read((state) => {
+      const discussion = discussionById(state, discussionId);
+      return (discussion.events ?? [])
+        .filter((event) => event.sequence > afterSequence)
+        .sort((left, right) => left.sequence - right.sequence);
+    });
   }
 
   async startDiscussion(discussionId: string): Promise<Discussion> {

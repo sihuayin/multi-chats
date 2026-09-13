@@ -9,6 +9,7 @@ import {
 } from "@/server/test-support/fixtures";
 import { AesCredentialCipher } from "@/server/security/credential-cipher";
 import { ConversationRunService } from "@/server/application/conversation-run-service";
+import { DiscussionOrchestrator } from "@/server/application/discussion-orchestrator";
 import { FakeModelGateway } from "@/server/adapters/model/model-gateway";
 
 const originalModelMode = process.env.MODEL_MODE;
@@ -28,13 +29,15 @@ describe("Conversation HTTP and SSE contract", () => {
     process.env.DATABASE_URL = "postgres://contract-test";
     const store = new MemoryStore(createFixtureState());
     setStoreForTests(store);
+    const runService = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      new FakeModelGateway()
+    );
     setServicesForTests({
       workspace: getServices().workspace,
-      runs: new ConversationRunService(
-        store,
-        new AesCredentialCipher(TEST_KEY),
-        new FakeModelGateway()
-      )
+      runs: runService,
+      discussions: new DiscussionOrchestrator(store, runService)
     });
 
     const startedResponse = await handleApiRequest(

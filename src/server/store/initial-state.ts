@@ -152,6 +152,7 @@ export function createInitialState(workspaceId = crypto.randomUUID()): AppState 
     tasks: [],
     artifacts: [],
     discussions: [],
-    approvals: []
+    approvals: [],
+    idempotencyRecords: []
   };
 }

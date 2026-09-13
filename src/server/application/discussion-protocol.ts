@@ -71,6 +71,13 @@ export function phaseContext(
         relatedTaskIds.has(artifact.ownerId))
   );
   const sections = [
+    discussion.constraints?.length
+      ? `Constraints:\n${discussion.constraints.join("\n")}`
+      : "",
+    discussion.questions?.length
+      ? `Questions:\n${discussion.questions.join("\n")}`
+      : "",
+    discussion.note ? `Note:\n${discussion.note}` : "",
     turns.length > 0 ? `Prior Turns:\n${turns.join("\n\n")}` : "",
     ...state.tasks
       .filter((task) => relatedTaskIds.has(task.id))

@@ -21,7 +21,10 @@ const stateArrayKeys = Object.keys({
   discussions: true,
   approvals: true
 } satisfies Record<
-  Exclude<keyof AppState, "workspace" | "schemaVersion">,
+  Exclude<
+    keyof AppState,
+    "workspace" | "schemaVersion" | "idempotencyRecords"
+  >,
   true
 >);
 

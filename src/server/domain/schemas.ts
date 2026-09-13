@@ -68,6 +68,87 @@ export const phaseRunInputSchema = z.object({
   purpose: z.string().trim().min(1).max(4000)
 }).strict();
 
+export const discussionCreateSchema = z.object({
+  title: z.string().trim().min(1).max(120),
+  mode: z.enum(["requirements", "problem", "solution", "review"]),
+  language: z.enum(["en", "zh"]).default("en"),
+  participants: z
+    .array(
+      z.object({
+        employeeId: z.string().trim().min(1),
+        role: z.enum([
+          "analyst",
+          "researcher",
+          "skeptic",
+          "designer",
+          "facilitator"
+        ]),
+        objective: z.string().trim().min(1).max(2000).optional()
+      })
+    )
+    .min(2)
+    .max(8),
+  facilitatorId: z.string().trim().min(1),
+  maxRounds: z.number().int().min(1).max(5).default(3),
+  sourceTaskId: z.string().trim().min(1).optional()
+}).strict();
+
+export const discussionPatchSchema = z.object({
+  title: z.string().trim().min(1).max(120).optional(),
+  mode: z.enum(["requirements", "problem", "solution", "review"]).optional(),
+  language: z.enum(["en", "zh"]).optional(),
+  participants: discussionCreateSchema.shape.participants.optional(),
+  facilitatorId: z.string().trim().min(1).optional(),
+  maxRounds: z.number().int().min(1).max(5).optional()
+}).strict().refine(
+  (value) => Object.keys(value).length > 0,
+  "At least one Discussion field is required"
+);
+
+export const discussionConstraintsSchema = z.object({
+  constraints: z.array(z.string().trim().min(1)).optional(),
+  questions: z.array(z.string().trim().min(1)).optional(),
+  note: z.string().trim().min(1).max(4000).optional()
+}).strict().refine(
+  (value) =>
+    value.constraints !== undefined ||
+    value.questions !== undefined ||
+    value.note !== undefined,
+  "At least one constraint field is required"
+);
+
+export const discussionSkipSchema = z.object({
+  employeeId: z.string().trim().min(1),
+  reason: z.string().trim().min(1).max(1000).optional()
+}).strict();
+
+export const discussionConfirmSchema = z.object({
+  briefArtifactId: z.string().trim().min(1).optional(),
+  selectedOptionId: z.string().trim().min(1).optional(),
+  taskTitle: z.string().trim().min(1).max(120).optional(),
+  taskGoal: z.string().trim().min(1).max(8000).optional(),
+  assigneeIds: z.array(z.string().trim().min(1)).optional()
+}).strict();
+
+export const discussionStopSchema = z.object({
+  reason: z.string().trim().min(1).max(1000).optional(),
+  operator: z.string().trim().min(1).max(120).optional()
+}).strict();
+
+export const discussionRetrySchema = z.object({
+  participantIds: z.array(z.string().trim().min(1)).optional(),
+  reason: z.string().trim().min(1).max(1000).optional(),
+  operator: z.string().trim().min(1).max(120).optional()
+}).strict();
+
+export const discussionSynthesizeSchema = z.object({
+  force: z.boolean().optional(),
+  reason: z.string().trim().min(1).max(1000).optional(),
+  operator: z.string().trim().min(1).max(120).optional()
+}).strict();
+
+export const emptyCommandSchema = z.object({}).strict();
+
 export const taskInputSchema = z.object({
   title: z.string().trim().min(1).max(120),
   goal: z.string().trim().min(1).max(8000),

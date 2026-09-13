@@ -24,7 +24,17 @@ export function appendDiscussionEvent(
     sequence:
       events.reduce((highest, item) => Math.max(highest, item.sequence), 0) + 1,
     type,
-    payload,
+    payload: {
+      discussionStatus: discussion.status,
+      budgetUsed: {
+        usedRounds: discussion.rounds.filter(
+          (round) => round.phase !== "synthesis"
+        ).length,
+        usedParticipants: discussion.participants.length,
+        maxRounds: discussion.maxRounds
+      },
+      ...payload
+    },
     createdAt: now()
   };
   events.push(event);

@@ -1,10 +1,19 @@
 import "server-only";
 
-import { approvalDecisionSchema } from "@/server/domain/schemas";
+import {
+  approvalDecisionSchema,
+  discussionConfirmSchema,
+  discussionRetrySchema,
+  discussionSkipSchema,
+  discussionStopSchema,
+  discussionSynthesizeSchema,
+  emptyCommandSchema
+} from "@/server/domain/schemas";
 import { ApiError } from "@/server/application/errors";
 import { getServices } from "@/server/application/services";
 import { logger } from "@/server/observability/logger";
 import { getStore } from "@/server/store";
+import { discussionEventView } from "@/server/application/discussion-view";
 
 function json(data: unknown, init?: ResponseInit): Response {
   return Response.json(data, init);
@@ -42,6 +51,63 @@ async function body(request: Request): Promise<unknown> {
     throw new ApiError(400, "Request body must be valid JSON", "invalid_json");
   }
 }
+
+async function idempotent(
+  request: Request,
+  scope: string,
+  operation: () => Promise<Response>
+): Promise<Response> {
+  const key = request.headers.get("idempotency-key");
+  if (!key) return operation();
+  const pendingKey = `${scope}:${key}`;
+  const pending = idempotencyInFlight.get(pendingKey);
+  if (pending) return pending.then((response) => response.clone());
+  const running = (async () => {
+  const store = getStore();
+  const existing = await store.read((state) => {
+    const now = Date.now();
+    const record = (state.idempotencyRecords ?? []).find(
+      (item) =>
+        item.scope === scope &&
+        item.key === key &&
+        Date.parse(item.expiresAt) > now
+    );
+    return record ? structuredClone(record) : null;
+  });
+    if (existing) {
+      return json(existing.body, { status: existing.status });
+    }
+    const response = await operation();
+    if (response.status >= 400) return response;
+    const responseBody = await response.clone().json().catch(() => null);
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 24 * 60 * 60_000);
+    await store.update((state) => {
+      state.idempotencyRecords ??= [];
+      state.idempotencyRecords = state.idempotencyRecords.filter(
+        (item) => Date.parse(item.expiresAt) > now.getTime()
+      );
+      state.idempotencyRecords.push({
+        id: crypto.randomUUID(),
+        scope,
+        key,
+        status: response.status,
+        body: responseBody,
+        createdAt: now.toISOString(),
+        expiresAt: expiresAt.toISOString()
+      });
+    });
+    return response;
+  })();
+  idempotencyInFlight.set(pendingKey, running);
+  try {
+    return await running;
+  } finally {
+    idempotencyInFlight.delete(pendingKey);
+  }
+}
+
+const idempotencyInFlight = new Map<string, Promise<Response>>();
 
 async function health(): Promise<Response> {
   try {
@@ -122,6 +188,58 @@ async function streamRunEvents(
   });
 }
 
+async function streamDiscussionEvents(
+  request: Request,
+  discussionId: string
+): Promise<Response> {
+  const { discussions } = getServices();
+  await discussions.getDiscussionView(discussionId);
+  const url = new URL(request.url);
+  let after = Number(
+    url.searchParams.get("afterSequence") ?? 0
+  );
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const deadline = Date.now() + 120_000;
+      while (!request.signal.aborted && Date.now() < deadline) {
+        const [events, view] = await Promise.all([
+          discussions.listDiscussionEvents(discussionId, after),
+          discussions.getDiscussionView(discussionId)
+        ]);
+        for (const event of events) {
+          after = event.sequence;
+          const discussion = await discussions.getDiscussion(discussionId);
+          const payload = discussionEventView(event, discussion);
+          controller.enqueue(
+            encoder.encode(
+              `id: ${event.sequence}\ndata: ${JSON.stringify(payload)}\n\n`
+            )
+          );
+        }
+        if (
+          view.activeRun === undefined &&
+          ["completed", "cancelled"].includes(
+            view.discussion.status
+          )
+        ) {
+          controller.close();
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      controller.close();
+    }
+  });
+  return new Response(stream, {
+    headers: {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive"
+    }
+  });
+}
+
 async function handleApiRoute(
   request: Request,
   segments: string[],
@@ -133,7 +251,7 @@ async function handleApiRoute(
     return health();
   }
 
-  const { workspace, runs } = getServices();
+  const { workspace, runs, discussions } = getServices();
 
   if (request.method === "GET" && resource === "workspace") {
     return json(await workspace.getWorkspaceView());
@@ -223,6 +341,137 @@ async function handleApiRoute(
           status: 201
         });
       }
+      if (
+        request.method === "GET" &&
+        id &&
+        child === "discussions"
+      ) {
+        return json(await discussions.listDiscussionViews(id));
+      }
+      if (
+        request.method === "POST" &&
+        id &&
+        child === "discussions"
+      ) {
+        return idempotent(
+          request,
+          `${id}:create:${request.headers.get("idempotency-key") ?? ""}`,
+          async () =>
+            json(
+              await discussions.createDiscussion(
+                id,
+                await body(request)
+              ),
+              { status: 201 }
+            )
+        );
+      }
+  }
+
+  if (resource === "discussions") {
+    if (request.method === "GET" && id && !child) {
+      return json(await discussions.getDiscussionView(id));
+    }
+    if (request.method === "PATCH" && id && !child) {
+      return json(
+        await discussions.updateDiscussion(id, await body(request))
+      );
+    }
+    if (
+      request.method === "PATCH" &&
+      id &&
+      child === "constraints"
+    ) {
+      return idempotent(
+        request,
+        `${id}:constraints:${request.headers.get("idempotency-key") ?? ""}`,
+        async () =>
+          json(
+            await discussions.addConstraints(
+              id,
+              await body(request)
+            )
+          )
+      );
+    }
+    if (
+      request.method === "GET" &&
+      id &&
+      child === "events"
+    ) {
+      return streamDiscussionEvents(request, id);
+    }
+    if (
+      request.method === "GET" &&
+      id &&
+      child === "rounds" &&
+      grandchild
+    ) {
+      return json(
+        await discussions.getDiscussionRound(id, grandchild)
+      );
+    }
+    if (request.method === "POST" && id && child) {
+      return idempotent(
+        request,
+        `${id}:${child}:${request.headers.get("idempotency-key") ?? ""}`,
+        async () => {
+          const rawInput = await body(request);
+          if (child === "start") {
+            emptyCommandSchema.parse(rawInput);
+            await discussions.startDiscussion(id);
+          } else if (child === "stop") {
+            await discussions.stopDiscussion(
+              id,
+              discussionStopSchema.parse(rawInput)
+            );
+          } else if (child === "retry") {
+            await discussions.retryPhase(
+              id,
+              discussionRetrySchema.parse(rawInput)
+            );
+          } else if (child === "skip") {
+            await discussions.skipParticipant(
+              id,
+              discussionSkipSchema.parse(rawInput)
+            );
+          } else if (child === "synthesize") {
+            await discussions.synthesize(
+              id,
+              discussionSynthesizeSchema.parse(rawInput)
+            );
+          } else if (child === "confirm") {
+            await discussions.confirmBrief(
+              id,
+              discussionConfirmSchema.parse(rawInput)
+            );
+          } else if (child === "cancel") {
+            await discussions.cancelDiscussion(
+              id,
+              discussionStopSchema.parse(rawInput)
+            );
+          } else {
+            return json(
+              { error: "Route not found", code: "not_found" },
+              { status: 404 }
+            );
+          }
+          const view = await discussions.getDiscussionView(id);
+          if (view.activeRun && !process.env.DATABASE_URL) {
+            void runs.processRun(view.activeRun.id);
+          }
+          const status =
+            child === "confirm"
+              ? 201
+              : ["start", "retry", "synthesize"].includes(
+                    child
+                  )
+                ? 202
+                : 200;
+          return json(view, { status });
+        }
+      );
+    }
   }
 
   if (resource === "runs") {
