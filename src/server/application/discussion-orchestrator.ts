@@ -4,6 +4,7 @@ import {
   type DiscussionEventFactory
 } from "@/server/application/discussion-ledger";
 import { validateDiscussion } from "@/server/application/discussion-domain";
+import { createDiscussionBriefRevision } from "@/server/application/discussion-brief";
 import {
   contentAvailability,
   contentRounds,
@@ -15,6 +16,7 @@ import {
   phasePurpose,
   phaseRoundId
 } from "@/server/application/discussion-protocol";
+import { DISCUSSION_PROMPT_PROFILE_VERSION } from "@/server/application/discussion-prompts";
 import type {
   ConversationRunService,
   StartPhaseRunResult
@@ -125,6 +127,8 @@ export class DiscussionOrchestrator {
         );
       }
       discussion.maxRounds ??= DEFAULT_DISCUSSION_CONTENT_ROUNDS;
+      discussion.promptProfileVersion =
+        DISCUSSION_PROMPT_PROFILE_VERSION;
       if (discussion.maxRounds > MAX_DISCUSSION_CONTENT_ROUNDS) {
         throw new ApiError(
           409,
@@ -410,6 +414,8 @@ export class DiscussionOrchestrator {
         );
       }
       const timestamp = this.clock();
+      discussion.promptProfileVersion =
+        DISCUSSION_PROMPT_PROFILE_VERSION;
       round.status = "pending";
       round.completedAt = undefined;
       round.activeParticipantIds = participants.map(
@@ -576,6 +582,8 @@ export class DiscussionOrchestrator {
       }
 
       const timestamp = this.clock();
+      discussion.promptProfileVersion =
+        DISCUSSION_PROMPT_PROFILE_VERSION;
       let round = discussion.rounds.findLast(
         (item) => item.phase === "synthesis"
       );
@@ -832,6 +840,44 @@ export class DiscussionOrchestrator {
         },
         this.eventFactory
       );
+      if (latestRun.status === "completed" && round.phase === "synthesis") {
+        const turn = round.turns
+          .filter((item) => item.role === "facilitator")
+          .sort(
+            (left, right) =>
+              (right.attempt ?? 1) - (left.attempt ?? 1)
+          )[0];
+        if (
+          !turn ||
+          turn.status !== "completed" ||
+          !turn.content
+        ) {
+          throw new Error(
+            "Synthesis did not produce a Discussion Brief"
+          );
+        }
+        const { artifact } = createDiscussionBriefRevision(
+          state,
+          discussion,
+          turn.content,
+          {
+            id: this.eventFactory.id,
+            now: this.eventFactory.now
+          }
+        );
+        appendDiscussionEvent(
+          discussion,
+          "brief_created",
+          {
+            artifactId: artifact.id,
+            revision: artifact.revision,
+            schemaVersion: artifact.schemaVersion,
+            synthesisRoundId: round.id,
+            runId: round.runId
+          },
+          this.eventFactory
+        );
+      }
       if (
         latestRun.status !== "completed" &&
         discussion.status !== "cancelled"

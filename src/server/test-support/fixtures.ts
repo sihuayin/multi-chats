@@ -7,6 +7,8 @@ import type { ProviderRegistry } from "@/server/application/provider-gateway";
 import type {
   AppState,
   Discussion,
+  DiscussionRoundPhase,
+  DiscussionTurnPayload,
   Employee
 } from "@/server/domain/types";
 import { AesCredentialCipher } from "@/server/security/credential-cipher";
@@ -113,6 +115,7 @@ export function createFixtureDiscussion(
     title: "Choose a persistence model",
     mode: "solution",
     language: "en",
+    promptProfileVersion: "discussion-prompts.v1",
     status: "review",
     facilitatorParticipantId: participants[1].id,
     maxRounds: 3,
@@ -160,6 +163,93 @@ export function createFixtureDiscussion(
     startedAt: now,
     updatedAt: now
   };
+}
+
+export function createFixtureTurnPayload(
+  phase: DiscussionRoundPhase = "positions",
+  summary = "Fixture position"
+): DiscussionTurnPayload {
+  return {
+    summary,
+    claims: [
+      {
+        statement: summary,
+        confidence: "medium"
+      }
+    ],
+    assumptions: [],
+    risks: [],
+    openQuestions: [],
+    ...(phase === "cross_response"
+      ? {
+          agreements: [],
+          disagreements: [],
+          corrections: []
+        }
+      : {})
+  };
+}
+
+export function createFixtureBrief(
+  discussionId = "70000000-0000-4000-8000-000000000001"
+) {
+  return {
+    schemaVersion: 1,
+    promptProfileVersion: "discussion-prompts.v1",
+    discussionId,
+    mode: "solution",
+    title: "Choose a persistence model",
+    problem: {
+      statement: "Discussions need durable state.",
+      goals: ["Preserve history"],
+      nonGoals: []
+    },
+    context: "The workspace stores its state as JSON.",
+    facts: [
+      {
+        statement: "SQLite and PostgreSQL are supported.",
+        evidence: "Store tests"
+      }
+    ],
+    constraints: [],
+    assumptions: [],
+    disagreements: [],
+    options: [
+      {
+        id: "state-document",
+        title: "Keep the state document",
+        summary: "Continue using the shared JSON aggregate.",
+        benefits: ["Reuses tested storage"],
+        costs: [],
+        risks: []
+      }
+    ],
+    recommendation: {
+      optionId: "state-document",
+      rationale: "It has the smallest migration surface.",
+      confidence: "high"
+    },
+    actions: [],
+    openQuestions: []
+  };
+}
+
+export function discussionModelGateway(): RecordingModelGateway {
+  return new RecordingModelGateway((request) => {
+    const phase = request.systemPrompt.includes("Phase: synthesis")
+      ? "synthesis"
+      : request.systemPrompt.includes("Phase: cross_response")
+        ? "cross_response"
+        : "positions";
+    const response =
+      phase === "synthesis"
+        ? createFixtureBrief(
+            request.prompt.match(/Discussion ID: ([^\n]+)/)?.[1]
+          )
+        : createFixtureTurnPayload(phase);
+    const text = JSON.stringify(response);
+    return [text];
+  });
 }
 
 export class RecordingModelGateway implements ModelGateway {

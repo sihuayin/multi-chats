@@ -7,6 +7,7 @@ import { AesCredentialCipher } from "@/server/security/credential-cipher";
 import {
   createFixtureDiscussion,
   createFixtureState,
+  createFixtureTurnPayload,
   noopProviderRegistry,
   RecordingModelGateway,
   TEST_KEY,
@@ -31,7 +32,10 @@ describe("ConversationRun", () => {
     const state = createFixtureState();
     const { discussion, round } = addFixturePhase(state);
     const store = new MemoryStore(state);
-    const engine = new RecordingModelGateway(() => ["response"]);
+    const expectedResponse = JSON.stringify(
+      createFixtureTurnPayload("cross_response", "response")
+    );
+    const engine = new RecordingModelGateway(() => [expectedResponse]);
     const runs = new ConversationRunService(
       store,
       new AesCredentialCipher(TEST_KEY),
@@ -96,7 +100,7 @@ describe("ConversationRun", () => {
     expect(engine.requests[0].prompt).not.toContain(
       "UNRELATED CONVERSATION CONTEXT"
     );
-    expect(engine.requests[1].prompt).toContain("Alice: response");
+    expect(engine.requests[1].prompt).toContain(`Alice: ${expectedResponse}`);
 
     const persisted = await store.read((current) => {
       const currentDiscussion = current.discussions.find(
@@ -136,13 +140,13 @@ describe("ConversationRun", () => {
         employeeId: round.participantSnapshot[0].employeeId,
         status: "completed",
         messageId: persisted.messages[1].id,
-        content: "response"
+        content: expectedResponse
       },
       {
         employeeId: round.participantSnapshot[1].employeeId,
         status: "completed",
         messageId: persisted.messages[2].id,
-        content: "response"
+        content: expectedResponse
       }
     ]);
 
@@ -253,6 +257,108 @@ describe("ConversationRun", () => {
         "run_error"
       ])
     );
+  });
+
+  it("retries an invalid Turn payload once and persists the parsed payload", async () => {
+    const state = createFixtureState();
+    const { discussion, round } = addFixturePhase(state);
+    const store = new MemoryStore(state);
+    const valid = JSON.stringify(
+      createFixtureTurnPayload("cross_response", "valid after retry")
+    );
+    let call = 0;
+    const gateway: ModelGateway = {
+      async *run() {
+        call += 1;
+        const text = call === 1 ? "not json" : valid;
+        yield { type: "text_delta", delta: text };
+        yield { type: "text_completed", text };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway
+    );
+    const started = await runs.startPhaseRun(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        discussionId: discussion.id,
+        roundId: round.id,
+        participantSnapshot: round.participantSnapshot,
+        context: "No prior response is available.",
+        purpose: "Establish the initial positions."
+      }
+    );
+
+    const completed = await runs.processRun(started.run.id);
+
+    expect(completed.status).toBe("completed");
+    expect(call).toBe(3);
+    const persisted = await store.read((current) => {
+      const turn = current.discussions
+        .find((item) => item.id === discussion.id)
+        ?.rounds.find((item) => item.id === round.id)?.turns[0];
+      const message = current.messages.find(
+        (item) => item.id === turn?.messageId
+      );
+      return { turn, message };
+    });
+    expect(persisted.turn).toMatchObject({
+      status: "completed",
+      content: valid,
+      payload: createFixtureTurnPayload(
+        "cross_response",
+        "valid after retry"
+      )
+    });
+    expect(persisted.message).toMatchObject({
+      status: "complete",
+      content: valid
+    });
+  });
+
+  it("fails a Turn after a second invalid payload and never stores a payload", async () => {
+    const state = createFixtureState();
+    const { discussion, round } = addFixturePhase(state);
+    const store = new MemoryStore(state);
+    const gateway: ModelGateway = {
+      async *run() {
+        yield { type: "text_delta", delta: "still not json" };
+        yield { type: "text_completed", text: "still not json" };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway
+    );
+    const started = await runs.startPhaseRun(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        discussionId: discussion.id,
+        roundId: round.id,
+        participantSnapshot: round.participantSnapshot,
+        context: "No prior response is available.",
+        purpose: "Establish the initial positions."
+      }
+    );
+
+    const failed = await runs.processRun(started.run.id);
+
+    expect(failed.status).toBe("failed");
+    const turn = await store.read(
+      (current) =>
+        current.discussions
+          .find((item) => item.id === discussion.id)
+          ?.rounds.find((item) => item.id === round.id)?.turns[0]
+    );
+    expect(turn).toMatchObject({
+      status: "failed",
+      content: "still not json",
+      validationError: "Discussion Turn response is not JSON"
+    });
+    expect(turn?.payload).toBeUndefined();
   });
 
   it("stores a Message without starting a Run when no Employee is mentioned", async () => {

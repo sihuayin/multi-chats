@@ -16,6 +16,8 @@ import type {
   Run
 } from "@/server/domain/types";
 import { DISCUSSION_EVENT_TYPES } from "@/server/domain/types";
+import { parseDiscussionBrief } from "@/server/application/discussion-brief";
+import { isCrossResponsePayloadComplete } from "@/server/application/discussion-turn-payload";
 
 const modes = new Set<DiscussionMode>([
   "requirements",
@@ -151,7 +153,10 @@ export function validateDiscussionParticipants(
   validateParticipantList(participants);
 }
 
-function validateTurnPayload(payload: DiscussionTurnPayload): void {
+function validateTurnPayload(
+  payload: DiscussionTurnPayload,
+  phase: DiscussionRoundPhase
+): void {
   if (
     !nonEmptyString(payload.summary) ||
     !Array.isArray(payload.claims) ||
@@ -174,11 +179,18 @@ function validateTurnPayload(payload: DiscussionTurnPayload): void {
   ) {
     throw new Error("Discussion turn payload is invalid");
   }
+  if (
+    phase === "cross_response" &&
+    !isCrossResponsePayloadComplete(payload)
+  ) {
+    throw new Error("Cross-response Turn payload is invalid");
+  }
 }
 
 function validateTurn(
   turn: DiscussionTurn,
   participantSnapshot: DiscussionParticipant[],
+  phase: DiscussionRoundPhase,
   activeParticipantIds?: Set<string>
 ): void {
   if (
@@ -222,7 +234,7 @@ function validateTurn(
     );
   }
   if (turn.payload !== undefined) {
-    validateTurnPayload(turn.payload);
+    validateTurnPayload(turn.payload, phase);
   }
 }
 
@@ -310,7 +322,7 @@ function validateRound(round: DiscussionRound): void {
     }
   }
   round.turns.forEach((turn) =>
-    validateTurn(turn, round.participantSnapshot, activeIds)
+    validateTurn(turn, round.participantSnapshot, round.phase, activeIds)
   );
 }
 
@@ -320,6 +332,8 @@ export function validateDiscussion(discussion: Discussion): void {
     !nonEmptyString(discussion.workspaceId) ||
     !nonEmptyString(discussion.conversationId) ||
     !nonEmptyString(discussion.title) ||
+    (discussion.promptProfileVersion !== undefined &&
+      !nonEmptyString(discussion.promptProfileVersion)) ||
     !isoDate(discussion.createdAt) ||
     !isoDate(discussion.updatedAt) ||
     (discussion.startedAt !== undefined && !isoDate(discussion.startedAt)) ||
@@ -469,8 +483,15 @@ export function validateDiscussionReferences(input: {
       if (
         !artifact ||
         artifact.ownerType !== "discussion" ||
-        artifact.ownerId !== discussion.id
+        artifact.ownerId !== discussion.id ||
+        artifact.kind !== "discussion_brief" ||
+        artifact.type !== "json"
       ) {
+        throw new Error("Discussion Brief reference is invalid");
+      }
+      try {
+        parseDiscussionBrief(artifact.content);
+      } catch {
         throw new Error("Discussion Brief reference is invalid");
       }
     }

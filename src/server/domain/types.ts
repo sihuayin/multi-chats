@@ -296,6 +296,7 @@ export const DISCUSSION_EVENT_TYPES = [
   "phase_started",
   "phase_completed",
   "phase_failed",
+  "brief_created",
   "discussion_interrupted",
   "discussion_resumed",
   "discussion_stopped",
@@ -326,6 +327,7 @@ export type Discussion = {
   title: string;
   mode: DiscussionMode;
   language: "en" | "zh";
+  promptProfileVersion?: string;
   status: DiscussionStatus;
   facilitatorParticipantId: string;
   maxRounds: number;

@@ -8,7 +8,9 @@ import { AesCredentialCipher } from "@/server/security/credential-cipher";
 import { MemoryStore } from "@/server/store/memory-store";
 import {
   createFixtureDiscussion,
+  createFixtureBrief,
   createFixtureState,
+  discussionModelGateway,
   RecordingModelGateway,
   TEST_KEY
 } from "@/server/test-support/fixtures";
@@ -82,6 +84,7 @@ describe("DiscussionOrchestrator", () => {
     expect(persisted.discussion).toMatchObject({
       status: "running",
       currentRound: 1,
+      promptProfileVersion: "discussion-prompts.v1",
       rounds: [
         {
           roundNumber: 1,
@@ -154,7 +157,7 @@ describe("DiscussionOrchestrator", () => {
     const runs = new ConversationRunService(
       store,
       new AesCredentialCipher(TEST_KEY),
-      new RecordingModelGateway(() => ["position"])
+      discussionModelGateway()
     );
     const orchestrator = new DiscussionOrchestrator(store, runs);
     await orchestrator.startDiscussion(discussion.id);
@@ -218,7 +221,7 @@ describe("DiscussionOrchestrator", () => {
     const runs = new ConversationRunService(
       store,
       new AesCredentialCipher(TEST_KEY),
-      new RecordingModelGateway(() => ["response"])
+      discussionModelGateway()
     );
     const orchestrator = new DiscussionOrchestrator(store, runs);
     await orchestrator.startDiscussion(discussion.id);
@@ -289,7 +292,7 @@ describe("DiscussionOrchestrator", () => {
     const runs = new ConversationRunService(
       store,
       new AesCredentialCipher(TEST_KEY),
-      new RecordingModelGateway(() => ["response"])
+      discussionModelGateway()
     );
     const orchestrator = new DiscussionOrchestrator(store, runs);
     await orchestrator.startDiscussion(discussion.id);
@@ -483,6 +486,7 @@ describe("DiscussionOrchestrator", () => {
       conversationId: state.conversations[0].id
     });
     discussion.status = "interrupted";
+    delete discussion.promptProfileVersion;
     discussion.latestBriefArtifactId = "brief-context";
     state.discussions.push(discussion);
     state.artifacts.push({
@@ -492,7 +496,7 @@ describe("DiscussionOrchestrator", () => {
       ownerId: discussion.id,
       type: "json",
       name: "Latest Brief",
-      content: JSON.stringify({ recommendation: "Keep the current path." }),
+      content: JSON.stringify(createFixtureBrief(discussion.id)),
       kind: "discussion_brief",
       schemaVersion: 1,
       revision: 1,
@@ -500,7 +504,7 @@ describe("DiscussionOrchestrator", () => {
       updatedAt: state.workspace.updatedAt
     });
     const store = new MemoryStore(state);
-    const engine = new RecordingModelGateway();
+    const engine = discussionModelGateway();
     const runs = new ConversationRunService(
       store,
       new AesCredentialCipher(TEST_KEY),
@@ -517,7 +521,8 @@ describe("DiscussionOrchestrator", () => {
       reason: "Proceed with the available material"
     });
     expect(forced).toMatchObject({
-      status: "running"
+      status: "running",
+      promptProfileVersion: "discussion-prompts.v1"
     });
     const synthesis = forced.rounds.at(-1)!;
     expect(synthesis).toMatchObject({
@@ -544,13 +549,33 @@ describe("DiscussionOrchestrator", () => {
 
     await processLatestDiscussionRun(store, runs, discussion.id);
     expect(engine.requests[0].prompt).toContain(
-      "Keep the current path."
+      "SQLite and PostgreSQL are supported."
     );
     const reviewed = await orchestrator.advanceDiscussion(discussion.id);
     expect(reviewed.status).toBe("review");
     expect(reviewed.events?.at(-1)).toMatchObject({
       type: "discussion_review_requested"
     });
+    const briefArtifact = await store.read((current) =>
+      current.artifacts.find(
+        (artifact) => artifact.id === reviewed.latestBriefArtifactId
+      )
+    );
+    expect(briefArtifact).toMatchObject({
+      ownerType: "discussion",
+      ownerId: discussion.id,
+      type: "json",
+      kind: "discussion_brief",
+      schemaVersion: 1,
+      revision: 2,
+      previousArtifactId: "brief-context"
+    });
+    expect(JSON.parse(briefArtifact!.content)).toMatchObject({
+      promptProfileVersion: "discussion-prompts.v1"
+    });
+    expect(reviewed.events?.map((event) => event.type)).toContain(
+      "brief_created"
+    );
   });
 
   it("replaces the Facilitator without rewriting historical Round snapshots", async () => {
@@ -597,6 +622,41 @@ describe("DiscussionOrchestrator", () => {
         .find((round) => round.id === historicalRound.id)
         ?.turns.map((turn) => turn.role)
     ).toEqual(historicalRound.turns.map((turn) => turn.role));
+  });
+
+  it("does not create a Brief revision when Synthesis validation fails", async () => {
+    const state = createFixtureState();
+    const discussion = createFixtureDiscussion({
+      workspaceId: state.workspace.id,
+      conversationId: state.conversations[0].id
+    });
+    discussion.status = "interrupted";
+    state.discussions.push(discussion);
+    const store = new MemoryStore(state);
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      {
+        async *run() {
+          yield { type: "text_delta", delta: "not a brief" };
+          yield { type: "text_completed", text: "not a brief" };
+        }
+      }
+    );
+    const orchestrator = new DiscussionOrchestrator(store, runs);
+    const started = await orchestrator.synthesize(discussion.id, {
+      force: true
+    });
+    await processLatestDiscussionRun(
+      store,
+      runs,
+      started.id
+    );
+    const interrupted = await orchestrator.advanceDiscussion(discussion.id);
+
+    expect(interrupted.status).toBe("interrupted");
+    expect(interrupted.latestBriefArtifactId).toBeUndefined();
+    expect(await store.read((current) => current.artifacts)).toEqual([]);
   });
 
   it("moves a worker-interrupted phase to interrupted without automatic retry", async () => {
@@ -747,7 +807,7 @@ async function createRunningDiscussion(
   const runs = new ConversationRunService(
     store,
     new AesCredentialCipher(TEST_KEY),
-    options.gateway ?? new RecordingModelGateway(() => ["response"])
+    options.gateway ?? discussionModelGateway()
   );
   const orchestrator = new DiscussionOrchestrator(
     store,
