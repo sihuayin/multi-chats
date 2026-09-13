@@ -4,7 +4,11 @@ import type {
   ModelTool
 } from "@/server/application/model-gateway";
 import type { ProviderRegistry } from "@/server/application/provider-gateway";
-import type { AppState, Employee } from "@/server/domain/types";
+import type {
+  AppState,
+  Discussion,
+  Employee
+} from "@/server/domain/types";
 import { AesCredentialCipher } from "@/server/security/credential-cipher";
 import { createInitialState } from "@/server/store/initial-state";
 
@@ -70,6 +74,91 @@ export function createFixtureState(): AppState {
     updatedAt: now
   });
   return state;
+}
+
+export function createFixtureDiscussion(
+  options: {
+    id?: string;
+    workspaceId?: string;
+    conversationId?: string;
+  } = {}
+): Discussion {
+  const now = "2026-01-01T00:00:00.000Z";
+  const id = options.id ?? "70000000-0000-4000-8000-000000000001";
+  const workspaceId =
+    options.workspaceId ?? "00000000-0000-4000-8000-000000000001";
+  const conversationId =
+    options.conversationId ?? "30000000-0000-4000-8000-000000000001";
+  const participants: Discussion["participants"] = [
+    {
+      id: "participant-analyst",
+      employeeId: "20000000-0000-4000-8000-000000000001",
+      role: "analyst",
+      objective: "Define the problem boundary.",
+      order: 1
+    },
+    {
+      id: "participant-facilitator",
+      employeeId: "20000000-0000-4000-8000-000000000002",
+      role: "facilitator",
+      objective: "Synthesize the recommendation.",
+      order: 2
+    }
+  ];
+
+  return {
+    id,
+    workspaceId,
+    conversationId,
+    title: "Choose a persistence model",
+    mode: "solution",
+    language: "en",
+    status: "review",
+    facilitatorParticipantId: participants[1].id,
+    maxRounds: 3,
+    currentRound: 1,
+    participants,
+    rounds: [
+      {
+        id: `${id}-round-1`,
+        roundNumber: 1,
+        phase: "positions",
+        status: "completed",
+        runId: `${id}-run-1`,
+        participantSnapshot: structuredClone(participants),
+        activeParticipantIds: participants.map((participant) => participant.id),
+        turns: participants.map((participant, index) => ({
+          id: `${id}-turn-${index + 1}`,
+          employeeId: participant.employeeId,
+          role: participant.role,
+          order: participant.order,
+          status: "completed",
+          messageId: `${id}-message-${index + 1}`,
+          payload: {
+            summary: `${participant.role} position`,
+            claims: [
+              {
+                statement: "Use the existing state document.",
+                confidence: "high"
+              }
+            ],
+            assumptions: [],
+            risks: [],
+            openQuestions: []
+          },
+          createdAt: now,
+          startedAt: now,
+          completedAt: now
+        })),
+        createdAt: now,
+        startedAt: now,
+        completedAt: now
+      }
+    ],
+    createdAt: now,
+    startedAt: now,
+    updatedAt: now
+  };
 }
 
 export class RecordingModelGateway implements ModelGateway {

@@ -1,5 +1,10 @@
 import type { AppState } from "@/server/domain/types";
 import { isArtifactType } from "@/lib/artifact-types";
+import {
+  validateDiscussion,
+  validateDiscussionReferences
+} from "@/server/application/discussion-domain";
+import { CURRENT_SCHEMA_VERSION } from "@/server/store/migrations";
 import type { StateStore } from "@/server/store/store";
 
 const stateArrayKeys = Object.keys({
@@ -13,8 +18,12 @@ const stateArrayKeys = Object.keys({
   runEvents: true,
   tasks: true,
   artifacts: true,
+  discussions: true,
   approvals: true
-} satisfies Record<Exclude<keyof AppState, "workspace">, true>);
+} satisfies Record<
+  Exclude<keyof AppState, "workspace" | "schemaVersion">,
+  true
+>);
 
 const runStatuses = new Set([
   "queued",
@@ -82,6 +91,7 @@ function stringArrayField(
 }
 
 function validateState(candidate: Record<string, unknown>): void {
+  if (candidate.schemaVersion !== CURRENT_SCHEMA_VERSION) invalid();
   const workspace = record(candidate.workspace);
   const workspaceId = stringField(workspace, "id");
   stringField(workspace, "name");
@@ -156,7 +166,13 @@ function validateState(candidate: Record<string, unknown>): void {
     if (!Array.isArray(task.history)) invalid();
   });
   workspaceRecords("artifacts").forEach((artifact) => {
-    stringField(artifact, "taskId");
+    if (
+      artifact.ownerType !== "task" &&
+      artifact.ownerType !== "discussion"
+    ) {
+      invalid();
+    }
+    stringField(artifact, "ownerId");
     if (!isArtifactType(artifact.type)) invalid();
     stringField(artifact, "name");
     stringField(artifact, "content");
@@ -166,6 +182,13 @@ function validateState(candidate: Record<string, unknown>): void {
     stringField(approval, "toolName");
     record(approval.args);
     if (!approvalStatuses.has(stringField(approval, "status"))) invalid();
+  });
+  workspaceRecords("discussions").forEach((discussion) => {
+    try {
+      validateDiscussion(discussion as never);
+    } catch {
+      invalid();
+    }
   });
 
   const ids = (key: string) =>
@@ -177,6 +200,7 @@ function validateState(candidate: Record<string, unknown>): void {
   const messageIds = ids("messages");
   const runIds = ids("runs");
   const taskIds = ids("tasks");
+  const discussionIds = ids("discussions");
 
   workspaceRecords("employees").forEach((employee) => {
     if (!providerIds.has(stringField(employee, "providerCredentialId"))) invalid();
@@ -228,11 +252,25 @@ function validateState(candidate: Record<string, unknown>): void {
     }
   });
   workspaceRecords("artifacts").forEach((artifact) => {
-    if (!taskIds.has(stringField(artifact, "taskId"))) invalid();
+    const ownerId = stringField(artifact, "ownerId");
+    if (artifact.ownerType === "task" && !taskIds.has(ownerId)) invalid();
+    if (artifact.ownerType === "discussion" && !discussionIds.has(ownerId)) {
+      invalid();
+    }
   });
   workspaceRecords("approvals").forEach((approval) => {
     if (!runIds.has(stringField(approval, "runId"))) invalid();
   });
+  try {
+    validateDiscussionReferences({
+      discussions: array("discussions") as never,
+      artifacts: array("artifacts") as never,
+      messages: array("messages") as never,
+      runs: array("runs") as never
+    });
+  } catch {
+    invalid();
+  }
 }
 
 export async function createWorkspaceBackup(store: StateStore): Promise<string> {

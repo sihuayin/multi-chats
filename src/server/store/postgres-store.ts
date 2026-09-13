@@ -1,6 +1,7 @@
 import { Pool, type PoolClient } from "pg";
 import type { AppState } from "@/server/domain/types";
 import { createInitialState } from "@/server/store/initial-state";
+import { migrateAppState } from "@/server/store/migrations";
 import type { StateStore } from "@/server/store/store";
 
 const DEFAULT_WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
@@ -28,6 +29,11 @@ export class PostgresStore implements StateStore {
         ON CONFLICT (workspace_id) DO NOTHING
       `,
       [DEFAULT_WORKSPACE_ID, JSON.stringify(createInitialState(DEFAULT_WORKSPACE_ID))]
+    );
+    const state = await this.load();
+    await this.pool.query(
+      "UPDATE app_state SET state = $2::jsonb, updated_at = now() WHERE workspace_id = $1",
+      [state.workspace.id, JSON.stringify(state)]
     );
   }
 
@@ -69,6 +75,6 @@ export class PostgresStore implements StateStore {
     if (!state) {
       throw new Error("Workspace state is not initialized. Run migrations first.");
     }
-    return state;
+    return migrateAppState(state);
   }
 }

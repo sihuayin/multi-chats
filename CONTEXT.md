@@ -48,12 +48,16 @@ _Avoid_: Template
 A bounded stage of a Discussion executed as one Run.
 _Avoid_: Iteration
 
+**Round Phase**:
+The protocol stage of a Round: positions, cross-response, or synthesis.
+_Avoid_: Step
+
 **Turn**:
 One Discussion Participant's contribution within a Round.
 _Avoid_: Response
 
 **Discussion Brief**:
-The structured result of a Discussion, revised immutably and confirmed by the user.
+The canonical versioned JSON Artifact produced by a Discussion, revised immutably and confirmed by the user.
 _Avoid_: Report, summary
 
 **Message**:
@@ -77,5 +81,5 @@ A user decision required before an employee invokes a side-effecting tool.
 _Avoid_: Permission, confirmation
 
 **Artifact**:
-A structured result attached to a task, limited to text, Markdown, or JSON in v1.
+A structured result owned by a Task or Discussion, limited to text, Markdown, or JSON in v1.
 _Avoid_: Attachment, file, output

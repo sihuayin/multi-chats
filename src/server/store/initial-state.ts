@@ -1,4 +1,5 @@
 import type { AppState, IsoDate, Skill, ToolDefinition, Workspace } from "@/server/domain/types";
+import { CURRENT_SCHEMA_VERSION } from "@/server/store/migrations";
 
 export const BUILT_IN_TOOLS: ToolDefinition[] = [
   {
@@ -110,6 +111,7 @@ export function createInitialState(workspaceId = crypto.randomUUID()): AppState 
   };
 
   return {
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     workspace,
     providers: [],
     employees: [],
@@ -149,6 +151,7 @@ export function createInitialState(workspaceId = crypto.randomUUID()): AppState 
     runEvents: [],
     tasks: [],
     artifacts: [],
+    discussions: [],
     approvals: []
   };
 }

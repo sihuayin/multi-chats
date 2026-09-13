@@ -2,6 +2,7 @@ import type {
   Approval,
   Artifact,
   Conversation,
+  Discussion,
   Employee,
   Group,
   Message,
@@ -36,5 +37,6 @@ export type WorkspaceView = {
   runEvents: RunEvent[];
   tasks: Task[];
   artifacts: Artifact[];
+  discussions: Discussion[];
   approvals: Approval[];
 };

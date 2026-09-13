@@ -84,6 +84,8 @@ export type Message = {
   id: string;
   workspaceId: string;
   conversationId: string;
+  discussionId?: string;
+  discussionTurnId?: string;
   authorType: "user" | "employee" | "system";
   authorId: string;
   content: string;
@@ -108,6 +110,8 @@ export type Run = {
   conversationId: string;
   triggerMessageId: string;
   requestId?: string;
+  discussionId?: string;
+  discussionRound?: number;
   memberSnapshot: string[];
   status: RunStatus;
   error?: string;
@@ -178,11 +182,133 @@ export type Task = {
 export type Artifact = {
   id: string;
   workspaceId: string;
-  taskId: string;
+  ownerType: "task" | "discussion";
+  ownerId: string;
   type: ArtifactType;
   name: string;
   content: string;
+  kind?: "discussion_brief";
+  schemaVersion?: number;
+  revision?: number;
+  previousArtifactId?: string;
   createdAt: IsoDate;
+  updatedAt: IsoDate;
+};
+
+export type DiscussionMode =
+  | "requirements"
+  | "problem"
+  | "solution"
+  | "review";
+
+export type DiscussionRole =
+  | "analyst"
+  | "researcher"
+  | "skeptic"
+  | "designer"
+  | "facilitator";
+
+export type DiscussionStatus =
+  | "draft"
+  | "running"
+  | "review"
+  | "interrupted"
+  | "completed"
+  | "cancelled";
+
+export type DiscussionRoundPhase =
+  | "positions"
+  | "cross_response"
+  | "synthesis";
+
+export type DiscussionRoundStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "interrupted"
+  | "cancelled";
+
+export type DiscussionTurnStatus =
+  | "pending"
+  | "streaming"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "interrupted";
+
+export type DiscussionParticipant = {
+  id: string;
+  employeeId: string;
+  role: DiscussionRole;
+  objective: string;
+  order: number;
+};
+
+export type DiscussionTurnPayload = {
+  summary: string;
+  claims: Array<{
+    statement: string;
+    evidence?: string;
+    confidence: "low" | "medium" | "high";
+  }>;
+  assumptions: string[];
+  risks: string[];
+  openQuestions: string[];
+  agreements?: string[];
+  disagreements?: string[];
+  corrections?: string[];
+};
+
+export type DiscussionTurn = {
+  id: string;
+  employeeId: string;
+  role: DiscussionRole;
+  order: number;
+  status: DiscussionTurnStatus;
+  messageId?: string;
+  content?: string;
+  payload?: DiscussionTurnPayload;
+  validationError?: string;
+  createdAt: IsoDate;
+  startedAt?: IsoDate;
+  completedAt?: IsoDate;
+};
+
+export type DiscussionRound = {
+  id: string;
+  roundNumber: number;
+  phase: DiscussionRoundPhase;
+  status: DiscussionRoundStatus;
+  runId?: string;
+  participantSnapshot: DiscussionParticipant[];
+  activeParticipantIds?: string[];
+  turns: DiscussionTurn[];
+  createdAt: IsoDate;
+  startedAt?: IsoDate;
+  completedAt?: IsoDate;
+};
+
+export type Discussion = {
+  id: string;
+  workspaceId: string;
+  conversationId: string;
+  title: string;
+  mode: DiscussionMode;
+  language: "en" | "zh";
+  status: DiscussionStatus;
+  facilitatorParticipantId: string;
+  maxRounds: number;
+  currentRound: number;
+  latestBriefArtifactId?: string;
+  confirmedBriefArtifactId?: string;
+  sourceTaskId?: string;
+  confirmedTaskId?: string;
+  participants: DiscussionParticipant[];
+  rounds: DiscussionRound[];
+  createdAt: IsoDate;
+  startedAt?: IsoDate;
+  completedAt?: IsoDate;
   updatedAt: IsoDate;
 };
 
@@ -205,6 +331,7 @@ export type Approval = {
 export type ApprovalDecision = "approved" | "rejected" | "cancelled";
 
 export type AppState = {
+  schemaVersion: number;
   workspace: Workspace;
   providers: ProviderCredential[];
   employees: Employee[];
@@ -216,5 +343,6 @@ export type AppState = {
   runEvents: RunEvent[];
   tasks: Task[];
   artifacts: Artifact[];
+  discussions: Discussion[];
   approvals: Approval[];
 };

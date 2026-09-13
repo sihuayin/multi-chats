@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { AppState } from "@/server/domain/types";
 import { createInitialState } from "@/server/store/initial-state";
+import { migrateAppState } from "@/server/store/migrations";
 import type { StateStore } from "@/server/store/store";
 
 const DEFAULT_WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
@@ -81,6 +82,16 @@ export class SqliteStore implements StateStore {
         JSON.stringify(createInitialState(DEFAULT_WORKSPACE_ID)),
         new Date().toISOString()
       );
+    const migrated = this.loadState();
+    this.database
+      .prepare(
+        "UPDATE app_state SET state = ?, updated_at = ? WHERE workspace_id = ?"
+      )
+      .run(
+        JSON.stringify(migrated),
+        new Date().toISOString(),
+        migrated.workspace.id
+      );
   }
 
   private loadState(): AppState {
@@ -92,7 +103,7 @@ export class SqliteStore implements StateStore {
     if (!row?.state) {
       throw new Error("SQLite Workspace state is not initialized");
     }
-    return JSON.parse(row.state) as AppState;
+    return migrateAppState(JSON.parse(row.state));
   }
 
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {

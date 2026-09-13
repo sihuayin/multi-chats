@@ -645,7 +645,8 @@ describe("ConversationRun", () => {
       artifacts: current.artifacts.map((artifact) => ({
         type: artifact.type,
         name: artifact.name,
-        taskId: artifact.taskId
+        ownerType: artifact.ownerType,
+        ownerId: artifact.ownerId
       })),
       actions:
         current.tasks
@@ -654,9 +655,24 @@ describe("ConversationRun", () => {
           .map((entry) => entry.actorId) ?? []
     }));
     expect(persisted.artifacts).toEqual([
-      { type: "text", name: "Notes", taskId: task.id },
-      { type: "markdown", name: "Brief", taskId: task.id },
-      { type: "json", name: "Metrics", taskId: task.id }
+      {
+        type: "text",
+        name: "Notes",
+        ownerType: "task",
+        ownerId: task.id
+      },
+      {
+        type: "markdown",
+        name: "Brief",
+        ownerType: "task",
+        ownerId: task.id
+      },
+      {
+        type: "json",
+        name: "Metrics",
+        ownerType: "task",
+        ownerId: task.id
+      }
     ]);
     expect(persisted.actions).toEqual([
       "20000000-0000-4000-8000-000000000001",

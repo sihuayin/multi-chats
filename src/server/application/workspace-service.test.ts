@@ -3,12 +3,31 @@ import { WorkspaceService } from "@/server/application/workspace-service";
 import { AesCredentialCipher } from "@/server/security/credential-cipher";
 import { MemoryStore } from "@/server/store/memory-store";
 import {
+  createFixtureDiscussion,
   createFixtureState,
   noopProviderRegistry,
   TEST_KEY
 } from "@/server/test-support/fixtures";
 
 describe("Workspace Configuration", () => {
+  it("exposes Discussions in the Workspace view", async () => {
+    const state = createFixtureState();
+    const discussion = createFixtureDiscussion({
+      workspaceId: state.workspace.id,
+      conversationId: state.conversations[0].id
+    });
+    state.discussions.push(discussion);
+    const service = new WorkspaceService(
+      new MemoryStore(state),
+      new AesCredentialCipher(TEST_KEY),
+      noopProviderRegistry
+    );
+
+    expect((await service.getWorkspaceView()).discussions).toEqual([
+      discussion
+    ]);
+  });
+
   it("moves Tasks through employee review to user completion", async () => {
     const service = new WorkspaceService(
       new MemoryStore(createFixtureState()),
@@ -197,7 +216,11 @@ describe("Workspace Configuration", () => {
       "markdown",
       "json"
     ]);
-    expect([text.taskId, markdown.taskId, json.taskId]).toEqual([
+    expect([
+      text.ownerId,
+      markdown.ownerId,
+      json.ownerId
+    ]).toEqual([
       task.id,
       task.id,
       task.id
@@ -214,7 +237,8 @@ describe("Workspace Configuration", () => {
     );
     expect(updated).toMatchObject({
       id: markdown.id,
-      taskId: task.id,
+      ownerType: "task",
+      ownerId: task.id,
       name: "Updated brief",
       content: "# Updated findings",
       type: "markdown"

@@ -72,6 +72,7 @@ export class WorkspaceService {
       runEvents: state.runEvents,
       tasks: state.tasks,
       artifacts: state.artifacts,
+      discussions: state.discussions,
       approvals: state.approvals
     }));
   }

@@ -437,7 +437,7 @@ export function ChatWorkspace() {
     setBusy(true);
     try {
       await apiRequest(
-        `/api/tasks/${artifact.taskId}/artifacts/${artifact.id}`,
+        `/api/tasks/${artifact.ownerId}/artifacts/${artifact.id}`,
         {
           method: "PATCH",
           body: JSON.stringify({ name, content })
@@ -744,7 +744,8 @@ export function ChatWorkspace() {
               ? "waiting_approval"
               : task.status;
             const artifacts = (data?.artifacts ?? []).filter(
-              (artifact) => artifact.taskId === task.id
+              (artifact) =>
+                artifact.ownerType === "task" && artifact.ownerId === task.id
             );
             return (
               <article key={task.id} className="task-card">

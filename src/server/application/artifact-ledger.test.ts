@@ -57,7 +57,8 @@ describe("Artifact Ledger", () => {
 
     expect(updated).toMatchObject({
       id: artifact.id,
-      taskId: task.id,
+      ownerType: "task",
+      ownerId: task.id,
       type: "markdown",
       name: "Final brief",
       content: "# Final"

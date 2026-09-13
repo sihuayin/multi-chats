@@ -8,6 +8,10 @@ import {
 } from "@/server/application/backup-service";
 import { createInitialState } from "@/server/store/initial-state";
 import { SqliteStore } from "@/server/store/sqlite-store";
+import {
+  createFixtureDiscussion,
+  createFixtureState
+} from "@/server/test-support/fixtures";
 
 const directories: string[] = [];
 
@@ -32,6 +36,21 @@ describe("Workspace backup and restore", () => {
         createdAt: state.workspace.createdAt,
         updatedAt: state.workspace.updatedAt
       });
+      const discussion = createFixtureDiscussion({
+        workspaceId: state.workspace.id
+      });
+      state.discussions.push(discussion);
+      state.artifacts.push({
+        id: "artifact-discussion",
+        workspaceId: state.workspace.id,
+        ownerType: "discussion",
+        ownerId: discussion.id,
+        type: "json",
+        name: "Discussion Brief",
+        content: JSON.stringify({ recommendation: "Keep the state document." }),
+        createdAt: state.workspace.createdAt,
+        updatedAt: state.workspace.updatedAt
+      });
     });
     const backup = await createWorkspaceBackup(source);
     await source.close();
@@ -43,6 +62,16 @@ describe("Workspace backup and restore", () => {
     );
     expect(await target.read((state) => state.groups)).toContainEqual(
       expect.objectContaining({ id: "group-backup", name: "Backup Group" })
+    );
+    expect(await target.read((state) => state.discussions)).toContainEqual(
+      expect.objectContaining({ id: "70000000-0000-4000-8000-000000000001" })
+    );
+    expect(await target.read((state) => state.artifacts)).toContainEqual(
+      expect.objectContaining({
+        id: "artifact-discussion",
+        ownerType: "discussion",
+        ownerId: "70000000-0000-4000-8000-000000000001"
+      })
     );
     await target.close();
   });
@@ -79,7 +108,8 @@ describe("Workspace backup and restore", () => {
           {
             id: "artifact-invalid",
             workspaceId: valid.workspace.id,
-            taskId: "task-invalid",
+            ownerType: "task",
+            ownerId: "task-invalid",
             type: "binary",
             name: "Binary",
             content: "AA==",
@@ -107,7 +137,8 @@ describe("Workspace backup and restore", () => {
           {
             id: "artifact-dangling",
             workspaceId: valid.workspace.id,
-            taskId: "missing-task",
+            ownerType: "task",
+            ownerId: "missing-task",
             type: "text",
             name: "Dangling",
             content: "Missing Task",
@@ -127,6 +158,42 @@ describe("Workspace backup and restore", () => {
             args: {},
             status: "pending",
             createdAt: valid.workspace.createdAt
+          }
+        ]
+      }),
+      JSON.stringify({
+        ...valid,
+        discussions: [
+          {
+            ...createFixtureDiscussion({
+              workspaceId: valid.workspace.id
+            }),
+            status: "unknown"
+          }
+        ]
+      }),
+      JSON.stringify({
+        ...valid,
+        artifacts: [
+          {
+            id: "artifact-missing-discussion",
+            workspaceId: valid.workspace.id,
+            ownerType: "discussion",
+            ownerId: "missing-discussion",
+            type: "text",
+            name: "Dangling Discussion Artifact",
+            content: "Missing Discussion",
+            createdAt: valid.workspace.createdAt,
+            updatedAt: valid.workspace.updatedAt
+          }
+        ]
+      }),
+      JSON.stringify({
+        ...createFixtureState(),
+        discussions: [
+          {
+            ...createFixtureDiscussion(),
+            language: "fr"
           }
         ]
       })

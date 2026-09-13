@@ -53,7 +53,8 @@ export function createTaskArtifact(
   const artifact: Artifact = {
     id: crypto.randomUUID(),
     workspaceId: state.workspace.id,
-    taskId: task.id,
+    ownerType: "task",
+    ownerId: task.id,
     ...parsed,
     createdAt: timestamp,
     updatedAt: timestamp
@@ -80,7 +81,10 @@ export function updateTaskArtifact(
   const parsed = artifactPatchSchema.parse(input);
   const task = findTask(state, taskId);
   const artifact = state.artifacts.find(
-    (item) => item.id === artifactId && item.taskId === task.id
+    (item) =>
+      item.id === artifactId &&
+      item.ownerType === "task" &&
+      item.ownerId === task.id
   );
   if (!artifact) {
     throw new ApiError(404, "Artifact not found", "not_found");
