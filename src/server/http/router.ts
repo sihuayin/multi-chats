@@ -240,6 +240,19 @@ async function streamDiscussionEvents(
   });
 }
 
+async function processDiscussionInBackground(
+  runs: ReturnType<typeof getServices>["runs"],
+  discussions: ReturnType<typeof getServices>["discussions"],
+  discussionId: string
+): Promise<void> {
+  for (let step = 0; step < 10; step += 1) {
+    await discussions.reconcileDiscussions();
+    const view = await discussions.getDiscussionView(discussionId);
+    if (!view.activeRun) return;
+    await runs.processRun(view.activeRun.id);
+  }
+}
+
 async function handleApiRoute(
   request: Request,
   segments: string[],
@@ -450,6 +463,9 @@ async function handleApiRoute(
               id,
               discussionStopSchema.parse(rawInput)
             );
+          } else if (child === "extend") {
+            emptyCommandSchema.parse(rawInput);
+            await discussions.extendDiscussion(id);
           } else {
             return json(
               { error: "Route not found", code: "not_found" },
@@ -458,12 +474,16 @@ async function handleApiRoute(
           }
           const view = await discussions.getDiscussionView(id);
           if (view.activeRun && !process.env.DATABASE_URL) {
-            void runs.processRun(view.activeRun.id);
+            void processDiscussionInBackground(
+              runs,
+              discussions,
+              id
+            );
           }
           const status =
             child === "confirm"
               ? 201
-              : ["start", "retry", "synthesize"].includes(
+              : ["start", "retry", "synthesize", "extend"].includes(
                     child
                   )
                 ? 202

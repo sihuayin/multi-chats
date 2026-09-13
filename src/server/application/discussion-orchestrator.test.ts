@@ -312,7 +312,7 @@ describe("DiscussionOrchestrator", () => {
 
     expect(converged.status).toBe("running");
     expect(converged.rounds.at(-1)).toMatchObject({
-      roundNumber: 6,
+      roundNumber: 4,
       phase: "synthesis",
       status: "running"
     });

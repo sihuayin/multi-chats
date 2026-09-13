@@ -19,6 +19,7 @@ import {
   hasDiscussionConverged,
   latestTurnByEmployee,
   MAX_DISCUSSION_CONTENT_ROUNDS,
+  nextDiscussionRoundNumber,
   phaseContext,
   phasePurpose,
   phaseRoundId
@@ -376,10 +377,10 @@ export class DiscussionOrchestrator {
       const round: DiscussionRound = {
         id: phaseRoundId(
           discussion.id,
-          usedContentRounds + 1,
+          nextDiscussionRoundNumber(discussion.rounds),
           "cross_response"
         ),
-        roundNumber: usedContentRounds + 1,
+        roundNumber: nextDiscussionRoundNumber(discussion.rounds),
         phase: "cross_response",
         status: "pending",
         participantSnapshot: structuredClone(discussion.participants),
@@ -387,7 +388,8 @@ export class DiscussionOrchestrator {
         createdAt: timestamp
       };
       discussion.rounds.push(round);
-      discussion.currentRound = round.roundNumber;
+      discussion.currentRound = usedContentRounds;
+      discussion.currentRound += 1;
       discussion.status = "running";
       discussion.updatedAt = timestamp;
       appendDiscussionEvent(
@@ -946,10 +948,10 @@ export class DiscussionOrchestrator {
         round = {
           id: phaseRoundId(
             discussion.id,
-            discussion.maxRounds + 1,
+            nextDiscussionRoundNumber(discussion.rounds),
             "synthesis"
           ),
-          roundNumber: discussion.maxRounds + 1,
+          roundNumber: nextDiscussionRoundNumber(discussion.rounds),
           phase: "synthesis",
           status: "pending",
           participantSnapshot: structuredClone(discussion.participants),
@@ -1311,7 +1313,9 @@ export class DiscussionOrchestrator {
       });
       discussion.currentRound = Math.max(
         discussion.currentRound,
-        phase === "synthesis" ? discussion.currentRound : roundNumber
+        phase === "synthesis"
+          ? discussion.currentRound
+          : contentRounds(discussion.rounds).length
       );
       discussion.updatedAt = timestamp;
       state.workspace.updatedAt = timestamp;
@@ -1496,7 +1500,7 @@ export class DiscussionOrchestrator {
     }
     await this.preparePhase(
       discussionId,
-      discussion.maxRounds + 1,
+      nextDiscussionRoundNumber(discussion.rounds),
       "synthesis"
     );
   }
@@ -1505,7 +1509,7 @@ export class DiscussionOrchestrator {
     discussionId: string,
     round: DiscussionRound
   ): Promise<void> {
-    const maxRounds = await this.store.update((state) => {
+    await this.store.update((state) => {
       const discussion = discussionById(state, discussionId);
       appendDiscussionEvent(
         discussion,
@@ -1517,11 +1521,14 @@ export class DiscussionOrchestrator {
         },
         this.eventFactory
       );
-      return discussion.maxRounds;
     });
     await this.preparePhase(
       discussionId,
-      maxRounds + 1,
+      nextDiscussionRoundNumber(
+        (
+          await this.getDiscussion(discussionId)
+        ).rounds
+      ),
       "synthesis"
     );
   }
@@ -1530,7 +1537,7 @@ export class DiscussionOrchestrator {
     discussionId: string,
     round: DiscussionRound
   ): Promise<void> {
-    const maxRounds = await this.store.update((state) => {
+    await this.store.update((state) => {
       const discussion = discussionById(state, discussionId);
       appendDiscussionEvent(
         discussion,
@@ -1546,11 +1553,14 @@ export class DiscussionOrchestrator {
         },
         this.eventFactory
       );
-      return discussion.maxRounds;
     });
     await this.preparePhase(
       discussionId,
-      maxRounds + 1,
+      nextDiscussionRoundNumber(
+        (
+          await this.getDiscussion(discussionId)
+        ).rounds
+      ),
       "synthesis"
     );
   }

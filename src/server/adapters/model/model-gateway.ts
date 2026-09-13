@@ -93,6 +93,79 @@ export class FakeModelGateway implements ModelGateway {
       .split("\n")[0]
       .replace("You are ", "")
       .replace(/\.$/, "");
+    if (request.systemPrompt.includes("Profile version: discussion-prompts.v1")) {
+      const phase =
+        request.systemPrompt.match(/^Phase: (\w+)\./m)?.[1] ??
+        "positions";
+      const discussionId =
+        request.prompt.match(/^Discussion ID: (.+)$/m)?.[1] ??
+        "fake-discussion";
+      const mode =
+        request.systemPrompt.match(/^Mode: (\w+)\./m)?.[1] ??
+        "problem";
+      const title =
+        request.prompt.match(/^Discussion: (.+)$/m)?.[1] ??
+        "Fake Discussion";
+      const response =
+        phase === "synthesis"
+          ? {
+              schemaVersion: 1,
+              promptProfileVersion: "discussion-prompts.v1",
+              discussionId,
+              mode,
+              title,
+              problem: {
+                statement: title,
+                goals: ["Reach a decision"],
+                nonGoals: []
+              },
+              context: "Deterministic fake Discussion context.",
+              facts: [],
+              constraints: [],
+              assumptions: [],
+              disagreements: [],
+              options: [
+                {
+                  id: "recommended",
+                  title: "Recommended option",
+                  summary: "Proceed with the recommended option.",
+                  benefits: ["Clear next step"],
+                  costs: [],
+                  risks: []
+                }
+              ],
+              recommendation: {
+                optionId: "recommended",
+                rationale: "It is the deterministic test recommendation.",
+                confidence: "high"
+              },
+              actions: [],
+              openQuestions: []
+            }
+          : {
+              summary: `${employee} ${phase} response`,
+              claims: [
+                {
+                  statement: `${phase} produced a deterministic claim`,
+                  confidence: "high"
+                }
+              ],
+              assumptions: [],
+              risks: [],
+              openQuestions: [],
+              ...(phase === "cross_response"
+                ? {
+                    agreements: [],
+                    disagreements: [],
+                    corrections: []
+                  }
+                : {})
+            };
+      const text = JSON.stringify(response);
+      yield { type: "text_delta", delta: text };
+      yield { type: "text_completed", text };
+      return;
+    }
     const text = `${employee} reviewed the request and prepared a structured response.`;
     for (const delta of text.match(/.{1,18}/g) ?? [text]) {
       if (request.signal?.aborted) throw new Error("aborted");

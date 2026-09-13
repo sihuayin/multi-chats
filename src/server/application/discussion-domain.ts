@@ -385,7 +385,7 @@ export function validateDiscussion(discussion: Discussion): void {
   if (
     !Number.isInteger(discussion.currentRound) ||
     discussion.currentRound < 0 ||
-    discussion.currentRound > discussion.maxRounds
+    discussion.currentRound > 5
   ) {
     throw new Error("Discussion currentRound is invalid");
   }

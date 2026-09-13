@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test.setTimeout(90_000);
+test.setTimeout(240_000);
 
 test("configures an Employee Group and completes a mentioned Run", async ({
   page
@@ -352,6 +352,66 @@ test("configures an Employee Group and completes a mentioned Run", async ({
     })
   ).toBeVisible();
 
+  await page.getByRole("tab", { name: "Discussion" }).click();
+  await page
+    .getByLabel("Discussion conversation")
+    .selectOption({ label: `${editedGroupName} Conversation` });
+  await page.getByLabel("Topic").fill(`Choose the launch approach ${suffix}`);
+  await page.getByLabel("Mode").selectOption("solution");
+  await page.getByLabel("Discussion language").selectOption("en");
+  await page.getByLabel("Content rounds").fill("3");
+  await page
+    .getByLabel(`${employeeName} role`)
+    .selectOption("analyst");
+  await page
+    .getByLabel(`${secondEmployeeName} role`)
+    .selectOption("facilitator");
+  await page
+    .getByLabel("Facilitator")
+    .selectOption({ label: secondEmployeeName });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth
+    )
+  ).toBe(true);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.getByRole("button", { name: "Create Discussion" }).click();
+  await expect(
+    page.getByRole("heading", { name: `Choose the launch approach ${suffix}` })
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Start" }).click();
+  await expect(page.getByRole("button", { name: "Stop" })).toBeVisible();
+  await expect(
+    page.getByText("Recommended option", { exact: true })
+  ).toBeVisible({ timeout: 20_000 });
+  await page.getByRole("button", { name: "Extend" }).click();
+  await expect(page.getByText("Revision 2")).toBeVisible({
+    timeout: 20_000
+  });
+  await expect(
+    page.getByText("Recommended option", { exact: true })
+  ).toBeVisible();
+  await page
+    .getByPlaceholder("Task title override")
+    .fill(`Ship the recommendation ${suffix}`);
+  await page
+    .getByRole("button", { name: "Confirm and create Task" })
+    .click();
+  await expect(page.getByText("Task created")).toBeVisible({
+    timeout: 10_000
+  });
+  await expect(
+    page.getByText(`Ship the recommendation ${suffix}`)
+  ).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth
+    )
+  ).toBe(true);
+  await page.setViewportSize({ width: 1280, height: 900 });
+
   await page.goto("/employees");
   const employeeCard = page.locator(".list-card").filter({ hasText: employeeName });
   const editedEmployeeName = `${employeeName} Edited`;
@@ -380,6 +440,7 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   await page.locator(".conversation-item").last().click();
   await expect(page.locator('.member-state[title="disabled"]')).toHaveCount(1);
 
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByRole("button", { name: "中文" }).click();
   await expect(page.getByRole("link", { name: "员工" })).toBeVisible();
   await expect(

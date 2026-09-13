@@ -17,6 +17,12 @@ export function phaseRoundId(
   return `${discussionId}:round:${roundNumber}:${phase}`;
 }
 
+export function nextDiscussionRoundNumber(
+  rounds: DiscussionRound[]
+): number {
+  return Math.max(0, ...rounds.map((round) => round.roundNumber)) + 1;
+}
+
 export function phasePurpose(round: DiscussionRound): string {
   if (round.phase === "positions") {
     return "Establish each Participant's initial position, evidence, assumptions, risks, and open questions.";

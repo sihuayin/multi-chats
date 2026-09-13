@@ -13,7 +13,7 @@ export default defineConfig({
       "DATABASE_URL= SQLITE_PATH=.data/e2e.sqlite MODEL_MODE=fake MODEL_STREAM_DELAY_MS=150 npm run dev",
     url: "http://localhost:3000/api/health",
     reuseExistingServer: false,
-    timeout: 180_000
+    timeout: 300_000
   },
   projects: [
     {

@@ -1,0 +1,47 @@
+.shell {
+  min-width: 0;
+}
+
+.switch {
+  position: sticky;
+  top: 12px;
+  z-index: 20;
+  display: flex;
+  width: fit-content;
+  gap: 3px;
+  margin: 12px auto;
+  padding: 4px;
+  background: rgb(255 255 255 / 92%);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(10px);
+}
+
+.switch button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 10px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.switch button.active {
+  color: white;
+  background: var(--accent);
+}
+
+@media (max-width: 760px) {
+  .switch {
+    position: sticky;
+    top: 8px;
+    margin: 8px 8px -50px auto;
+  }
+}
