@@ -45,7 +45,7 @@ The analytical emphasis of a Discussion: requirements, problem, solution, or rev
 _Avoid_: Template
 
 **Round**:
-A bounded stage of a Discussion executed as one Run.
+A bounded phase-specific stage whose current attempt is executed as one Run; retry creates a new Run without rewriting history.
 _Avoid_: Iteration
 
 **Round Phase**:
@@ -59,6 +59,10 @@ _Avoid_: Response
 **Discussion Brief**:
 The canonical versioned JSON Artifact produced by a Discussion, revised immutably and confirmed by the user.
 _Avoid_: Report, summary
+
+**Discussion Event**:
+An ordered Discussion-owned fact about phase, interruption, review, convergence, or completion.
+_Avoid_: Run event
 
 **Message**:
 An ordered public communication in a conversation, authored by the user, an employee, or the system.

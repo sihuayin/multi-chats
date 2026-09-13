@@ -1,4 +1,5 @@
 import { ConversationRunService } from "@/server/application/conversation-run-service";
+import { DiscussionOrchestrator } from "@/server/application/discussion-orchestrator";
 import {
   createModelGateway
 } from "@/server/adapters/model/model-gateway";
@@ -13,7 +14,9 @@ async function main(): Promise<void> {
     createCredentialCipher(),
     createModelGateway()
   );
+  const discussions = new DiscussionOrchestrator(store, runs);
   await runs.recoverInterruptedRuns();
+  await discussions.reconcileDiscussions();
 
   const interval = Number(process.env.WORKER_POLL_INTERVAL_MS ?? 1_000);
   let stopping = false;
@@ -42,6 +45,7 @@ async function main(): Promise<void> {
   });
   while (!stopping) {
     const processed = await runs.processNextQueuedRun();
+    await discussions.reconcileDiscussions();
     if (!processed) {
       await new Promise((resolve) => setTimeout(resolve, interval));
     }

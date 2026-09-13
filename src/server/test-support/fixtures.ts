@@ -118,6 +118,7 @@ export function createFixtureDiscussion(
     maxRounds: 3,
     currentRound: 1,
     participants,
+    events: [],
     rounds: [
       {
         id: `${id}-round-1`,

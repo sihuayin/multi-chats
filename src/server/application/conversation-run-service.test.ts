@@ -37,6 +37,19 @@ describe("ConversationRun", () => {
       new AesCredentialCipher(TEST_KEY),
       engine
     );
+    await store.update((current) => {
+      current.messages.push({
+        id: "unrelated-message",
+        workspaceId: current.workspace.id,
+        conversationId: "30000000-0000-4000-8000-000000000001",
+        authorType: "user",
+        authorId: "user",
+        content: "UNRELATED CONVERSATION CONTEXT",
+        status: "complete",
+        createdAt: current.workspace.createdAt,
+        updatedAt: current.workspace.updatedAt
+      });
+    });
 
     const started = await runs.startPhaseRun(
       "30000000-0000-4000-8000-000000000001",
@@ -64,7 +77,12 @@ describe("ConversationRun", () => {
       await store.read((current) =>
         current.messages.filter((message) => message.authorType === "user")
       )
-    ).toEqual([]);
+    ).toEqual([
+      expect.objectContaining({
+        authorId: "user",
+        content: "UNRELATED CONVERSATION CONTEXT"
+      })
+    ]);
 
     await runs.processRun(started.run.id);
 
@@ -74,6 +92,9 @@ describe("ConversationRun", () => {
     );
     expect(engine.requests[0].prompt).toContain(
       "Challenge the assumptions from the earlier phase."
+    );
+    expect(engine.requests[0].prompt).not.toContain(
+      "UNRELATED CONVERSATION CONTEXT"
     );
     expect(engine.requests[1].prompt).toContain("Alice: response");
 

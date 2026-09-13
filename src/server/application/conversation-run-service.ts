@@ -1,6 +1,9 @@
 import type {
   AppState,
   Approval,
+  Discussion,
+  DiscussionRound,
+  DiscussionTurn,
   Employee,
   Message,
   Run,
@@ -103,6 +106,24 @@ function transcriptFor(state: AppState, conversationId: string): string {
             ? "System"
             : state.employees.find((employee) => employee.id === message.authorId)?.name ??
               "Employee";
+      return `${author}: ${message.content}`;
+    })
+    .join("\n\n");
+}
+
+function phaseTranscriptFor(state: AppState, runId: string): string {
+  return state.messages
+    .filter(
+      (message) =>
+        message.runId === runId && message.status === "complete"
+    )
+    .map((message) => {
+      const author =
+        message.authorType === "system"
+          ? "System"
+          : state.employees.find(
+              (employee) => employee.id === message.authorId
+            )?.name ?? "Employee";
       return `${author}: ${message.content}`;
     })
     .join("\n\n");
@@ -386,7 +407,17 @@ export class ConversationRunService {
   async startPhaseRun(
     conversationId: string,
     input: unknown,
-    options: { requestId?: string } = {}
+    options: {
+      requestId?: string;
+      retry?: boolean;
+      preserveSnapshot?: boolean;
+      onPhaseStarted?: (
+        state: AppState,
+        discussion: Discussion,
+        round: DiscussionRound,
+        run: Run
+      ) => void;
+    } = {}
   ): Promise<StartPhaseRunResult> {
     const parsed = phaseRunInputSchema.parse(input);
     const result = await this.store.update((state) => {
@@ -417,7 +448,13 @@ export class ConversationRunService {
       const existingRun = round.runId
         ? state.runs.find((item) => item.id === round.runId)
         : undefined;
-      if (existingRun) {
+      if (
+        existingRun &&
+        (!options.retry ||
+          !["completed", "failed", "cancelled", "interrupted"].includes(
+            existingRun.status
+          ))
+      ) {
         throw new ApiError(
           409,
           "This Discussion Round already has a Run",
@@ -501,16 +538,46 @@ export class ConversationRunService {
       }
 
       const timestamp = now();
-      round.participantSnapshot = structuredClone(participants);
-      round.turns = participants.map((participant) => ({
+      const requestedActiveIds = new Set(
+        round.activeParticipantIds ??
+          participants.map((participant) => participant.id)
+      );
+      const activeParticipants = (
+        round.phase === "synthesis"
+          ? participants.filter(
+              (participant) => participant.role === "facilitator"
+            )
+          : participants
+      ).filter((participant) => requestedActiveIds.has(participant.id));
+      if (activeParticipants.length === 0) {
+        throw new ApiError(
+          409,
+          "Discussion phase has no active Participants",
+          "discussion_invalid_participants"
+        );
+      }
+      const attempt = options.retry
+        ? Math.max(
+            0,
+            ...round.turns.map((turn) => turn.attempt ?? 1)
+          ) + 1
+        : 1;
+      if (!options.preserveSnapshot) {
+        round.participantSnapshot = structuredClone(participants);
+      }
+      const turns: DiscussionTurn[] = activeParticipants.map((participant) => ({
         id: crypto.randomUUID(),
         employeeId: participant.employeeId,
         role: participant.role,
         order: participant.order,
-        status: "pending",
+        attempt,
+        status: "pending" as const,
         createdAt: timestamp
       }));
-      round.activeParticipantIds = participants.map(
+      round.turns = options.retry
+        ? [...round.turns, ...turns]
+        : turns;
+      round.activeParticipantIds = activeParticipants.map(
         (participant) => participant.id
       );
       round.status = "running";
@@ -543,7 +610,7 @@ export class ConversationRunService {
         conversationId,
         triggerMessage: message,
         requestId: options.requestId,
-        memberSnapshot: participants.map(
+        memberSnapshot: activeParticipants.map(
           (participant) => participant.employeeId
         ),
         discussionId: discussion.id,
@@ -557,6 +624,7 @@ export class ConversationRunService {
         }
       });
       round.runId = run.id;
+      options.onPhaseStarted?.(state, discussion, round, run);
       return { message, run };
     });
     logger.info("run.started", {
@@ -807,7 +875,14 @@ export class ConversationRunService {
         (item) => item.employeeId === employeeId
       );
       const turn = round?.turns.find(
-        (item) => item.employeeId === employeeId
+        (item) =>
+          item.employeeId === employeeId &&
+          (item.attempt ?? 1) ===
+            Math.max(
+              ...round.turns
+                .filter((candidate) => candidate.employeeId === employeeId)
+                .map((candidate) => candidate.attempt ?? 1)
+            )
       );
       if (run.discussionId && (!discussion || !round || !participant || !turn)) {
         throw new Error("Discussion phase context is incomplete");
@@ -826,6 +901,7 @@ export class ConversationRunService {
         encryptedCredential: credential.encryptedCredential,
         trigger: structuredClone(trigger),
         transcript: transcriptFor(state, run.conversationId),
+        phaseTranscript: phaseTranscriptFor(state, run.id),
         taskContext: taskContext(state, run.conversationId, employeeId),
         tools: toolDefinitionsForEmployee(state, employee),
         skills: structuredClone(skills),
@@ -942,8 +1018,12 @@ export class ConversationRunService {
     ].join("\n\n");
 
     const prompt = [
-      `Conversation transcript:\n${context.transcript}`,
-      `Active task context:\n${context.taskContext}`,
+      context.phaseContext
+        ? `Discussion phase transcript:\n${context.phaseTranscript}`
+        : `Conversation transcript:\n${context.transcript}`,
+      context.phaseContext
+        ? ""
+        : `Active task context:\n${context.taskContext}`,
       context.phaseContext
         ? `Discussion phase brief:\n${context.trigger.content}`
         : `Current user request:\n${context.run.memberSnapshot.length > 1 ? "Respond as your assigned role and account for earlier responses in this Run." : ""}`,

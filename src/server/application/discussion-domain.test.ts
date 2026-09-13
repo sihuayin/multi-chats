@@ -132,8 +132,15 @@ describe("Discussion domain invariants", () => {
     duplicateTurn.rounds[0].turns[1].employeeId =
       duplicateTurn.rounds[0].turns[0].employeeId;
     expect(() => validateDiscussion(duplicateTurn)).toThrow(
-      "Discussion turn Employees must be unique"
+      "Discussion Turn Employees must be unique within an attempt"
     );
+
+    const retryAttempt = createFixtureDiscussion();
+    const retryTurn = structuredClone(retryAttempt.rounds[0].turns[0]);
+    retryTurn.id = `${retryTurn.id}-retry`;
+    retryTurn.attempt = 2;
+    retryAttempt.rounds[0].turns.push(retryTurn);
+    expect(() => validateDiscussion(retryAttempt)).not.toThrow();
 
     const duplicateParticipant = createFixtureDiscussion();
     duplicateParticipant.participants[1].id =

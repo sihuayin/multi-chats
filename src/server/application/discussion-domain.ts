@@ -1,6 +1,7 @@
 import type {
   Artifact,
   Discussion,
+  DiscussionEvent,
   DiscussionMode,
   DiscussionParticipant,
   DiscussionRole,
@@ -14,6 +15,7 @@ import type {
   Message,
   Run
 } from "@/server/domain/types";
+import { DISCUSSION_EVENT_TYPES } from "@/server/domain/types";
 
 const modes = new Set<DiscussionMode>([
   "requirements",
@@ -64,6 +66,9 @@ const activeStatuses = new Set<DiscussionStatus>([
   "review",
   "interrupted"
 ]);
+const discussionEventTypes = new Set<DiscussionEvent["type"]>(
+  DISCUSSION_EVENT_TYPES
+);
 
 function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
@@ -182,6 +187,8 @@ function validateTurn(
     !roles.has(turn.role) ||
     !Number.isInteger(turn.order) ||
     turn.order < 1 ||
+    (turn.attempt !== undefined &&
+      (!Number.isInteger(turn.attempt) || turn.attempt < 1)) ||
     !isoDate(turn.createdAt) ||
     (turn.startedAt !== undefined && !isoDate(turn.startedAt)) ||
     (turn.completedAt !== undefined && !isoDate(turn.completedAt)) ||
@@ -206,7 +213,10 @@ function validateTurn(
   if (activeParticipantIds && !activeParticipantIds.has(participant.id)) {
     throw new Error("Discussion turn participant is not active in the round");
   }
-  if (participant.role !== turn.role || participant.order !== turn.order) {
+  if (
+    (turn.attempt ?? 1) === 1 &&
+    (participant.role !== turn.role || participant.order !== turn.order)
+  ) {
     throw new Error(
       "Discussion turn role and order must match the participant snapshot"
     );
@@ -277,16 +287,27 @@ function validateRound(round: DiscussionRound): void {
     throw new Error("Discussion turn IDs must be unique");
   }
   if (
-    new Set(round.turns.map((turn) => turn.employeeId)).size !==
+    new Set(
+      round.turns.map(
+        (turn) => `${turn.employeeId}:${turn.attempt ?? 1}`
+      )
+    ).size !==
     round.turns.length
   ) {
-    throw new Error("Discussion turn Employees must be unique");
+    throw new Error(
+      "Discussion Turn Employees must be unique within an attempt"
+    );
   }
-  if (
-    new Set(round.turns.map((turn) => turn.order)).size !==
-    round.turns.length
-  ) {
-    throw new Error("Discussion turn order must be unique");
+  const attempts = new Set(
+    round.turns.map((turn) => turn.attempt ?? 1)
+  );
+  for (const attempt of attempts) {
+    const turns = round.turns.filter(
+      (turn) => (turn.attempt ?? 1) === attempt
+    );
+    if (new Set(turns.map((turn) => turn.order)).size !== turns.length) {
+      throw new Error("Discussion turn order must be unique within an attempt");
+    }
   }
   round.turns.forEach((turn) =>
     validateTurn(turn, round.participantSnapshot, activeIds)
@@ -369,6 +390,35 @@ export function validateDiscussion(discussion: Discussion): void {
     throw new Error("Discussion round numbers must be unique");
   }
   discussion.rounds.forEach(validateRound);
+  if (discussion.events !== undefined) {
+    if (!Array.isArray(discussion.events)) {
+      throw new Error("Discussion events are invalid");
+    }
+    if (
+      new Set(discussion.events.map((event) => event.id)).size !==
+        discussion.events.length ||
+      new Set(discussion.events.map((event) => event.sequence)).size !==
+        discussion.events.length
+    ) {
+      throw new Error("Discussion event IDs and sequences must be unique");
+    }
+    for (const event of discussion.events) {
+      if (
+        !nonEmptyString(event.id) ||
+        event.workspaceId !== discussion.workspaceId ||
+        event.discussionId !== discussion.id ||
+        !Number.isInteger(event.sequence) ||
+        event.sequence < 1 ||
+        !discussionEventTypes.has(event.type) ||
+        !event.payload ||
+        typeof event.payload !== "object" ||
+        Array.isArray(event.payload) ||
+        !isoDate(event.createdAt)
+      ) {
+        throw new Error("Discussion event is invalid");
+      }
+    }
+  }
 }
 
 export function validateDiscussionReferences(input: {

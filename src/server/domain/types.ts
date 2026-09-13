@@ -265,11 +265,13 @@ export type DiscussionTurn = {
   employeeId: string;
   role: DiscussionRole;
   order: number;
+  attempt?: number;
   status: DiscussionTurnStatus;
   messageId?: string;
   content?: string;
   payload?: DiscussionTurnPayload;
   validationError?: string;
+  cancelReason?: string;
   createdAt: IsoDate;
   startedAt?: IsoDate;
   completedAt?: IsoDate;
@@ -289,6 +291,34 @@ export type DiscussionRound = {
   completedAt?: IsoDate;
 };
 
+export const DISCUSSION_EVENT_TYPES = [
+  "discussion_started",
+  "phase_started",
+  "phase_completed",
+  "phase_failed",
+  "discussion_interrupted",
+  "discussion_resumed",
+  "discussion_stopped",
+  "discussion_cancelled",
+  "discussion_converged",
+  "discussion_budget_exhausted",
+  "participant_skipped",
+  "facilitator_replaced",
+  "discussion_review_requested"
+] as const;
+
+export type DiscussionEventType = (typeof DISCUSSION_EVENT_TYPES)[number];
+
+export type DiscussionEvent = {
+  id: string;
+  workspaceId: string;
+  discussionId: string;
+  sequence: number;
+  type: DiscussionEventType;
+  payload: Record<string, unknown>;
+  createdAt: IsoDate;
+};
+
 export type Discussion = {
   id: string;
   workspaceId: string;
@@ -306,6 +336,7 @@ export type Discussion = {
   confirmedTaskId?: string;
   participants: DiscussionParticipant[];
   rounds: DiscussionRound[];
+  events?: DiscussionEvent[];
   createdAt: IsoDate;
   startedAt?: IsoDate;
   completedAt?: IsoDate;
