@@ -28,6 +28,34 @@ _Avoid_: Team
 A chat room with a specific member set, message history, and related tasks.
 _Avoid_: Channel, room, thread
 
+**Discussion**:
+A bounded multi-round analysis of a topic by a group of Employees that produces a Discussion Brief.
+_Avoid_: Meeting, debate
+
+**Discussion Participant**:
+An Employee's role and objective within a Discussion, distinct from the Employee itself.
+_Avoid_: Discussion member
+
+**Facilitator**:
+The Discussion Participant responsible for synthesis and the final Discussion Brief.
+_Avoid_: Moderator
+
+**Mode**:
+The analytical emphasis of a Discussion: requirements, problem, solution, or review.
+_Avoid_: Template
+
+**Round**:
+A bounded stage of a Discussion executed as one Run.
+_Avoid_: Iteration
+
+**Turn**:
+One Discussion Participant's contribution within a Round.
+_Avoid_: Response
+
+**Discussion Brief**:
+The structured result of a Discussion, revised immutably and confirmed by the user.
+_Avoid_: Report, summary
+
 **Message**:
 An ordered public communication in a conversation, authored by the user or an employee.
 _Avoid_: Post, event
