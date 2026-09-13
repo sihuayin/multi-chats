@@ -43,6 +43,31 @@ export const messageInputSchema = z.object({
   content: z.string().trim().min(1).max(20_000)
 });
 
+export const discussionParticipantInputSchema = z.object({
+  id: z.string().trim().min(1),
+  employeeId: z.string().trim().min(1),
+  role: z.enum([
+    "analyst",
+    "researcher",
+    "skeptic",
+    "designer",
+    "facilitator"
+  ]),
+  objective: z.string().trim().min(1).max(2000),
+  order: z.number().int().positive()
+});
+
+export const phaseRunInputSchema = z.object({
+  discussionId: z.string().trim().min(1),
+  roundId: z.string().trim().min(1),
+  participantSnapshot: z
+    .array(discussionParticipantInputSchema)
+    .min(2)
+    .max(8),
+  context: z.string().trim().min(1).max(20_000),
+  purpose: z.string().trim().min(1).max(4000)
+}).strict();
+
 export const taskInputSchema = z.object({
   title: z.string().trim().min(1).max(120),
   goal: z.string().trim().min(1).max(8000),

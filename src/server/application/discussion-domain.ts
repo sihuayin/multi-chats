@@ -140,6 +140,12 @@ function validateParticipantList(
   }
 }
 
+export function validateDiscussionParticipants(
+  participants: DiscussionParticipant[]
+): void {
+  validateParticipantList(participants);
+}
+
 function validateTurnPayload(payload: DiscussionTurnPayload): void {
   if (
     !nonEmptyString(payload.summary) ||

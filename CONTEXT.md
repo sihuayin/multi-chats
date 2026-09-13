@@ -61,7 +61,7 @@ The canonical versioned JSON Artifact produced by a Discussion, revised immutabl
 _Avoid_: Report, summary
 
 **Message**:
-An ordered public communication in a conversation, authored by the user or an employee.
+An ordered public communication in a conversation, authored by the user, an employee, or the system.
 _Avoid_: Post, event
 
 **Task**:

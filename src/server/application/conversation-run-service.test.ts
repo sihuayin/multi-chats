@@ -5,6 +5,7 @@ import {
 } from "@/server/application/conversation-run-service";
 import { AesCredentialCipher } from "@/server/security/credential-cipher";
 import {
+  createFixtureDiscussion,
   createFixtureState,
   noopProviderRegistry,
   RecordingModelGateway,
@@ -19,9 +20,220 @@ import type {
   ToolExecutionResult,
   ToolGateway
 } from "@/server/application/tool-gateway";
-import type { AppState, Approval } from "@/server/domain/types";
+import type {
+  AppState,
+  Approval,
+  DiscussionRound
+} from "@/server/domain/types";
 
 describe("ConversationRun", () => {
+  it("runs a Discussion phase in Participant order and links Turns to Messages", async () => {
+    const state = createFixtureState();
+    const { discussion, round } = addFixturePhase(state);
+    const store = new MemoryStore(state);
+    const engine = new RecordingModelGateway(() => ["response"]);
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      engine
+    );
+
+    const started = await runs.startPhaseRun(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        discussionId: discussion.id,
+        roundId: round.id,
+        participantSnapshot: [...round.participantSnapshot].reverse(),
+        context: "Alice established the initial position.",
+        purpose: "Challenge the assumptions from the earlier phase."
+      }
+    );
+
+    expect(started.run).toMatchObject({
+      discussionId: discussion.id,
+      discussionRound: round.roundNumber,
+      memberSnapshot: round.participantSnapshot.map(
+        (participant) => participant.employeeId
+      )
+    });
+    expect(started.message).toMatchObject({
+      authorType: "system",
+      discussionId: discussion.id
+    });
+    expect(
+      await store.read((current) =>
+        current.messages.filter((message) => message.authorType === "user")
+      )
+    ).toEqual([]);
+
+    await runs.processRun(started.run.id);
+
+    expect(engine.requests).toHaveLength(2);
+    expect(engine.requests[0].prompt).toContain(
+      "Alice established the initial position."
+    );
+    expect(engine.requests[0].prompt).toContain(
+      "Challenge the assumptions from the earlier phase."
+    );
+    expect(engine.requests[1].prompt).toContain("Alice: response");
+
+    const persisted = await store.read((current) => {
+      const currentDiscussion = current.discussions.find(
+        (item) => item.id === discussion.id
+      );
+      const currentRound = currentDiscussion?.rounds.find(
+        (item) => item.id === round.id
+      );
+      return {
+        messages: current.messages.filter(
+          (message) => message.discussionId === discussion.id
+        ),
+        turns: currentRound?.turns ?? []
+      };
+    });
+    expect(
+      persisted.messages.map((message) => [
+        message.authorType,
+        message.authorId,
+        message.discussionTurnId
+      ])
+    ).toEqual([
+      ["system", "system", undefined],
+      [
+        "employee",
+        round.participantSnapshot[0].employeeId,
+        persisted.turns[0].id
+      ],
+      [
+        "employee",
+        round.participantSnapshot[1].employeeId,
+        persisted.turns[1].id
+      ]
+    ]);
+    expect(persisted.turns).toMatchObject([
+      {
+        employeeId: round.participantSnapshot[0].employeeId,
+        status: "completed",
+        messageId: persisted.messages[1].id,
+        content: "response"
+      },
+      {
+        employeeId: round.participantSnapshot[1].employeeId,
+        status: "completed",
+        messageId: persisted.messages[2].id,
+        content: "response"
+      }
+    ]);
+
+    await expect(
+      runs.startPhaseRun(
+        "30000000-0000-4000-8000-000000000001",
+        {
+          discussionId: discussion.id,
+          roundId: round.id,
+          participantSnapshot: round.participantSnapshot,
+          context: "Alice established the initial position.",
+          purpose: "Challenge the assumptions from the earlier phase."
+        }
+      )
+    ).rejects.toMatchObject({ code: "phase_run_exists" });
+    expect(
+      await store.read((current) => ({
+        runIds: current.runs
+          .filter((run) => run.discussionRound === round.roundNumber)
+          .map((run) => run.id),
+        turns:
+          current.discussions
+            .find((item) => item.id === discussion.id)
+            ?.rounds.find((item) => item.id === round.id)?.turns ?? []
+      }))
+    ).toEqual({
+      runIds: [started.run.id],
+      turns: persisted.turns
+    });
+  });
+
+  it("preserves Run failure outcomes and settles the phase Turn", async () => {
+    const state = createFixtureState();
+    const { discussion, round } = addFixturePhase(state);
+    const store = new MemoryStore(state);
+    const gateway: ModelGateway = {
+      async *run() {
+        yield {
+          type: "error",
+          message: "phase model failed",
+          kind: "terminal"
+        };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway
+    );
+    const started = await runs.startPhaseRun(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        discussionId: discussion.id,
+        roundId: round.id,
+        participantSnapshot: round.participantSnapshot,
+        context: "No prior response is available.",
+        purpose: "Establish the initial positions."
+      }
+    );
+    const turnIds = await store.read(
+      (current) =>
+        current.discussions
+          .find((item) => item.id === discussion.id)
+          ?.rounds.find((item) => item.id === round.id)
+          ?.turns.map((turn) => turn.id) ?? []
+    );
+
+    const failed = await runs.processRun(started.run.id);
+
+    expect(failed).toMatchObject({
+      status: "failed",
+      error: "phase model failed"
+    });
+    const persisted = await store.read((current) => ({
+      messages: current.messages.filter(
+        (message) => message.discussionId === discussion.id
+      ),
+      turns:
+        current.discussions
+          .find((item) => item.id === discussion.id)
+          ?.rounds.find((item) => item.id === round.id)?.turns ?? []
+    }));
+    expect(persisted.messages.at(-1)).toMatchObject({
+      authorType: "employee",
+      authorId: round.participantSnapshot[0].employeeId,
+      discussionTurnId: turnIds[0],
+      status: "failed",
+      content: ""
+    });
+    expect(persisted.turns).toMatchObject([
+      {
+        id: turnIds[0],
+        status: "failed",
+        messageId: persisted.messages.at(-1)?.id,
+        validationError: "phase model failed"
+      },
+      {
+        id: turnIds[1],
+        status: "pending"
+      }
+    ]);
+    expect(
+      (await runs.listRunEvents(started.run.id)).map((event) => event.type)
+    ).toEqual(
+      expect.arrayContaining([
+        "model_error",
+        "employee_turn_failed",
+        "run_error"
+      ])
+    );
+  });
+
   it("stores a Message without starting a Run when no Employee is mentioned", async () => {
     const store = new MemoryStoreFixture();
     const engine = new RecordingModelGateway();
@@ -1358,6 +1570,26 @@ function addApprovalSkill(state: AppState, skillId: string): void {
     updatedAt: state.workspace.updatedAt
   });
   state.employees[0].skillIds.push(skillId);
+}
+
+function addFixturePhase(state: AppState) {
+  const discussion = createFixtureDiscussion({
+    workspaceId: state.workspace.id,
+    conversationId: state.conversations[0].id
+  });
+  discussion.status = "running";
+  const round: DiscussionRound = {
+    id: `${discussion.id}-round-2`,
+    roundNumber: 2,
+    phase: "cross_response",
+    status: "pending",
+    participantSnapshot: structuredClone(discussion.participants),
+    turns: [],
+    createdAt: state.workspace.createdAt
+  };
+  discussion.rounds.push(round);
+  state.discussions.push(discussion);
+  return { discussion, round };
 }
 
 async function waitForPendingApproval(
