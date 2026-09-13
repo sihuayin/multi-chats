@@ -13,7 +13,8 @@ import type {
   DiscussionTurnPayload,
   DiscussionTurnStatus,
   Message,
-  Run
+  Run,
+  Task
 } from "@/server/domain/types";
 import { DISCUSSION_EVENT_TYPES } from "@/server/domain/types";
 import { parseDiscussionBrief } from "@/server/application/discussion-brief";
@@ -442,6 +443,12 @@ export function validateDiscussionReferences(input: {
     Pick<Message, "id" | "discussionId" | "discussionTurnId">
   >;
   runs: Array<Pick<Run, "id" | "discussionId" | "discussionRound">>;
+  tasks: Array<
+    Pick<
+      Task,
+      "id" | "discussionId" | "confirmedBriefArtifactId"
+    >
+  >;
 }): void {
   const activeByConversation = new Map<string, string>();
   const turnIds = new Set<string>();
@@ -532,6 +539,44 @@ export function validateDiscussionReferences(input: {
       (!Number.isInteger(run.discussionRound) || run.discussionRound < 1)
     ) {
       throw new Error("Run discussionRound is invalid");
+    }
+  });
+
+  const tasksById = new Map(
+    input.tasks.map((task) => [task.id, task])
+  );
+  input.discussions.forEach((discussion) => {
+    if (!discussion.confirmedTaskId) return;
+    if (!discussion.confirmedBriefArtifactId) {
+      throw new Error("Discussion confirmed Brief revision is missing");
+    }
+    const task = tasksById.get(discussion.confirmedTaskId);
+    if (
+      !task ||
+      task.discussionId !== discussion.id ||
+      task.confirmedBriefArtifactId !==
+        discussion.confirmedBriefArtifactId
+    ) {
+      throw new Error("Discussion confirmed Task reference is invalid");
+    }
+  });
+  input.tasks.forEach((task) => {
+    const hasDiscussion = task.discussionId !== undefined;
+    const hasBrief = task.confirmedBriefArtifactId !== undefined;
+    if (hasDiscussion !== hasBrief) {
+      throw new Error("Task Discussion origin is incomplete");
+    }
+    if (!hasDiscussion || !hasBrief) return;
+    const discussion = input.discussions.find(
+      (item) => item.id === task.discussionId
+    );
+    if (
+      !discussion ||
+      discussion.confirmedTaskId !== task.id ||
+      discussion.confirmedBriefArtifactId !==
+        task.confirmedBriefArtifactId
+    ) {
+      throw new Error("Task Discussion origin is invalid");
     }
   });
 }

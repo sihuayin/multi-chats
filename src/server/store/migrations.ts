@@ -95,7 +95,8 @@ function validateCurrentState(state: Record<string, unknown>): void {
     discussions: state.discussions as never,
     artifacts: state.artifacts as never,
     messages: state.messages as never,
-    runs: state.runs as never
+    runs: state.runs as never,
+    tasks: state.tasks as never
   });
 }
 

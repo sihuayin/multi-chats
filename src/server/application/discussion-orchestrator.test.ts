@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ConversationRunService } from "@/server/application/conversation-run-service";
+import { createDiscussionBriefRevision } from "@/server/application/discussion-brief";
 import {
   DiscussionOrchestrator,
   hasDiscussionConverged
@@ -657,6 +658,146 @@ describe("DiscussionOrchestrator", () => {
     expect(interrupted.status).toBe("interrupted");
     expect(interrupted.latestBriefArtifactId).toBeUndefined();
     expect(await store.read((current) => current.artifacts)).toEqual([]);
+  });
+
+  it("confirms the latest Brief into one draft Task atomically", async () => {
+    const state = createFixtureState();
+    const discussion = createFixtureDiscussion({
+      workspaceId: state.workspace.id,
+      conversationId: state.conversations[0].id
+    });
+    discussion.status = "review";
+    discussion.sourceTaskId = "source-task";
+    const brief = createFixtureBrief(discussion.id);
+    brief.options.push({
+      id: "relational",
+      title: "Normalize the state",
+      summary: "Use relational tables.",
+      benefits: ["Strong queries"],
+      costs: ["More migrations"],
+      risks: ["More schema work"]
+    });
+    createDiscussionBriefRevision(
+      state,
+      discussion,
+      JSON.stringify(brief),
+      {
+        id: () => "brief-revision-1",
+        now: () => state.workspace.createdAt
+      }
+    );
+    state.tasks.push({
+      id: "source-task",
+      workspaceId: state.workspace.id,
+      conversationId: discussion.conversationId,
+      title: "Source Task",
+      goal: "Remain unchanged.",
+      assigneeIds: [state.employees[0].id],
+      status: "draft",
+      history: [],
+      createdAt: state.workspace.createdAt,
+      updatedAt: state.workspace.updatedAt
+    });
+    state.discussions.push(discussion);
+    const store = new MemoryStore(state);
+    const orchestrator = new DiscussionOrchestrator(
+      store,
+      new ConversationRunService(
+        store,
+        new AesCredentialCipher(TEST_KEY),
+        discussionModelGateway()
+      )
+    );
+
+    const confirmed = await orchestrator.confirmBrief(discussion.id, {
+      briefArtifactId: "brief-revision-1",
+      selectedOptionId: "relational",
+      taskTitle: "Implement relational persistence",
+      taskGoal: "Normalize the aggregate."
+    });
+
+    expect(confirmed.task).toMatchObject({
+      conversationId: discussion.conversationId,
+      discussionId: discussion.id,
+      confirmedBriefArtifactId: "brief-revision-1",
+      title: "Implement relational persistence",
+      goal: "Normalize the aggregate.",
+      assigneeIds: [
+        discussion.participants[1].employeeId,
+        discussion.participants[0].employeeId
+      ],
+      status: "draft"
+    });
+    expect(confirmed.discussion).toMatchObject({
+      status: "completed",
+      confirmedBriefArtifactId: "brief-revision-1",
+      confirmedTaskId: confirmed.task.id,
+      sourceTaskId: "source-task"
+    });
+    expect(confirmed.discussion.events?.at(-1)).toMatchObject({
+      type: "discussion_confirmed",
+      payload: {
+        confirmedBriefArtifactId: "brief-revision-1",
+        selectedOptionId: "relational",
+        confirmedTaskId: confirmed.task.id
+      }
+    });
+    expect(
+      await store.read((current) =>
+        current.tasks.find((task) => task.id === "source-task")
+      )
+    ).toMatchObject({
+      title: "Source Task",
+      goal: "Remain unchanged."
+    });
+  });
+
+  it("rolls back confirmation and leaves the Discussion in review on failure", async () => {
+    const state = createFixtureState();
+    const discussion = createFixtureDiscussion({
+      workspaceId: state.workspace.id,
+      conversationId: state.conversations[0].id
+    });
+    discussion.status = "review";
+    createDiscussionBriefRevision(
+      state,
+      discussion,
+      JSON.stringify(createFixtureBrief(discussion.id)),
+      {
+        id: () => "brief-revision-1",
+        now: () => state.workspace.createdAt
+      }
+    );
+    state.discussions.push(discussion);
+    const store = new MemoryStore(state);
+    const orchestrator = new DiscussionOrchestrator(
+      store,
+      new ConversationRunService(
+        store,
+        new AesCredentialCipher(TEST_KEY),
+        discussionModelGateway()
+      )
+    );
+
+    await expect(
+      orchestrator.confirmBrief(discussion.id, {
+        assigneeIds: ["missing-employee"]
+      })
+    ).rejects.toMatchObject({
+      code: "discussion_invalid_participants"
+    });
+
+    const persisted = await store.read((current) => ({
+      discussion: current.discussions.find(
+        (item) => item.id === discussion.id
+      )!,
+      tasks: current.tasks
+    }));
+    expect(persisted.discussion).toMatchObject({
+      status: "review"
+    });
+    expect(persisted.discussion.confirmedTaskId).toBeUndefined();
+    expect(persisted.tasks).toEqual([]);
   });
 
   it("moves a worker-interrupted phase to interrupted without automatic retry", async () => {

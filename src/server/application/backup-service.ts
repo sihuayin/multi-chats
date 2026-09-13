@@ -266,7 +266,8 @@ function validateState(candidate: Record<string, unknown>): void {
       discussions: array("discussions") as never,
       artifacts: array("artifacts") as never,
       messages: array("messages") as never,
-      runs: array("runs") as never
+      runs: array("runs") as never,
+      tasks: array("tasks") as never
     });
   } catch {
     invalid();

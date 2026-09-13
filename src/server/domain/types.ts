@@ -164,6 +164,8 @@ export type Task = {
   id: string;
   workspaceId: string;
   conversationId: string;
+  discussionId?: string;
+  confirmedBriefArtifactId?: string;
   title: string;
   goal: string;
   assigneeIds: string[];
@@ -297,6 +299,7 @@ export const DISCUSSION_EVENT_TYPES = [
   "phase_completed",
   "phase_failed",
   "brief_created",
+  "discussion_confirmed",
   "discussion_interrupted",
   "discussion_resumed",
   "discussion_stopped",

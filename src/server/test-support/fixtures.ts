@@ -11,6 +11,7 @@ import type {
   DiscussionTurnPayload,
   Employee
 } from "@/server/domain/types";
+import type { DiscussionBrief } from "@/server/application/discussion-brief";
 import { AesCredentialCipher } from "@/server/security/credential-cipher";
 import { createInitialState } from "@/server/store/initial-state";
 
@@ -192,7 +193,7 @@ export function createFixtureTurnPayload(
 
 export function createFixtureBrief(
   discussionId = "70000000-0000-4000-8000-000000000001"
-) {
+): DiscussionBrief {
   return {
     schemaVersion: 1,
     promptProfileVersion: "discussion-prompts.v1",

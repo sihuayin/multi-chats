@@ -5,6 +5,9 @@ import {
 } from "@/server/application/discussion-ledger";
 import { validateDiscussion } from "@/server/application/discussion-domain";
 import { createDiscussionBriefRevision } from "@/server/application/discussion-brief";
+import { parseDiscussionBrief } from "@/server/application/discussion-brief";
+import { mapDiscussionBriefToTask } from "@/server/application/discussion-task-handoff";
+import { createDraftTask } from "@/server/application/task-factory";
 import {
   contentAvailability,
   contentRounds,
@@ -29,6 +32,7 @@ import type {
   Run
 } from "@/server/domain/types";
 import type { StateStore } from "@/server/store/store";
+import { taskInputSchema } from "@/server/domain/schemas";
 
 type DiscussionRunPort = Pick<
   ConversationRunService,
@@ -74,6 +78,15 @@ export type DiscussionSynthesizeInput = {
 export type DiscussionFacilitatorInput = {
   employeeId: string;
   reason?: string;
+  operator?: string;
+};
+
+export type DiscussionConfirmInput = {
+  briefArtifactId?: string;
+  selectedOptionId?: string;
+  taskTitle?: string;
+  taskGoal?: string;
+  assigneeIds?: string[];
   operator?: string;
 };
 
@@ -695,6 +708,183 @@ export class DiscussionOrchestrator {
       state.workspace.updatedAt = timestamp;
     });
     return this.getDiscussion(discussionId);
+  }
+
+  async confirmBrief(
+    discussionId: string,
+    input: DiscussionConfirmInput = {}
+  ): Promise<{
+    task: AppState["tasks"][number];
+    discussion: Discussion;
+  }> {
+    const activeRun = await this.activeRun(discussionId);
+    if (activeRun) {
+      throw new ApiError(
+        409,
+        "Discussion already has an active Run",
+        "discussion_active_conflict"
+      );
+    }
+    return this.store.update((state) => {
+      const discussion = discussionById(state, discussionId);
+      if (discussion.status !== "review") {
+        throw new ApiError(
+          409,
+          "Only Discussions in review can be confirmed",
+          "discussion_invalid_state"
+        );
+      }
+      const latestBriefArtifactId = discussion.latestBriefArtifactId;
+      if (!latestBriefArtifactId) {
+        throw new ApiError(
+          409,
+          "Discussion does not have a Brief to confirm",
+          "discussion_not_ready"
+        );
+      }
+      const briefArtifactId =
+        input.briefArtifactId ?? latestBriefArtifactId;
+      if (briefArtifactId !== latestBriefArtifactId) {
+        throw new ApiError(
+          409,
+          "Only the latest Brief revision can be confirmed",
+          "discussion_invalid_state"
+        );
+      }
+      const artifact = state.artifacts.find(
+        (item) =>
+          item.id === briefArtifactId &&
+          item.kind === "discussion_brief" &&
+          item.ownerType === "discussion" &&
+          item.ownerId === discussion.id
+      );
+      if (!artifact) {
+        throw new ApiError(
+          409,
+          "Discussion Brief revision was not found",
+          "discussion_not_ready"
+        );
+      }
+      const brief = parseDiscussionBrief(artifact.content);
+      if (
+        brief.discussionId !== discussion.id ||
+        brief.mode !== discussion.mode
+      ) {
+        throw new ApiError(
+          409,
+          "Discussion Brief does not match the Discussion",
+          "discussion_invalid_state"
+        );
+      }
+
+      const conversation = state.conversations.find(
+        (item) => item.id === discussion.conversationId
+      );
+      if (!conversation) notFound("Conversation");
+      const activeParticipantEmployeeIds = discussion.participants
+        .filter(
+          (participant) =>
+            conversation.memberIds.includes(participant.employeeId) &&
+            state.employees.some(
+              (employee) =>
+                employee.id === participant.employeeId && employee.active
+            )
+        )
+        .map((participant) => participant.employeeId);
+      const facilitator = discussion.participants.find(
+        (participant) =>
+          participant.id === discussion.facilitatorParticipantId
+      );
+      if (
+        input.assigneeIds === undefined &&
+        (!facilitator ||
+          !activeParticipantEmployeeIds.includes(
+            facilitator.employeeId
+          ))
+      ) {
+        throw new ApiError(
+          409,
+          "Facilitator is unavailable and must be replaced",
+          "discussion_facilitator_unavailable"
+        );
+      }
+      const defaultAssigneeIds = facilitator
+        ? [facilitator.employeeId, ...activeParticipantEmployeeIds]
+        : activeParticipantEmployeeIds;
+      const assigneeIds = input.assigneeIds ?? defaultAssigneeIds;
+      if (
+        assigneeIds.length === 0 ||
+        assigneeIds.some(
+          (employeeId) =>
+            !activeParticipantEmployeeIds.includes(employeeId)
+        )
+      ) {
+        throw new ApiError(
+          409,
+          "Task assignees must be active Discussion Participants",
+          "discussion_invalid_participants"
+        );
+      }
+      const taskTitle = input.taskTitle?.trim();
+      const taskGoal = input.taskGoal?.trim();
+      if (
+        (input.taskTitle !== undefined && !taskTitle) ||
+        (input.taskGoal !== undefined && !taskGoal)
+      ) {
+        throw new ApiError(
+          409,
+          "Task title and goal must not be empty",
+          "discussion_invalid_state"
+        );
+      }
+      const mapped = mapDiscussionBriefToTask({
+        brief,
+        discussionTitle: discussion.title,
+        selectedOptionId: input.selectedOptionId,
+        taskTitle,
+        taskGoal,
+        assigneeIds
+      });
+      const parsedTask = taskInputSchema.parse({
+        title: mapped.title,
+        goal: mapped.goal,
+        assigneeIds: mapped.assigneeIds
+      });
+      const timestamp = this.clock();
+      const task = createDraftTask({
+        workspaceId: state.workspace.id,
+        conversationId: discussion.conversationId,
+        title: parsedTask.title,
+        goal: parsedTask.goal,
+        assigneeIds: parsedTask.assigneeIds,
+        discussionId: discussion.id,
+        confirmedBriefArtifactId: artifact.id,
+        now: timestamp
+      });
+      state.tasks.push(task);
+      discussion.confirmedBriefArtifactId = artifact.id;
+      discussion.confirmedTaskId = task.id;
+      discussion.status = "completed";
+      discussion.completedAt = timestamp;
+      discussion.updatedAt = timestamp;
+      appendDiscussionEvent(
+        discussion,
+        "discussion_confirmed",
+        {
+          confirmedBriefArtifactId: artifact.id,
+          briefRevision: artifact.revision,
+          selectedOptionId: mapped.selectedOptionId,
+          confirmedTaskId: task.id,
+          operator: input.operator ?? "user"
+        },
+        this.eventFactory
+      );
+      state.workspace.updatedAt = timestamp;
+      return {
+        task: structuredClone(task),
+        discussion: structuredClone(discussion)
+      };
+    });
   }
 
   async recoverInterruptedDiscussions(): Promise<void> {

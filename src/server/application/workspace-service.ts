@@ -21,6 +21,7 @@ import {
 import type { ProviderRegistry } from "@/server/application/provider-gateway";
 import { ApiError, notFound } from "@/server/application/errors";
 import { transitionTask } from "@/server/application/task-ledger";
+import { createDraftTask } from "@/server/application/task-factory";
 import {
   createTaskArtifact,
   updateTaskArtifact
@@ -346,18 +347,14 @@ export class WorkspaceService {
       if (!conversation) notFound("Conversation");
       this.assertEmployees(state.employees, parsed.assigneeIds);
       const timestamp = now();
-      const task: Task = {
-        id: crypto.randomUUID(),
+      const task = createDraftTask({
         workspaceId: state.workspace.id,
         conversationId,
         title: parsed.title,
         goal: parsed.goal,
         assigneeIds: parsed.assigneeIds,
-        status: "draft",
-        history: [{ status: "draft", at: timestamp, actorId: "user" }],
-        createdAt: timestamp,
-        updatedAt: timestamp
-      };
+        now: timestamp
+      });
       state.tasks.push(task);
       state.workspace.updatedAt = timestamp;
       return task;

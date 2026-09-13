@@ -139,6 +139,27 @@ describe("AppState migrations", () => {
     );
   });
 
+  it("rejects half-linked Discussion Task origins", () => {
+    const state = createFixtureState();
+    state.tasks.push({
+      id: "task-discussion",
+      workspaceId: state.workspace.id,
+      conversationId: state.conversations[0].id,
+      discussionId: "discussion-1",
+      title: "Half linked",
+      goal: "Missing the Brief reference.",
+      assigneeIds: [state.employees[0].id],
+      status: "draft",
+      history: [],
+      createdAt: state.workspace.createdAt,
+      updatedAt: state.workspace.updatedAt
+    });
+
+    expect(() => migrateAppState(state)).toThrow(
+      "Task Discussion origin is incomplete"
+    );
+  });
+
   it("rejects schema versions newer than this application", () => {
     const state = createInitialState(
       "00000000-0000-4000-8000-000000000001"
