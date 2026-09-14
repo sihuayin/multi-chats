@@ -3,6 +3,7 @@ import { cookies, headers } from "next/headers";
 import { AppShell } from "@/components/app-shell";
 import { I18nProvider } from "@/components/i18n-provider";
 import { WorkspaceProvider } from "@/components/workspace-provider";
+import { Toaster } from "@/components/ui/sonner";
 import { detectLocale, isLocale } from "@/lib/i18n";
 import "./globals.css";
 
@@ -40,6 +41,7 @@ export default async function RootLayout({
         <I18nProvider initialLocale={initialLocale}>
           <WorkspaceProvider>
             <AppShell>{children}</AppShell>
+            <Toaster position="top-right" richColors closeButton />
           </WorkspaceProvider>
         </I18nProvider>
       </body>

@@ -116,4 +116,97 @@ describe("Group and Conversation configuration", () => {
       )?.memberIds
     ).toEqual([BOB]);
   });
+
+  it("deletes a Conversation and its related workspace data", async () => {
+    const { service, store } = setup();
+    const removed = await service.createConversation({
+      title: "Remove me",
+      memberIds: [ALICE]
+    });
+    const kept = await service.createConversation({
+      title: "Keep me",
+      memberIds: [BOB]
+    });
+    await store.update((state) => {
+      state.messages.push({
+        id: "message-remove",
+        workspaceId: state.workspace.id,
+        conversationId: removed.id,
+        authorType: "user",
+        authorId: "user",
+        content: "Remove",
+        status: "complete",
+        createdAt: state.workspace.createdAt,
+        updatedAt: state.workspace.updatedAt
+      });
+      state.runs.push({
+        id: "run-remove",
+        workspaceId: state.workspace.id,
+        conversationId: removed.id,
+        triggerMessageId: "message-remove",
+        memberSnapshot: [ALICE],
+        status: "completed",
+        createdAt: state.workspace.createdAt
+      });
+      state.runEvents.push({
+        id: "event-remove",
+        workspaceId: state.workspace.id,
+        runId: "run-remove",
+        sequence: 1,
+        type: "run_completed",
+        payload: {},
+        createdAt: state.workspace.createdAt
+      });
+      state.tasks.push({
+        id: "task-remove",
+        workspaceId: state.workspace.id,
+        conversationId: removed.id,
+        title: "Remove task",
+        goal: "Remove with Conversation.",
+        assigneeIds: [ALICE],
+        status: "draft",
+        history: [],
+        createdAt: state.workspace.createdAt,
+        updatedAt: state.workspace.updatedAt
+      });
+      state.artifacts.push({
+        id: "artifact-remove",
+        workspaceId: state.workspace.id,
+        ownerType: "task",
+        ownerId: "task-remove",
+        type: "text",
+        name: "Remove",
+        content: "Remove",
+        createdAt: state.workspace.createdAt,
+        updatedAt: state.workspace.updatedAt
+      });
+      state.approvals.push({
+        id: "approval-remove",
+        workspaceId: state.workspace.id,
+        runId: "run-remove",
+        taskId: "task-remove",
+        toolName: "post_webhook",
+        args: {},
+        status: "cancelled",
+        createdAt: state.workspace.createdAt
+      });
+    });
+
+    await service.deleteConversation(removed.id);
+    await expect(
+      service.deleteConversation(removed.id)
+    ).resolves.toBeUndefined();
+
+    const state = store.snapshot();
+    expect(state.conversations.map((item) => item.id)).toEqual([
+      "30000000-0000-4000-8000-000000000001",
+      kept.id
+    ]);
+    expect(state.messages).toEqual([]);
+    expect(state.runs).toEqual([]);
+    expect(state.runEvents).toEqual([]);
+    expect(state.tasks).toEqual([]);
+    expect(state.artifacts).toEqual([]);
+    expect(state.approvals).toEqual([]);
+  });
 });

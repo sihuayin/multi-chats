@@ -37,7 +37,13 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { locale, setLocale, t } = useI18n();
 
   return (
-    <div className="app-frame">
+    <div
+      className={
+        pathname === "/"
+          ? "app-frame conversation-layout"
+          : "app-frame"
+      }
+    >
       <aside className="app-sidebar">
         <div className="brand">
           <span className="brand-mark">

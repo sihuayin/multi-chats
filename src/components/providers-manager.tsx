@@ -2,11 +2,22 @@
 
 import { KeyRound, LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
 import { apiRequest } from "@/lib/api";
 import { providerCatalog } from "@/lib/provider-catalog";
 import { useI18n } from "@/components/i18n-provider";
 import { useWorkspace } from "@/components/workspace-provider";
 import { PageHeader } from "@/components/page-header";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from "@/components/ui/select";
 
 export function ProvidersManager() {
   const { data, refresh } = useWorkspace();
@@ -29,10 +40,16 @@ export function ProvidersManager() {
           credential
         })
       });
+      setProvider("openai");
+      setLabel("");
       setCredential("");
+      toast.success(t("providers.saved"));
       await refresh();
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : String(nextError));
+      const message =
+        nextError instanceof Error ? nextError.message : String(nextError);
+      setError(message);
+      toast.error(message);
     } finally {
       setBusy(false);
     }
@@ -90,40 +107,47 @@ export function ProvidersManager() {
             <h2>{t("providers.add")}</h2>
           </div>
           <div className="provider-field-grid">
-            <label>
-              {t("providers.provider")}
-              <select
-                value={provider}
-                onChange={(event) => setProvider(event.target.value)}
-              >
+            <div className="grid gap-2">
+              <Label htmlFor="provider-name">
+                {t("providers.provider")}
+              </Label>
+              <Select value={provider} onValueChange={setProvider}>
+                <SelectTrigger id="provider-name" aria-label={t("providers.provider")}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
                 {providerCatalog.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.label}
-                  </option>
+                    <SelectItem key={item.id} value={item.id}>
+                      {item.label}
+                    </SelectItem>
                 ))}
-              </select>
-            </label>
-            <label>
-              {t("providers.label")}
-              <input
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="provider-label">{t("providers.label")}</Label>
+              <Input
+                id="provider-label"
                 value={label}
                 placeholder={t("providers.defaultLabel")}
                 onChange={(event) => setLabel(event.target.value)}
               />
-            </label>
+            </div>
           </div>
-          <label>
-            {t("providers.apiCredential")}
-            <input
+          <div className="grid gap-2">
+            <Label htmlFor="provider-credential">
+              {t("providers.apiCredential")}
+            </Label>
+            <Input
+              id="provider-credential"
               type="password"
               value={credential}
               onChange={(event) => setCredential(event.target.value)}
               autoComplete="off"
             />
-          </label>
+          </div>
           <div className="provider-form-actions">
-            <button
-              className="button primary"
+            <Button
               onClick={createProvider}
               disabled={busy || !credential.trim()}
             >
@@ -133,7 +157,7 @@ export function ProvidersManager() {
                 <KeyRound size={16} />
               )}
               {t("providers.validateSave")}
-            </button>
+            </Button>
           </div>
         </section>
 
@@ -155,22 +179,25 @@ export function ProvidersManager() {
                   </div>
                 </div>
                 <div className="button-row">
-                  <button
-                    className="icon-button"
+                  <Button
+                    variant="ghost"
+                    size="icon"
                     title={t("providers.rotate")}
                     onClick={() => rotateProvider(item.id)}
                     disabled={busy}
                   >
                     <RefreshCw size={16} />
-                  </button>
-                  <button
-                    className="icon-button danger-text"
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="text-[var(--danger)]"
                     title={t("providers.delete")}
                     onClick={() => removeProvider(item.id)}
                     disabled={busy}
                   >
                     <Trash2 size={16} />
-                  </button>
+                  </Button>
                 </div>
               </article>
             ))}

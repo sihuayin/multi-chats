@@ -20,6 +20,9 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   await page.getByLabel("Label").fill(`Test Provider ${suffix}`);
   await page.getByLabel("API credential").fill("test-key");
   await page.getByRole("button", { name: "Validate and save" }).click();
+  await expect(page.getByText("Provider saved.")).toBeVisible();
+  await expect(page.getByLabel("Label")).toHaveValue("");
+  await expect(page.getByLabel("API credential")).toHaveValue("");
   await expect(page.getByText(`Test Provider ${suffix}`)).toBeVisible();
 
   const customSkillName = `Fact Checker ${suffix}`;
@@ -52,6 +55,7 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   const selectedModel = await modelSelect.inputValue();
   await expect(modelSelect.locator("option").first()).toContainText("context");
   await page.getByRole("button", { name: "Create Employee" }).click();
+  await expect(page.getByText("Employee created.")).toBeVisible();
   await expect(page.getByText(employeeName)).toBeVisible();
   await expect(
     page.locator(".list-card").filter({ hasText: employeeName })
@@ -93,6 +97,18 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   await expect(
     page.getByRole("heading", { name: `${editedGroupName} Conversation` })
   ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        document.documentElement.scrollHeight <=
+        window.innerHeight + 1
+    )
+  ).toBe(true);
+  const composerBox = await page.locator(".composer").boundingBox();
+  expect(composerBox).not.toBeNull();
+  expect(composerBox!.y + composerBox!.height).toBeLessThanOrEqual(
+    await page.evaluate(() => window.innerHeight)
+  );
   await page
     .getByPlaceholder("Message the group or mention @employee")
     .fill("@all prepare the launch brief");
@@ -228,14 +244,16 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   await expect(
     page.getByRole("heading", { name: "Ad hoc conversation" })
   ).toBeVisible();
-  const adHocDialogHandler = async (
-    dialog: import("@playwright/test").Dialog
-  ) => {
-    await dialog.accept(employeeName);
-  };
-  page.on("dialog", adHocDialogHandler);
   await page.getByTitle("Edit Conversation members").click();
-  page.off("dialog", adHocDialogHandler);
+  const memberDialog = page.getByRole("dialog");
+  await memberDialog.getByPlaceholder("Search Employees").fill(employeeName);
+  const memberOption = memberDialog.getByRole("option", {
+    name: new RegExp(employeeName)
+  });
+  await memberOption.click();
+  await memberOption.click();
+  await memberDialog.getByRole("button", { name: "Save members" }).click();
+  await expect(memberDialog).toBeHidden();
   await expect(
     page.locator(".member-stack").filter({ hasText: employeeName })
   ).toBeVisible();
@@ -353,22 +371,24 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   ).toBeVisible();
 
   await page.getByRole("tab", { name: "Discussion" }).click();
+  await page.getByLabel("Discussion conversation").click();
   await page
-    .getByLabel("Discussion conversation")
-    .selectOption({ label: `${editedGroupName} Conversation` });
+    .getByRole("option", { name: `${editedGroupName} Conversation` })
+    .click();
   await page.getByLabel("Topic").fill(`Choose the launch approach ${suffix}`);
-  await page.getByLabel("Mode").selectOption("solution");
-  await page.getByLabel("Discussion language").selectOption("en");
+  await page.getByLabel("Mode").click();
+  await page.getByRole("option", { name: "Solution" }).click();
+  await page.getByLabel("Discussion language").click();
+  await page.getByRole("option", { name: "English" }).click();
   await page.getByLabel("Content rounds").fill("3");
+  await page.getByLabel(`${employeeName} role`).click();
+  await page.getByRole("option", { name: "Analyst" }).click();
+  await page.getByLabel(`${secondEmployeeName} role`).click();
+  await page.getByRole("option", { name: "Facilitator" }).click();
+  await page.getByLabel("Facilitator").click();
   await page
-    .getByLabel(`${employeeName} role`)
-    .selectOption("analyst");
-  await page
-    .getByLabel(`${secondEmployeeName} role`)
-    .selectOption("facilitator");
-  await page
-    .getByLabel("Facilitator")
-    .selectOption({ label: secondEmployeeName });
+    .getByRole("option", { name: secondEmployeeName })
+    .click();
   await page.setViewportSize({ width: 390, height: 844 });
   expect(
     await page.evaluate(
@@ -422,6 +442,8 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   await expect(page.getByLabel(customSkillName)).toBeChecked();
   await page.getByLabel("Writer").check();
   await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByText("Employee updated.")).toBeVisible();
+  await expect(page.getByLabel("Name")).toHaveValue("");
   await expect(page.getByText(editedEmployeeName)).toBeVisible();
 
   const editedCard = page.locator(".list-card").filter({ hasText: editedEmployeeName });

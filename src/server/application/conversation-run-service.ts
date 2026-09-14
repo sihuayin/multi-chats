@@ -40,6 +40,7 @@ import type { CredentialCipher } from "@/server/security/credential-cipher";
 import { BUILT_IN_TOOLS } from "@/server/store/initial-state";
 import type { StateStore } from "@/server/store/store";
 import { logger } from "@/server/observability/logger";
+import { mentionSlug } from "@/lib/mentions";
 
 export type StartTurnResult = {
   message: Message;
@@ -67,23 +68,17 @@ function now(): string {
   return new Date().toISOString();
 }
 
-function slugify(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
-}
-
 export function parseMentions(
   content: string,
   employees: Employee[]
 ): { all: boolean; employeeIds: string[] } {
-  const mentions = [...content.matchAll(/@([a-z0-9][a-z0-9_-]*)/gi)].map((match) =>
-    match[1].toLowerCase()
-  );
+  const mentions = [
+    ...content.matchAll(
+      /@`?([\p{L}\p{N}][\p{L}\p{N}_-]*)`?/gu
+    )
+  ].map((match) => match[1].toLowerCase());
   const bySlug = new Map(
-    employees.map((employee) => [slugify(employee.name), employee.id])
+    employees.map((employee) => [mentionSlug(employee.name), employee.id])
   );
   const employeeIds = mentions
     .map((mention) => bySlug.get(mention))

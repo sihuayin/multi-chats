@@ -1125,6 +1125,30 @@ describe("ConversationRun", () => {
         "20000000-0000-4000-8000-000000000002"
       ]
     });
+
+    expect(
+      parseMentions("@马念媛 请分析", [
+        {
+          ...state.employees[0],
+          name: "马念媛"
+        }
+      ])
+    ).toEqual({
+      all: false,
+      employeeIds: [state.employees[0].id]
+    });
+
+    expect(
+      parseMentions("@`马念媛` 请分析", [
+        {
+          ...state.employees[0],
+          name: "马念媛"
+        }
+      ])
+    ).toEqual({
+      all: false,
+      employeeIds: [state.employees[0].id]
+    });
   });
 
   it("pauses a side-effecting Tool until the user rejects it", async () => {

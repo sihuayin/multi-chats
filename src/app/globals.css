@@ -1,4 +1,28 @@
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
 :root {
+  --background: #ffffff;
+  --foreground: #182226;
+  --card: #ffffff;
+  --card-foreground: #182226;
+  --popover: #ffffff;
+  --popover-foreground: #182226;
+  --primary: #245f88;
+  --primary-hover: #17486a;
+  --primary-foreground: #ffffff;
+  --secondary: #eaf0f2;
+  --secondary-hover: #dfe8eb;
+  --secondary-foreground: #182226;
+  --muted: #eef2f3;
+  --muted-foreground: #66747a;
+  --accent: #e3eef5;
+  --accent-foreground: #17486a;
+  --destructive: #a33d3d;
+  --destructive-hover: #8d3232;
+  --border: #d5dfe2;
+  --input: #d5dfe2;
+  --ring: #245f88;
   --ink: #182226;
   --muted: #66747a;
   --line: #d5dfe2;
@@ -196,6 +220,78 @@ button {
   min-width: 0;
 }
 
+.app-frame.conversation-layout {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.conversation-layout .app-main {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.conversation-layout .conversation-center {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.conversation-layout .conversation-center > [role="tabpanel"] {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.conversation-layout .workspace-grid {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.conversation-layout .conversation-rail,
+.conversation-layout .task-panel {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.conversation-layout .conversation-surface {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.conversation-layout .message-stream {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.conversation-layout .composer {
+  position: relative;
+  z-index: 2;
+  flex-shrink: 0;
+}
+
+.conversation-layout .discussion-workspace-shell {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.conversation-layout .discussion-workspace-shell > aside {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.conversation-layout .discussion-workspace-shell > main {
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .workspace-grid {
   display: grid;
   grid-template-columns:
@@ -304,8 +400,9 @@ button {
 
 .conversation-item {
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr);
+  grid-template-columns: 30px minmax(0, 1fr) 28px;
   gap: 9px;
+  align-items: center;
   width: 100%;
   padding: 10px;
   text-align: left;
@@ -313,6 +410,32 @@ button {
   border: 1px solid transparent;
   border-radius: 7px;
   cursor: pointer;
+}
+
+.conversation-delete {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+.conversation-item:hover .conversation-delete,
+.conversation-item.active .conversation-delete,
+.conversation-delete:focus-visible {
+  opacity: 1;
+}
+
+.conversation-delete:hover {
+  color: var(--danger);
+  background: var(--danger-soft);
 }
 
 .conversation-item:hover {
@@ -334,7 +457,7 @@ button {
   border-radius: 6px;
 }
 
-.conversation-item span:last-child {
+.conversation-copy {
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -517,12 +640,81 @@ button {
 }
 
 .composer {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
   padding: 14px 22px 20px;
   border-top: 1px solid var(--line);
   background: var(--paper);
+}
+
+.mention-menu {
+  position: absolute;
+  left: 22px;
+  bottom: calc(100% - 6px);
+  z-index: 30;
+  display: grid;
+  width: min(360px, calc(100% - 44px));
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 5px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.mention-option {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  width: 100%;
+  padding: 8px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.mention-option:hover,
+.mention-option.active {
+  background: var(--accent-soft);
+}
+
+.mention-mark {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  color: var(--accent-strong);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 800;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+
+.mention-option > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.mention-option strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mention-option small {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
 }
 
 textarea,
@@ -1300,6 +1492,31 @@ label textarea {
   .page-header h1 {
     font-size: 30px;
   }
+
+  .conversation-layout .workspace-grid,
+  .conversation-layout .workspace-grid.tasks-collapsed {
+    display: flex;
+    height: 100%;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .conversation-layout .conversation-rail {
+    flex: 0 0 auto;
+    max-height: 190px;
+    overflow-y: auto;
+  }
+
+  .conversation-layout .conversation-surface {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
+  }
+
+  .conversation-layout .task-panel {
+    flex: 0 1 38%;
+    max-height: 38%;
+  }
 }
 
 @media (max-width: 680px) {
@@ -1369,6 +1586,11 @@ label textarea {
   .composer {
     grid-template-columns: 1fr;
     padding: 12px 14px 16px;
+  }
+
+  .mention-menu {
+    left: 14px;
+    width: calc(100% - 28px);
   }
 
   .composer .button {

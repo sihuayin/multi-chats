@@ -1,12 +1,17 @@
 "use client";
 
 import { Bot, Check, LoaderCircle, Pencil, Power } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { apiRequest } from "@/lib/api";
 import { useI18n } from "@/components/i18n-provider";
 import { skillLabel } from "@/lib/skill-labels";
 import { useWorkspace } from "@/components/workspace-provider";
 import { PageHeader } from "@/components/page-header";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 
 type ModelSummary = {
   id: string;
@@ -28,6 +33,7 @@ export function EmployeesManager() {
   const [models, setModels] = useState<ModelSummary[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const formRef = useRef<HTMLElement | null>(null);
 
   const effectiveProviderId = providerId || data?.providers[0]?.id || "";
 
@@ -61,6 +67,7 @@ export function EmployeesManager() {
     setBusy(true);
     setError(null);
     try {
+      const wasEditing = Boolean(editingId);
       await apiRequest(editingId ? `/api/employees/${editingId}` : "/api/employees", {
         method: editingId ? "PUT" : "POST",
         body: JSON.stringify({
@@ -75,9 +82,15 @@ export function EmployeesManager() {
         })
       });
       resetForm();
+      toast.success(
+        wasEditing ? t("employees.updated") : t("employees.created")
+      );
       await refresh();
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : String(nextError));
+      const message =
+        nextError instanceof Error ? nextError.message : String(nextError);
+      setError(message);
+      toast.error(message);
     } finally {
       setBusy(false);
     }
@@ -94,7 +107,10 @@ export function EmployeesManager() {
       });
       await refresh();
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : String(nextError));
+      const message =
+        nextError instanceof Error ? nextError.message : String(nextError);
+      setError(message);
+      toast.error(message);
     } finally {
       setBusy(false);
     }
@@ -109,6 +125,10 @@ export function EmployeesManager() {
     setProviderId(employee.providerCredentialId);
     setModelId(employee.modelId);
     setSkillIds(employee.skillIds);
+    setError(null);
+    requestAnimationFrame(() =>
+      formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
+    );
   }
 
   return (
@@ -120,26 +140,36 @@ export function EmployeesManager() {
       />
       {error ? <div className="error-banner">{error}</div> : null}
       <div className="two-column wide-form">
-        <section className="panel">
+        <section
+          id="employee-form"
+          ref={formRef}
+          className="panel"
+          data-editing={editingId ? "true" : "false"}
+        >
           <div className="panel-title">
             <Bot size={17} />
             <h2>
               {editingId ? t("employees.editTitle") : t("employees.create")}
             </h2>
           </div>
-          <label>
-            {t("employees.name")}
-            <input value={name} onChange={(event) => setName(event.target.value)} />
-          </label>
-          <label>
-            {t("employees.identity")}
-            <textarea
+          <div className="grid gap-2">
+            <Label htmlFor="employee-name">{t("employees.name")}</Label>
+            <Input
+              id="employee-name"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="employee-identity">{t("employees.identity")}</Label>
+            <Textarea
+              id="employee-identity"
               rows={4}
               value={identity}
               placeholder={t("employees.defaultIdentity")}
               onChange={(event) => setIdentity(event.target.value)}
             />
-          </label>
+          </div>
           <div className="field-grid">
             <label>
               {t("employees.provider")}
@@ -198,8 +228,7 @@ export function EmployeesManager() {
             ))}
           </fieldset>
           <div className="button-row">
-            <button
-              className="button primary"
+            <Button
               onClick={saveEmployee}
               disabled={busy || !name.trim() || !effectiveProviderId || !modelId}
             >
@@ -207,11 +236,11 @@ export function EmployeesManager() {
               {editingId
                 ? t("employees.saveChanges")
                 : t("employees.create")}
-            </button>
+            </Button>
             {editingId ? (
-              <button className="button quiet" onClick={resetForm}>
+              <Button variant="ghost" onClick={resetForm}>
                 {t("employees.cancelEdit")}
-              </button>
+              </Button>
             ) : null}
           </div>
         </section>
@@ -237,16 +266,18 @@ export function EmployeesManager() {
                   </small>
                 </div>
                 <div className="button-row">
-                  <button
-                    className="icon-button"
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-pressed={editingId === employee.id}
                     title={t("employees.edit")}
                     onClick={() => editEmployee(employee.id)}
                     disabled={busy}
                   >
                     <Pencil size={15} />
-                  </button>
-                  <button
-                    className={employee.active ? "button quiet" : "button secondary"}
+                  </Button>
+                  <Button
+                    variant={employee.active ? "ghost" : "secondary"}
                     onClick={() => toggleEmployee(employee.id, employee.active)}
                     disabled={busy}
                   >
@@ -254,7 +285,7 @@ export function EmployeesManager() {
                     {employee.active
                       ? t("employees.disable")
                       : t("employees.enable")}
-                  </button>
+                  </Button>
                 </div>
               </article>
             ))}

@@ -10,7 +10,7 @@ export function ConversationCenter() {
   const [view, setView] = useState<"chat" | "discussion">("chat");
 
   return (
-    <div className={styles.shell}>
+    <div className={`${styles.shell} conversation-center`}>
       <div className={styles.switch} role="tablist" aria-label="Conversation view">
         <button
           role="tab"
@@ -49,6 +49,7 @@ export function ConversationCenter() {
         id="discussion-panel"
         role="tabpanel"
         aria-labelledby="discussion-tab"
+        hidden={view !== "discussion"}
       >
         {view === "discussion" ? <DiscussionWorkspace /> : null}
       </div>

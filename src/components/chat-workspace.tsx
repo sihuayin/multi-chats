@@ -14,6 +14,7 @@ import {
   RotateCcw,
   Send,
   ShieldAlert,
+  Trash2,
   UserPen,
   UsersRound,
   X
@@ -21,6 +22,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { apiRequest } from "@/lib/api";
+import { toast } from "sonner";
 import { useI18n } from "@/components/i18n-provider";
 import type {
   ApprovalDecision,
@@ -38,6 +40,39 @@ import {
   type RunTimelineCategory
 } from "@/lib/run-timeline";
 import { employeeTurnStatuses } from "@/lib/employee-turn-status";
+import {
+  activeMention,
+  filterMentionEmployees,
+  mentionSlug
+} from "@/lib/mentions";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList
+} from "@/components/ui/command";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from "@/components/ui/dialog";
 
 function MessageIcon({ artifact }: { artifact: Artifact }) {
   if (artifact.type === "json") return <FileJson size={16} />;
@@ -123,8 +158,19 @@ export function ChatWorkspace() {
   const [startedRunId, setStartedRunId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [taskPanelOpen, setTaskPanelOpen] = useState(true);
+  const [conversationToDelete, setConversationToDelete] =
+    useState<Conversation | null>(null);
+  const [mentionState, setMentionState] = useState<{
+    start: number;
+    end: number;
+    query: string;
+  } | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [membersDialogOpen, setMembersDialogOpen] = useState(false);
+  const [draftMemberIds, setDraftMemberIds] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
 
   const conversations = useMemo(
     () => data?.conversations ?? [],
@@ -233,6 +279,35 @@ export function ChatWorkspace() {
     return selected.memberIds;
   }, [latestRun, selected]);
 
+  const mentionCandidates = useMemo(() => {
+    if (!selected || !mentionState) return [];
+    const employees = selected.memberIds
+      .map((memberId) =>
+        data?.employees.find((employee) => employee.id === memberId)
+      )
+      .filter(
+        (employee): employee is NonNullable<typeof employee> =>
+          Boolean(employee?.active)
+      );
+    const filtered = filterMentionEmployees(employees, mentionState.query);
+    const all = {
+      id: "all",
+      name: t("chat.members"),
+      slug: "all"
+    };
+    const matchesAll =
+      mentionState.query.length === 0 ||
+      "all".includes(mentionState.query.toLowerCase());
+    return [
+      ...(matchesAll ? [all] : []),
+      ...filtered.map((employee) => ({
+        id: employee.id,
+        name: employee.name,
+        slug: mentionSlug(employee.name)
+      }))
+    ];
+  }, [data?.employees, mentionState, selected, t]);
+
   async function createConversation() {
     const group =
       groupChoice === "ad-hoc"
@@ -274,6 +349,7 @@ export function ChatWorkspace() {
         }
       );
       setMessage("");
+      setMentionState(null);
       await refresh();
       if (result.run) setStartedRunId(result.run.id);
     } catch (nextError) {
@@ -281,6 +357,34 @@ export function ChatWorkspace() {
     } finally {
       setBusy(false);
     }
+  }
+
+  function updateMention(value: string, caret: number) {
+    setMentionState(activeMention(value, caret));
+    setMentionIndex(0);
+  }
+
+  function chooseMention(candidate: {
+    id: string;
+    name: string;
+    slug: string;
+  }) {
+    if (!mentionState) return;
+    const before = message.slice(0, mentionState.start);
+    const after = message.slice(
+      mentionState.end
+    );
+    const inserted = `@${candidate.slug} `;
+    const next = `${before}${inserted}${after}`;
+    const caret = before.length + inserted.length;
+    setMessage(next);
+    setMentionState(null);
+    requestAnimationFrame(() => {
+      const textarea = composerRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      textarea.setSelectionRange(caret, caret);
+    });
   }
 
   async function cancelRun() {
@@ -357,39 +461,51 @@ export function ChatWorkspace() {
 
   async function editMembers() {
     if (!selected) return;
-    const current = selected.memberIds
-      .map(
-        (memberId) =>
-          data?.employees.find((employee) => employee.id === memberId)?.name ?? ""
-      )
-      .filter(Boolean);
-    const next = window.prompt(
-      t("chat.editMembersPrompt"),
-      current.join(", ")
-    );
-    if (next === null) return;
+    setDraftMemberIds(selected.memberIds);
+    setMembersDialogOpen(true);
+  }
+
+  async function saveMembers() {
+    if (!selected) return;
     setBusy(true);
     try {
-      const memberIds = next
-        .split(",")
-        .map((value) => value.trim())
-        .filter(Boolean)
-        .map((value) => {
-          const employee = data?.employees.find(
-            (item) => item.name.toLowerCase() === value.toLowerCase()
-          );
-          if (!employee) {
-            throw new Error(`${t("common.unknown")}: ${value}`);
-          }
-          return employee.id;
-        });
       await apiRequest(`/api/conversations/${selected.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ memberIds })
+        body: JSON.stringify({ memberIds: draftMemberIds })
       });
+      setMembersDialogOpen(false);
       await refresh();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteConversation() {
+    if (!conversationToDelete) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await apiRequest(`/api/conversations/${conversationToDelete.id}`, {
+        method: "DELETE"
+      });
+      if (selected?.id === conversationToDelete.id) setSelectedId(null);
+      setConversationToDelete(null);
+      toast.success(t("chat.deleted"));
+      await refresh();
+    } catch (nextError) {
+      const message =
+        nextError instanceof Error ? nextError.message : String(nextError);
+      if (message.includes("Conversation was not found")) {
+        if (selected?.id === conversationToDelete.id) setSelectedId(null);
+        setConversationToDelete(null);
+        toast.success(t("chat.deleted"));
+        await refresh();
+        return;
+      }
+      setError(message);
+      toast.error(message);
     } finally {
       setBusy(false);
     }
@@ -484,7 +600,7 @@ export function ChatWorkspace() {
             ))}
           </select>
           {conversations.map((conversation) => (
-            <button
+            <div
               key={conversation.id}
               className={
                 conversation.id === selected?.id
@@ -496,13 +612,24 @@ export function ChatWorkspace() {
               <span className="conversation-icon">
                 <Hash size={15} />
               </span>
-              <span>
+              <span className="conversation-copy">
                 <strong>{conversation.title}</strong>
                 <small>
                   {conversation.memberIds.length} {t("chat.members")}
                 </small>
               </span>
-            </button>
+              <button
+                className="conversation-delete"
+                title={t("chat.deleteConversation")}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setConversationToDelete(conversation);
+                }}
+                disabled={busy}
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
           ))}
           {conversations.length === 0 ? (
             <div className="rail-empty">
@@ -640,11 +767,117 @@ export function ChatWorkspace() {
             </div>
 
             <div className="composer">
+              {mentionState && mentionCandidates.length > 0 ? (
+                <div
+                  id="mention-options"
+                  className="mention-menu"
+                  role="listbox"
+                >
+                  {mentionCandidates.map((candidate, index) => (
+                    <button
+                      key={candidate.id}
+                      type="button"
+                      role="option"
+                      aria-selected={index === mentionIndex}
+                      className={
+                        index === mentionIndex ? "mention-option active" : "mention-option"
+                      }
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        chooseMention(candidate);
+                      }}
+                    >
+                      <span className="mention-mark">
+                        {candidate.id === "all"
+                          ? "@"
+                          : candidate.name.slice(0, 2).toUpperCase()}
+                      </span>
+                      <span>
+                        <strong>{candidate.name}</strong>
+                        <small>@{candidate.slug}</small>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
               <textarea
+                ref={composerRef}
                 value={message}
-                onChange={(event) => setMessage(event.target.value)}
+                aria-autocomplete="list"
+                aria-controls={
+                  mentionState && mentionCandidates.length > 0
+                    ? "mention-options"
+                    : undefined
+                }
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setMessage(next);
+                  updateMention(
+                    next,
+                    event.target.selectionStart ?? next.length
+                  );
+                }}
+                onClick={(event) =>
+                  updateMention(
+                    event.currentTarget.value,
+                    event.currentTarget.selectionStart ??
+                      event.currentTarget.value.length
+                  )
+                }
+                onKeyUp={(event) => {
+                  if (
+                    !["ArrowDown", "ArrowUp", "Enter", "Escape"].includes(
+                      event.key
+                    )
+                  ) {
+                    updateMention(
+                      event.currentTarget.value,
+                      event.currentTarget.selectionStart ??
+                        event.currentTarget.value.length
+                    );
+                  }
+                }}
                 placeholder={t("chat.messagePlaceholder")}
                 onKeyDown={(event) => {
+                  if (
+                    mentionState &&
+                    mentionCandidates.length > 0
+                  ) {
+                    if (event.key === "ArrowDown") {
+                      event.preventDefault();
+                      setMentionIndex(
+                        (index) =>
+                          (index + 1) % mentionCandidates.length
+                      );
+                      return;
+                    }
+                    if (event.key === "ArrowUp") {
+                      event.preventDefault();
+                      setMentionIndex(
+                        (index) =>
+                          (index - 1 + mentionCandidates.length) %
+                          mentionCandidates.length
+                      );
+                      return;
+                    }
+                    if (event.key === "Enter" || event.key === "Tab") {
+                      event.preventDefault();
+                      chooseMention(
+                        mentionCandidates[
+                          Math.min(
+                            mentionIndex,
+                            mentionCandidates.length - 1
+                          )
+                        ]
+                      );
+                      return;
+                    }
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      setMentionState(null);
+                      return;
+                    }
+                  }
                   if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
                     void sendMessage();
@@ -966,6 +1199,137 @@ export function ChatWorkspace() {
           ) : null}
         </div>
       </aside>
+      <Dialog open={membersDialogOpen} onOpenChange={setMembersDialogOpen}>
+        <DialogContent className="h-[min(640px,88dvh)] grid-rows-[auto_auto_minmax(0,1fr)_auto]">
+          <DialogHeader>
+            <DialogTitle>{t("chat.editMembers")}</DialogTitle>
+            <DialogDescription>
+              {t("chat.editMembersHint")}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex max-h-24 min-h-12 flex-wrap content-start gap-1.5 overflow-y-auto rounded-md border bg-[var(--paper)] p-2">
+            {draftMemberIds.map((memberId) => {
+              const employee = data?.employees.find(
+                (item) => item.id === memberId
+              );
+              return (
+                <Badge key={memberId} variant="secondary">
+                  {employee?.name ?? memberId}
+                  <button
+                    type="button"
+                    aria-label={`${t("common.remove")} ${employee?.name ?? memberId}`}
+                    className="ml-1 rounded-sm opacity-60 hover:opacity-100"
+                    onClick={() =>
+                      setDraftMemberIds((current) =>
+                        current.filter((id) => id !== memberId)
+                      )
+                    }
+                  >
+                    <X className="size-3" />
+                  </button>
+                </Badge>
+              );
+            })}
+            {draftMemberIds.length === 0 ? (
+              <span className="text-xs text-[var(--muted-foreground)]">
+                {t("chat.noMembers")}
+              </span>
+            ) : null}
+          </div>
+          <Command className="min-h-0 rounded-md border">
+            <CommandInput placeholder={t("chat.memberSearch")} />
+            <CommandList className="max-h-none min-h-0 flex-1">
+              <CommandEmpty className="flex min-h-40 items-center justify-center">
+                {t("chat.noMemberResults")}
+              </CommandEmpty>
+              <CommandGroup>
+                {(data?.employees ?? [])
+                  .filter((employee) => employee.active)
+                  .map((employee) => {
+                    const selected = draftMemberIds.includes(employee.id);
+                    return (
+                      <CommandItem
+                        key={employee.id}
+                        value={`${employee.name} ${employee.identity}`}
+                        onSelect={() =>
+                          setDraftMemberIds((current) =>
+                            selected
+                              ? current.filter((id) => id !== employee.id)
+                              : [...current, employee.id]
+                          )
+                        }
+                      >
+                        <Check
+                          className={
+                            selected ? "opacity-100" : "opacity-0"
+                          }
+                        />
+                        <span className="grid min-w-0 flex-1">
+                          <strong className="truncate">
+                            {employee.name}
+                          </strong>
+                          <small className="truncate text-[11px] text-[var(--muted-foreground)]">
+                            {employee.identity}
+                          </small>
+                        </span>
+                      </CommandItem>
+                    );
+                  })}
+              </CommandGroup>
+            </CommandList>
+          </Command>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setMembersDialogOpen(false)}
+              disabled={busy}
+            >
+              {t("chat.cancel")}
+            </Button>
+            <Button onClick={() => void saveMembers()} disabled={busy}>
+              {busy ? <LoaderCircle className="spin" /> : <Check />}
+              {t("chat.saveMembers")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <AlertDialog
+        open={conversationToDelete !== null}
+        onOpenChange={(open) => {
+          if (!open && !busy) setConversationToDelete(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("chat.deleteConversation")}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("chat.deleteConversationConfirm")}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>
+              {t("chat.cancel")}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-[var(--danger)] text-white hover:bg-[var(--danger)]"
+              disabled={busy}
+              onClick={(event) => {
+                event.preventDefault();
+                void deleteConversation();
+              }}
+            >
+              {busy ? (
+                <LoaderCircle className="spin" size={15} />
+              ) : (
+                <Trash2 size={15} />
+              )}
+              {t("chat.deleteConversation")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

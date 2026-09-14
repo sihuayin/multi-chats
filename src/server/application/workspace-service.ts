@@ -338,6 +338,76 @@ export class WorkspaceService {
     });
   }
 
+  async deleteConversation(id: string): Promise<void> {
+    await this.store.update((state) => {
+      const conversation = state.conversations.find((item) => item.id === id);
+      if (!conversation) return;
+      const activeRun = state.runs.find(
+        (run) =>
+          run.conversationId === id &&
+          ["queued", "running", "waiting_approval"].includes(run.status)
+      );
+      if (activeRun) {
+        throw new ApiError(
+          409,
+          "Stop the active Run before deleting this Conversation",
+          "conversation_active_run"
+        );
+      }
+
+      const runIds = new Set(
+        state.runs
+          .filter((run) => run.conversationId === id)
+          .map((run) => run.id)
+      );
+      const taskIds = new Set(
+        state.tasks
+          .filter((task) => task.conversationId === id)
+          .map((task) => task.id)
+      );
+      const discussionIds = new Set(
+        state.discussions
+          .filter((discussion) => discussion.conversationId === id)
+          .map((discussion) => discussion.id)
+      );
+
+      state.conversations = state.conversations.filter(
+        (item) => item.id !== id
+      );
+      state.messages = state.messages.filter(
+        (message) => message.conversationId !== id
+      );
+      state.runs = state.runs.filter(
+        (run) => !runIds.has(run.id)
+      );
+      state.runEvents = state.runEvents.filter(
+        (event) => !runIds.has(event.runId)
+      );
+      state.tasks = state.tasks.filter((task) => !taskIds.has(task.id));
+      state.discussions = state.discussions.filter(
+        (discussion) => !discussionIds.has(discussion.id)
+      );
+      state.artifacts = state.artifacts.filter(
+        (artifact) =>
+          !(
+            (artifact.ownerType === "task" &&
+              taskIds.has(artifact.ownerId)) ||
+            (artifact.ownerType === "discussion" &&
+              discussionIds.has(artifact.ownerId))
+          )
+      );
+      state.approvals = state.approvals.filter(
+        (approval) =>
+          !(
+            runIds.has(approval.runId) ||
+            (approval.taskId !== undefined &&
+              taskIds.has(approval.taskId))
+          )
+      );
+      state.workspace.updatedAt = now();
+    });
+  }
+
   async createTask(conversationId: string, input: unknown): Promise<Task> {
     const parsed = taskInputSchema.parse(input);
     return this.store.update((state) => {

@@ -330,6 +330,10 @@ async function handleApiRoute(
           status: 201
         });
       }
+      if (request.method === "DELETE" && id && !child) {
+        await workspace.deleteConversation(id);
+        return new Response(null, { status: 204 });
+      }
       if (request.method === "PATCH" && id && !child) {
         const parsed = (await body(request)) as { memberIds?: string[] };
         if (!Array.isArray(parsed.memberIds)) {
