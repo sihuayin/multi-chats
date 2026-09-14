@@ -205,6 +205,40 @@ describe("AppState migrations", () => {
     );
   });
 
+  it("rejects dangling context revision history references", () => {
+    const state = createFixtureState();
+    const discussion = createFixtureDiscussion({
+      workspaceId: state.workspace.id,
+      conversationId: state.conversations[0].id
+    });
+    state.discussions.push(discussion);
+    state.discussionContextRevisions.push({
+      id: "context-invalid",
+      workspaceId: state.workspace.id,
+      discussionId: discussion.id,
+      roundId: discussion.rounds[0].id,
+      turnId: discussion.rounds[0].turns[0].id,
+      contextWindow: 32_768,
+      maxOutputTokens: 4_096,
+      safetyMarginTokens: 3_277,
+      schemaOverheadTokens: 80,
+      toolOverheadTokens: 20,
+      inputTokens: 120,
+      outputReserveTokens: 4_096,
+      countSource: "estimated",
+      contextHash: "context-invalid",
+      roundIds: ["missing-round"],
+      turnIds: [discussion.rounds[0].turns[0].id],
+      messageIds: [],
+      compressionIds: [],
+      createdAt: state.workspace.createdAt
+    });
+
+    expect(() => migrateAppState(state)).toThrow(
+      "Workspace discussionContextRevisions are invalid"
+    );
+  });
+
   it("rejects half-linked Discussion Task origins", () => {
     const state = createFixtureState();
     state.tasks.push({

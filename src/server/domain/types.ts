@@ -168,10 +168,17 @@ export type DiscussionContextRevision = {
   discussionId: string;
   roundId: string;
   turnId: string;
+  contextWindow: number;
+  maxOutputTokens: number;
+  safetyMarginTokens: number;
+  schemaOverheadTokens: number;
+  toolOverheadTokens: number;
   inputTokens: number;
   outputReserveTokens: number;
   countSource: "exact" | "estimated" | "unknown";
   contextHash: string;
+  roundIds: string[];
+  turnIds: string[];
   messageIds: string[];
   compressionIds: string[];
   createdAt: IsoDate;
@@ -270,6 +277,7 @@ export type Run = {
   memberSnapshot: string[];
   status: RunStatus;
   error?: string;
+  errorCode?: string;
   createdAt: IsoDate;
   startedAt?: IsoDate;
   completedAt?: IsoDate;

@@ -3,6 +3,7 @@ import { DiscussionOrchestrator } from "@/server/application/discussion-orchestr
 import {
   createModelGateway
 } from "@/server/adapters/model/model-gateway";
+import { resolveModelContext } from "@/server/adapters/model/provider-registry";
 import { logger } from "@/server/observability/logger";
 import { createCredentialCipher } from "@/server/security/credential-cipher";
 import { getStore } from "@/server/store";
@@ -12,7 +13,11 @@ async function main(): Promise<void> {
   const runs = new ConversationRunService(
     store,
     createCredentialCipher(),
-    createModelGateway()
+    createModelGateway(),
+    {
+      modelContext: ({ provider, modelId }) =>
+        resolveModelContext(provider, modelId)
+    }
   );
   const discussions = new DiscussionOrchestrator(store, runs);
   await runs.recoverInterruptedRuns();

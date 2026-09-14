@@ -110,6 +110,16 @@ type DiscussionView = {
     usedRounds: number;
     maxRounds: number;
     usedParticipants: number;
+    context?: {
+      countSource: "exact" | "estimated" | "unknown";
+      inputTokens: number;
+      contextWindow: number;
+      outputReserveTokens: number;
+      schemaOverheadTokens: number;
+      toolOverheadTokens: number;
+      roundIds: string[];
+      turnIds: string[];
+    };
   };
   availableActions: DiscussionAction[];
 };
@@ -663,6 +673,24 @@ export function DiscussionWorkspace() {
                   {view.discussion.maxRounds} ·{" "}
                   {view.discussion.participantCount} participants
                 </p>
+                {view.budget.context ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[var(--muted-foreground)]">
+                    <Badge variant="outline">
+                      {view.budget.context.countSource} context
+                    </Badge>
+                    <span>
+                      {view.budget.context.inputTokens.toLocaleString()} /{" "}
+                      {view.budget.context.contextWindow.toLocaleString()} tokens
+                    </span>
+                    <span>
+                      {view.budget.context.outputReserveTokens.toLocaleString()}{" "}
+                      output reserved
+                    </span>
+                    <span>
+                      {view.budget.context.turnIds.length} Turns selected
+                    </span>
+                  </div>
+                ) : null}
               </div>
               <div className={styles.commandRow}>
                 {view.availableActions.includes("start") ? (

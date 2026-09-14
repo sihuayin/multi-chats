@@ -146,10 +146,17 @@ export const discussionContextRevisionSchema = z
     discussionId: identifier,
     roundId: identifier,
     turnId: identifier,
+    contextWindow: z.number().int().positive(),
+    maxOutputTokens: tokenCount,
+    safetyMarginTokens: tokenCount,
+    schemaOverheadTokens: tokenCount,
+    toolOverheadTokens: tokenCount,
     inputTokens: tokenCount,
     outputReserveTokens: tokenCount,
     countSource: z.enum(["exact", "estimated", "unknown"]),
     contextHash: identifier,
+    roundIds: z.array(identifier),
+    turnIds: z.array(identifier),
     messageIds: z.array(identifier),
     compressionIds: z.array(identifier),
     createdAt: timestamp
@@ -386,6 +393,20 @@ export function validateRuntimeContracts(
     const turnId = record.turnId as string;
     if (turnDiscussionIds.get(turnId) !== discussionId) {
       throw new Error("Workspace discussionContextRevisions are invalid");
+    }
+    for (const roundId of record.roundIds as string[]) {
+      if (roundDiscussionIds.get(roundId) !== discussionId) {
+        throw new Error(
+          "Workspace discussionContextRevisions are invalid"
+        );
+      }
+    }
+    for (const turnId of record.turnIds as string[]) {
+      if (turnDiscussionIds.get(turnId) !== discussionId) {
+        throw new Error(
+          "Workspace discussionContextRevisions are invalid"
+        );
+      }
     }
     for (const messageId of record.messageIds as string[]) {
       requireReference(

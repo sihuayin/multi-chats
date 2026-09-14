@@ -14,6 +14,11 @@ import { mistralProvider } from "@earendil-works/pi-ai/providers/mistral";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { openrouterProvider } from "@earendil-works/pi-ai/providers/openrouter";
 import { providerCatalog } from "@/lib/provider-catalog";
+import {
+  DEFAULT_MAX_OUTPUT_TOKENS,
+  DEFAULT_MODEL_CONTEXT_WINDOW,
+  type ModelContext
+} from "@/server/application/discussion-context";
 import type { ProviderId } from "@/server/domain/types";
 import type {
   ProviderModelSummary,
@@ -78,6 +83,19 @@ export function listProviderModels(
       maxTokens: model.maxTokens,
       reasoning: Boolean(model.reasoning)
     }));
+}
+
+export function resolveModelContext(
+  providerId: ProviderId,
+  modelId: string
+): ModelContext {
+  const model = listProviderModels(providerId).find(
+    (item) => item.id === modelId
+  );
+  return {
+    contextWindow: model?.contextWindow ?? DEFAULT_MODEL_CONTEXT_WINDOW,
+    maxOutputTokens: model?.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS
+  };
 }
 
 export const piProviderRegistry: ProviderRegistry = {

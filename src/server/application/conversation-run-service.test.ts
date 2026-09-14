@@ -3,6 +3,7 @@ import {
   ConversationRunService,
   parseMentions
 } from "@/server/application/conversation-run-service";
+import { DiscussionOrchestrator } from "@/server/application/discussion-orchestrator";
 import { AesCredentialCipher } from "@/server/security/credential-cipher";
 import {
   createFixtureDiscussion,
@@ -91,16 +92,19 @@ describe("ConversationRun", () => {
     await runs.processRun(started.run.id);
 
     expect(engine.requests).toHaveLength(2);
-    expect(engine.requests[0].prompt).toContain(
-      "Alice established the initial position."
-    );
-    expect(engine.requests[0].prompt).toContain(
-      "Challenge the assumptions from the earlier phase."
-    );
+    expect(
+      engine.requests[0].messages?.some(
+        (message) =>
+          message.role === "assistant" &&
+          message.turnId === discussion.rounds[0].turns[0].id
+      )
+    ).toBe(true);
     expect(engine.requests[0].prompt).not.toContain(
       "UNRELATED CONVERSATION CONTEXT"
     );
-    expect(engine.requests[1].prompt).toContain(`Alice: ${expectedResponse}`);
+    expect(engine.requests[1].prompt).toContain(
+      `Assistant: ${expectedResponse}`
+    );
 
     const persisted = await store.read((current) => {
       const currentDiscussion = current.discussions.find(
@@ -176,6 +180,233 @@ describe("ConversationRun", () => {
       runIds: [started.run.id],
       turns: persisted.turns
     });
+  });
+
+  it("plans structured Discussion context and persists a revision", async () => {
+    const state = createFixtureState();
+    const { discussion, round } = addFixturePhase(state);
+    const store = new MemoryStore(state);
+    const expectedResponse = JSON.stringify(
+      createFixtureTurnPayload("cross_response", "planned response")
+    );
+    const engine = new RecordingModelGateway(() => [expectedResponse]);
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      engine,
+      {
+        tokenCounter: (text) => Math.ceil(text.length / 4)
+      }
+    );
+
+    const started = await runs.startPhaseRun(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        discussionId: discussion.id,
+        roundId: round.id,
+        participantSnapshot: round.participantSnapshot,
+        context: "Alice established the initial position.",
+        purpose: "Challenge the assumptions from the earlier phase."
+      }
+    );
+    await runs.processRun(started.run.id);
+
+    expect(engine.requests).toHaveLength(2);
+    expect(engine.requests[0].systemPrompt).toContain("Role: analyst");
+    expect(
+      engine.requests[0].messages?.some(
+        (message) =>
+          message.role === "user" &&
+          message.discussionId === discussion.id &&
+          message.phase === "cross_response"
+      )
+    ).toBe(true);
+    expect(
+      engine.requests[0].messages?.some(
+        (message) =>
+          message.role === "assistant" &&
+          message.discussionId === discussion.id &&
+          message.turnId === discussion.rounds[0].turns[0].id
+      )
+    ).toBe(true);
+    expect(
+      engine.requests[0].messages?.some((message) =>
+        message.content.includes("Alice established the initial position.")
+      )
+    ).toBe(true);
+
+    const revisions = await store.read(
+      (current) => current.discussionContextRevisions
+    );
+    expect(revisions).toHaveLength(2);
+    expect(revisions[0]).toMatchObject({
+      discussionId: discussion.id,
+      roundId: round.id,
+      countSource: "exact"
+    });
+    expect(revisions[0].inputTokens).toBeGreaterThan(0);
+    expect(revisions[0].schemaOverheadTokens).toBeGreaterThan(0);
+    expect(revisions[0].toolOverheadTokens).toBeGreaterThan(0);
+    expect(revisions[0].safetyMarginTokens).toBeGreaterThan(0);
+    expect(revisions[0].maxOutputTokens).toBe(4_096);
+    expect(revisions[0].turnIds).toContain(discussion.rounds[0].turns[0].id);
+
+    const view = await new DiscussionOrchestrator(
+      store,
+      runs
+    ).getDiscussionView(discussion.id);
+    expect(view.budget.context).toMatchObject({
+      countSource: "exact",
+      turnIds: revisions[1].turnIds
+    });
+  });
+
+  it("rejects a Discussion Turn before the Provider when context cannot fit", async () => {
+    const state = createFixtureState();
+    const { discussion, round } = addFixturePhase(state);
+    const store = new MemoryStore(state);
+    const engine = new RecordingModelGateway(() => [
+      JSON.stringify(createFixtureTurnPayload("cross_response"))
+    ]);
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      engine,
+      {
+        modelContext: () => ({
+          contextWindow: 64,
+          maxOutputTokens: 32
+        })
+      }
+    );
+    const started = await runs.startPhaseRun(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        discussionId: discussion.id,
+        roundId: round.id,
+        participantSnapshot: round.participantSnapshot,
+        context: "Alice established the initial position.",
+        purpose: "Challenge the assumptions from the earlier phase."
+      }
+    );
+
+    const failed = await runs.processRun(started.run.id);
+
+    expect(engine.requests).toHaveLength(0);
+    expect(failed).toMatchObject({
+      status: "failed",
+      errorCode: "discussion_context_budget_exceeded"
+    });
+    const persisted = await store.read((current) => ({
+      events: current.runEvents.filter((event) => event.runId === failed.id),
+      discussionEvents:
+        current.discussions.find((item) => item.id === discussion.id)?.events ??
+        []
+    }));
+    expect(persisted.events).toContainEqual(
+      expect.objectContaining({
+        type: "model_error",
+        payload: expect.objectContaining({
+          code: "discussion_context_budget_exceeded"
+        })
+      })
+    );
+    expect(persisted.discussionEvents.map((event) => event.type)).toContain(
+      "context_budget_rejected"
+    );
+  });
+
+  it("keeps the latest valid Turns before older history and marks estimates", async () => {
+    const state = createFixtureState();
+    const { discussion, round } = addFixturePhase(state);
+    const unresolvedTurnId = `${discussion.id}-unresolved-turn`;
+    discussion.rounds.unshift({
+      id: `${discussion.id}-unresolved-round`,
+      roundNumber: -1,
+      phase: "cross_response",
+      status: "completed",
+      participantSnapshot: structuredClone(discussion.participants),
+      turns: [
+        {
+          id: unresolvedTurnId,
+          employeeId: discussion.participants[0].employeeId,
+          role: "analyst",
+          order: 1,
+          status: "completed",
+          payload: {
+            summary: "Unresolved question",
+            claims: [],
+            assumptions: [],
+            risks: [],
+            openQuestions: ["Should the migration be reversible?"],
+            agreements: [],
+            disagreements: [],
+            corrections: []
+          },
+          createdAt: state.workspace.createdAt,
+          completedAt: state.workspace.updatedAt
+        }
+      ],
+      createdAt: state.workspace.createdAt,
+      completedAt: state.workspace.updatedAt
+    });
+    const oldTurnId = `${discussion.id}-old-turn`;
+    discussion.rounds.unshift({
+      id: `${discussion.id}-old-round`,
+      roundNumber: 0,
+      phase: "positions",
+      status: "completed",
+      participantSnapshot: structuredClone(discussion.participants),
+      turns: [
+        {
+          id: oldTurnId,
+          employeeId: discussion.participants[0].employeeId,
+          role: "analyst",
+          order: 1,
+          status: "completed",
+          content: `Old context ${"x".repeat(10_000)}`,
+          createdAt: state.workspace.createdAt,
+          completedAt: state.workspace.updatedAt
+        }
+      ],
+      createdAt: state.workspace.createdAt,
+      completedAt: state.workspace.updatedAt
+    });
+    const store = new MemoryStore(state);
+    const engine = new RecordingModelGateway(() => [
+      JSON.stringify(createFixtureTurnPayload("cross_response"))
+    ]);
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      engine,
+      {
+        modelContext: () => ({
+          contextWindow: 3_000,
+          maxOutputTokens: 200
+        })
+      }
+    );
+    const started = await runs.startPhaseRun(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        discussionId: discussion.id,
+        roundId: round.id,
+        participantSnapshot: round.participantSnapshot,
+        context: "Prior phase context.",
+        purpose: "Challenge the assumptions from the earlier phase."
+      }
+    );
+
+    await runs.processRun(started.run.id);
+
+    const revision = await store.read(
+      (current) => current.discussionContextRevisions[0]
+    );
+    expect(revision.countSource).toBe("estimated");
+    expect(revision.turnIds).toContain(discussion.rounds[2].turns[0].id);
+    expect(revision.turnIds).toContain(unresolvedTurnId);
+    expect(revision.turnIds).not.toContain(oldTurnId);
   });
 
   it("preserves Run failure outcomes and settles the phase Turn", async () => {

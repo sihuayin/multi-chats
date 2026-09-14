@@ -1,7 +1,10 @@
 import {
   createModelGateway
 } from "@/server/adapters/model/model-gateway.server";
-import { piProviderRegistry } from "@/server/adapters/model/provider-registry.server";
+import {
+  piProviderRegistry,
+  resolveModelContext
+} from "@/server/adapters/model/provider-registry.server";
 import { ConversationRunService } from "@/server/application/conversation-run-service";
 import { DiscussionOrchestrator } from "@/server/application/discussion-orchestrator";
 import { WorkspaceService } from "@/server/application/workspace-service";
@@ -26,7 +29,11 @@ export function getServices(): AppServices {
     const runs = new ConversationRunService(
       store,
       cipher,
-      createModelGateway()
+      createModelGateway(),
+      {
+        modelContext: ({ provider, modelId }) =>
+          resolveModelContext(provider, modelId)
+      }
     );
     globalState.__multiChatsServices = {
       workspace: new WorkspaceService(store, cipher, piProviderRegistry),

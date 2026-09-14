@@ -23,8 +23,9 @@ export type RunSettlementCommand =
     })
   | (SettlementBase & {
       outcome: "failed";
-      reason: "model_error";
+      reason: "model_error" | "context_budget_exceeded";
       error: string;
+      errorCode?: string;
     })
   | (SettlementBase & {
       outcome: "cancelled";
@@ -184,6 +185,8 @@ export function settleRun(
   run.error = command.outcome === "failed" || command.outcome === "interrupted"
     ? command.error
     : undefined;
+  const errorCode = "errorCode" in command ? command.errorCode : undefined;
+  run.errorCode = errorCode;
 
   if (command.outcome === "completed") {
     appendEvent(
@@ -213,6 +216,7 @@ export function settleRun(
       {
         reason: command.reason,
         message: command.error,
+        errorCode,
         interrupted: command.outcome === "interrupted"
       },
       eventFactory

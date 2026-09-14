@@ -80,7 +80,8 @@ function runView(run: Run) {
     createdAt: run.createdAt,
     startedAt: run.startedAt,
     completedAt: run.completedAt,
-    error: run.error
+    error: run.error,
+    errorCode: run.errorCode
   };
 }
 
@@ -147,6 +148,12 @@ export function buildDiscussionView(
   const confirmedTask = discussion.confirmedTaskId
     ? state.tasks.find((task) => task.id === discussion.confirmedTaskId)
     : undefined;
+  const latestContextRevision = state.discussionContextRevisions
+    .filter((revision) => revision.discussionId === discussion.id)
+    .sort((left, right) =>
+      left.createdAt.localeCompare(right.createdAt)
+    )
+    .at(-1);
 
   return {
     discussion: {
@@ -195,7 +202,27 @@ export function buildDiscussionView(
         (round) => round.phase !== "synthesis"
       ).length,
       maxRounds: discussion.maxRounds,
-      usedParticipants: discussion.participants.length
+      usedParticipants: discussion.participants.length,
+      context: latestContextRevision
+        ? {
+            id: latestContextRevision.id,
+            roundId: latestContextRevision.roundId,
+            turnId: latestContextRevision.turnId,
+            contextWindow: latestContextRevision.contextWindow,
+            maxOutputTokens: latestContextRevision.maxOutputTokens,
+            safetyMarginTokens: latestContextRevision.safetyMarginTokens,
+            schemaOverheadTokens: latestContextRevision.schemaOverheadTokens,
+            toolOverheadTokens: latestContextRevision.toolOverheadTokens,
+            inputTokens: latestContextRevision.inputTokens,
+            outputReserveTokens: latestContextRevision.outputReserveTokens,
+            countSource: latestContextRevision.countSource,
+            contextHash: latestContextRevision.contextHash,
+            roundIds: latestContextRevision.roundIds,
+            turnIds: latestContextRevision.turnIds,
+            messageIds: latestContextRevision.messageIds,
+            createdAt: latestContextRevision.createdAt
+          }
+        : undefined
     },
     availableActions: availableActions(
       discussion,

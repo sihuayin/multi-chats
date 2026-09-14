@@ -7,6 +7,7 @@ import type {
   DiscussionTurnPayload,
   Employee,
   Message,
+  ProviderId,
   Run,
   RunEvent,
   ToolDefinition
@@ -14,11 +15,19 @@ import type {
 import type {
   ModelEvent,
   ModelGateway,
+  ModelMessage,
   ModelTool
 } from "@/server/application/model-gateway";
 import { validateDiscussionParticipants } from "@/server/application/discussion-domain";
+import { appendDiscussionEvent } from "@/server/application/discussion-ledger";
 import { parseDiscussionBrief } from "@/server/application/discussion-brief";
-import { composeDiscussionPrompt } from "@/server/application/discussion-prompts";
+import {
+  DEFAULT_MAX_OUTPUT_TOKENS,
+  DEFAULT_MODEL_CONTEXT_WINDOW,
+  DiscussionContextBudgetError,
+  type ModelContext,
+  planDiscussionContext
+} from "@/server/application/discussion-context";
 import { parseDiscussionTurnPayload } from "@/server/application/discussion-turn-payload";
 import { ApiError, notFound } from "@/server/application/errors";
 import { appendEvent } from "@/server/application/run-ledger";
@@ -110,21 +119,12 @@ function transcriptFor(state: AppState, conversationId: string): string {
     .join("\n\n");
 }
 
-function phaseTranscriptFor(state: AppState, runId: string): string {
-  return state.messages
-    .filter(
+function promptFromMessages(messages: ModelMessage[]): string {
+  return messages
+    .map(
       (message) =>
-        message.runId === runId && message.status === "complete"
+        `${message.role === "user" ? "User" : "Assistant"}: ${message.content}`
     )
-    .map((message) => {
-      const author =
-        message.authorType === "system"
-          ? "System"
-          : state.employees.find(
-              (employee) => employee.id === message.authorId
-            )?.name ?? "Employee";
-      return `${author}: ${message.content}`;
-    })
     .join("\n\n");
 }
 
@@ -313,6 +313,11 @@ export class ConversationRunService {
     private readonly gateway: ModelGateway,
     private readonly options: {
       approvalTimeoutMs?: number;
+      modelContext?: (input: {
+        provider: ProviderId;
+        modelId: string;
+      }) => ModelContext;
+      tokenCounter?: (value: string) => number;
       toolGateway?: ToolGateway;
     } = {}
   ) {
@@ -827,14 +832,38 @@ export class ConversationRunService {
         return cancellation.run;
       }
       const message = error instanceof Error ? error.message : String(error);
+      const budgetError =
+        error instanceof DiscussionContextBudgetError ? error : undefined;
       const failure = await this.store.update((state) => {
         const run = state.runs.find((item) => item.id === runId);
         if (!run) notFound("Run");
+        if (budgetError) {
+          appendEvent(state, run, "model_error", {
+            kind: "context_budget",
+            code: budgetError.code,
+            ...budgetError.details
+          });
+          const discussion = run.discussionId
+            ? state.discussions.find(
+                (item) => item.id === run.discussionId
+              )
+            : undefined;
+          if (discussion) {
+            appendDiscussionEvent(discussion, "context_budget_rejected", {
+              runId: run.id,
+              discussionId: discussion.id,
+              roundId: discussion.rounds.at(-1)?.id,
+              code: budgetError.code,
+              ...budgetError.details
+            });
+          }
+        }
         const settlement = settleRun(state, {
           runId,
           outcome: "failed",
-          reason: "model_error",
-          error: message
+          reason: budgetError ? "context_budget_exceeded" : "model_error",
+          error: message,
+          errorCode: budgetError?.code
         });
         settleDiscussionTurns(state, runId, message);
         return { run: structuredClone(run), settlement };
@@ -895,6 +924,14 @@ export class ConversationRunService {
       const skills = employee.skillIds
         .map((id) => state.skills.find((skill) => skill.id === id))
         .filter((skill): skill is NonNullable<typeof skill> => Boolean(skill));
+      const tools = toolDefinitionsForEmployee(state, employee);
+      const modelContext = this.options.modelContext?.({
+        provider: credential.provider,
+        modelId: employee.modelId
+      }) ?? {
+        contextWindow: DEFAULT_MODEL_CONTEXT_WINDOW,
+        maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS
+      };
       return {
         run: structuredClone(run),
         employee: structuredClone(employee),
@@ -902,9 +939,8 @@ export class ConversationRunService {
         encryptedCredential: credential.encryptedCredential,
         trigger: structuredClone(trigger),
         transcript: transcriptFor(state, run.conversationId),
-        phaseTranscript: phaseTranscriptFor(state, run.id),
         taskContext: taskContext(state, run.conversationId, employeeId),
-        tools: toolDefinitionsForEmployee(state, employee),
+        tools,
         skills: structuredClone(skills),
         phaseContext:
           discussion && round && participant && turn
@@ -916,12 +952,21 @@ export class ConversationRunService {
                 role: participant.role,
                 objective: participant.objective,
                 turnId: turn.id,
-                profile: composeDiscussionPrompt({
-                  mode: discussion.mode,
-                  role: participant.role,
-                  phase: round.phase,
-                  objective: participant.objective,
-                  language: discussion.language
+                roundId: round.id,
+                plan: planDiscussionContext({
+                  state,
+                  discussion,
+                  round,
+                  participant,
+                  currentTurn: turn,
+                  employee,
+                  skills,
+                  tools,
+                  triggerMessageId: trigger.id,
+                  triggerContent: trigger.content,
+                  contextWindow: modelContext.contextWindow,
+                  maxOutputTokens: modelContext.maxOutputTokens,
+                  tokenCounter: this.options.tokenCounter
                 })
               }
             : undefined
@@ -963,15 +1008,44 @@ export class ConversationRunService {
         turn.status = "streaming";
         turn.messageId = message.id;
         turn.startedAt = timestamp;
+        const plan = context.phaseContext.plan;
+        state.discussionContextRevisions.push({
+          id: crypto.randomUUID(),
+          workspaceId: state.workspace.id,
+          discussionId: context.phaseContext.discussionId,
+          roundId: context.phaseContext.roundId,
+          turnId: context.phaseContext.turnId,
+          contextWindow: plan.contextWindow,
+          maxOutputTokens: plan.maxOutputTokens,
+          safetyMarginTokens: plan.safetyMarginTokens,
+          schemaOverheadTokens: plan.schemaOverheadTokens,
+          toolOverheadTokens: plan.toolOverheadTokens,
+          inputTokens: plan.inputTokens,
+          outputReserveTokens: plan.outputReserveTokens,
+          countSource: plan.countSource,
+          contextHash: plan.contextHash,
+          roundIds: plan.roundIds,
+          turnIds: plan.turnIds,
+          messageIds: plan.messageIds,
+          compressionIds: [],
+          createdAt: timestamp
+        });
       }
       appendEvent(state, run, "employee_turn_started", {
         employeeId,
         messageId: message.id,
         ...(run.discussionId
           ? {
-              discussionId: run.discussionId,
-              discussionTurnId: context.phaseContext?.turnId
-            }
+            discussionId: run.discussionId,
+            discussionTurnId: context.phaseContext?.turnId,
+            contextRevision: context.phaseContext
+              ? {
+                  contextWindow: context.phaseContext.plan.contextWindow,
+                  maxOutputTokens: context.phaseContext.plan.maxOutputTokens,
+                  countSource: context.phaseContext.plan.countSource
+                }
+              : undefined
+          }
           : {})
       });
       for (const skill of context.skills) {
@@ -1006,35 +1080,28 @@ export class ConversationRunService {
         })
     }));
 
-    const systemPrompt = [
-      `You are ${context.employee.name}.`,
-      context.employee.identity,
-      ...context.skills.map(
-        (skill) =>
-          `Skill: ${skill.name}\n${skill.instructions}\nInputs: ${skill.inputs.join(", ")}\nOutputs: ${skill.outputs.join(", ")}`
-      ),
-      context.phaseContext
-        ? context.phaseContext.profile.systemInstructions
-        : "",
-      "Respond in the active Conversation. Do not claim to have used a Tool unless its result appears in the run."
-    ].join("\n\n");
+    const systemPrompt =
+      context.phaseContext?.plan.systemPrompt ??
+      [
+        `You are ${context.employee.name}.`,
+        context.employee.identity,
+        ...context.skills.map(
+          (skill) =>
+            `Skill: ${skill.name}\n${skill.instructions}\nInputs: ${skill.inputs.join(", ")}\nOutputs: ${skill.outputs.join(", ")}`
+        ),
+        "Respond in the active Conversation. Do not claim to have used a Tool unless its result appears in the run."
+      ].join("\n\n");
 
-    const prompt = [
-      context.phaseContext
-        ? `Discussion phase transcript:\n${context.phaseTranscript}`
-        : `Conversation transcript:\n${context.transcript}`,
-      context.phaseContext
-        ? ""
-        : `Active task context:\n${context.taskContext}`,
-      context.phaseContext
-        ? `Discussion phase brief:\n${context.trigger.content}`
-        : `Current user request:\n${context.run.memberSnapshot.length > 1 ? "Respond as your assigned role and account for earlier responses in this Run." : ""}`,
-      context.phaseContext?.profile.objectiveContext ?? "",
-      context.phaseContext?.profile.responseInstructions ??
-        "Return a concise, useful response."
-    ]
-      .filter(Boolean)
-      .join("\n\n");
+    const prompt = context.phaseContext
+      ? promptFromMessages(context.phaseContext.plan.messages)
+      : [
+          `Conversation transcript:\n${context.transcript}`,
+          `Active task context:\n${context.taskContext}`,
+          `Current user request:\n${context.run.memberSnapshot.length > 1 ? "Respond as your assigned role and account for earlier responses in this Run." : ""}`,
+          "Return a concise, useful response."
+        ]
+          .filter(Boolean)
+          .join("\n\n");
 
     let finalText = "";
     let completed = false;
@@ -1049,8 +1116,17 @@ export class ConversationRunService {
           provider: context.provider,
           credential: this.cipher.decrypt(context.encryptedCredential),
           modelId: context.employee.modelId,
+          requestId: context.run.requestId,
+          purpose:
+            context.phaseContext?.phase === "synthesis"
+              ? "discussion_synthesis"
+              : context.phaseContext
+                ? "discussion_turn"
+                : "conversation",
+          maxOutputTokens: context.phaseContext?.plan.maxOutputTokens,
           systemPrompt,
           prompt,
+          messages: context.phaseContext?.plan.messages,
           tools: modelTools,
           signal
         })) {
@@ -1072,7 +1148,7 @@ export class ConversationRunService {
               const brief = parseDiscussionBrief(finalText);
               if (
                 brief.promptProfileVersion !==
-                  context.phaseContext.profile.version ||
+                  context.phaseContext.plan.promptProfileVersion ||
                 brief.discussionId !== context.phaseContext.discussionId ||
                 brief.mode !== context.phaseContext.mode
               ) {
