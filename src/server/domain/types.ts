@@ -156,7 +156,10 @@ export type DiscussionCompression = {
   minorityPositions: string[];
   schemaVersion: number;
   promptProfileVersion: string;
+  compressionProfileVersion: string;
   contentHash: string;
+  sourceSpanHash: string;
+  strategy: "semantic" | "extractive";
   provider?: ProviderId;
   modelId?: string;
   createdByAttemptId?: string;
@@ -484,6 +487,7 @@ export const DISCUSSION_EVENT_TYPES = [
   "constraints_updated",
   "discussion_review_requested",
   "compression_applied",
+  "compression_used",
   "intervention_queued",
   "intervention_applied",
   "context_budget_rejected",

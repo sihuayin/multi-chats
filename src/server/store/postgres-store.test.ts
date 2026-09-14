@@ -136,7 +136,7 @@ describeWithDatabase("PostgresStore", () => {
           discussions: state.discussions
         }))
       ).toEqual({
-        schemaVersion: 3,
+        schemaVersion: 4,
         discussions: []
       });
     } finally {

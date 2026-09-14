@@ -40,7 +40,7 @@ export function evidenceAlias(
   return `${kind}:${sourceId}`;
 }
 
-function referenceId(alias: string): string {
+export function evidenceReferenceId(alias: string): string {
   return `evidence-${createHash("sha256")
     .update(alias)
     .digest("hex")
@@ -152,7 +152,7 @@ function resolveEvidence(
 
   return {
     reference: {
-      id: referenceId(alias),
+      id: evidenceReferenceId(alias),
       workspaceId: state.workspace.id,
       kind,
       sourceId,

@@ -6,7 +6,7 @@ import {
   validateDiscussionReferences
 } from "@/server/application/discussion-domain";
 
-export const CURRENT_SCHEMA_VERSION = 3;
+export const CURRENT_SCHEMA_VERSION = 4;
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -70,6 +70,20 @@ function migrateV2ToV3(state: Record<string, unknown>): void {
   ]) {
     state[key] ??= [];
   }
+  state.schemaVersion = 3;
+}
+
+function migrateV3ToV4(state: Record<string, unknown>): void {
+  if (!Array.isArray(state.discussionCompressions)) {
+    throw new Error("Workspace discussionCompressions are invalid");
+  }
+  for (const value of state.discussionCompressions) {
+    const compression = record(value);
+    compression.sourceSpanHash ??=
+      `legacy:${String(compression.contentHash ?? compression.id ?? "unknown")}`;
+    compression.strategy ??= "extractive";
+    compression.compressionProfileVersion ??= "legacy";
+  }
   state.schemaVersion = CURRENT_SCHEMA_VERSION;
 }
 
@@ -131,6 +145,7 @@ export function migrateAppState(input: unknown): AppState {
     migrateV1ToV2(state);
   }
   if (state.schemaVersion === 2) migrateV2ToV3(state);
+  if (state.schemaVersion === 3) migrateV3ToV4(state);
   if (version !== CURRENT_SCHEMA_VERSION) {
     if (state.schemaVersion !== CURRENT_SCHEMA_VERSION) {
       throw new Error(

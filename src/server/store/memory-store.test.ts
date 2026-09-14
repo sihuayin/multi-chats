@@ -19,7 +19,7 @@ describe("MemoryStore runtime contracts", () => {
 
     const store = new MemoryStore(legacy as never);
 
-    expect(await store.read((state) => state.schemaVersion)).toBe(3);
+    expect(await store.read((state) => state.schemaVersion)).toBe(4);
     expect(await store.read((state) => state.providerAttempts)).toEqual([]);
   });
 
@@ -110,7 +110,10 @@ describe("MemoryStore runtime contracts", () => {
       minorityPositions: [],
       schemaVersion: 1,
       promptProfileVersion: "discussion-prompts.v2",
+      compressionProfileVersion: "discussion-compression.v1",
       contentHash: "hash-memory",
+      sourceSpanHash: "source-span-memory",
+      strategy: "extractive",
       createdAt: state.workspace.createdAt,
       updatedAt: state.workspace.updatedAt
     });

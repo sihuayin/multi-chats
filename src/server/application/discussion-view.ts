@@ -269,6 +269,25 @@ export function buildDiscussionView(
             roundIds: latestContextRevision.roundIds,
             turnIds: latestContextRevision.turnIds,
             messageIds: latestContextRevision.messageIds,
+            compressionIds: latestContextRevision.compressionIds,
+            compressions: latestContextRevision.compressionIds
+              .map((compressionId) =>
+                state.discussionCompressions.find(
+                  (compression) => compression.id === compressionId
+                )
+              )
+              .filter(
+                (
+                  compression
+                ): compression is NonNullable<typeof compression> =>
+                  Boolean(compression)
+              )
+              .map((compression) => ({
+                id: compression.id,
+                schemaVersion: compression.schemaVersion,
+                strategy: compression.strategy,
+                sourceSpanHash: compression.sourceSpanHash
+              })),
             createdAt: latestContextRevision.createdAt
           }
         : undefined

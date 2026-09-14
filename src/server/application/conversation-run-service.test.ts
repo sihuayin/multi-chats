@@ -4,6 +4,7 @@ import {
   parseMentions
 } from "@/server/application/conversation-run-service";
 import { DiscussionOrchestrator } from "@/server/application/discussion-orchestrator";
+import { evidenceReferenceId } from "@/server/application/discussion-evidence";
 import { AesCredentialCipher } from "@/server/security/credential-cipher";
 import {
   createFixtureDiscussion,
@@ -316,9 +317,17 @@ describe("ConversationRun", () => {
     );
   });
 
-  it("keeps the latest valid Turns before older history and marks estimates", async () => {
+  it("compresses older Rounds when priority retention would exceed the budget", async () => {
     const state = createFixtureState();
     const { discussion, round } = addFixturePhase(state);
+    const oldEvidenceAlias = "external:https://example.com/old-context";
+    state.evidenceReferences.push({
+      id: evidenceReferenceId(oldEvidenceAlias),
+      workspaceId: state.workspace.id,
+      kind: "external_source",
+      sourceId: "https://example.com/old-context",
+      createdAt: state.workspace.createdAt
+    });
     const unresolvedTurnId = `${discussion.id}-unresolved-turn`;
     discussion.rounds.unshift({
       id: `${discussion.id}-unresolved-round`,
@@ -364,7 +373,20 @@ describe("ConversationRun", () => {
           role: "analyst",
           order: 1,
           status: "completed",
-          content: `Old context ${"x".repeat(10_000)}`,
+          payload: {
+            summary: `Old context ${"x".repeat(10_000)}`,
+            claims: [
+              {
+                statement: "Old supported fact",
+                kind: "fact",
+                evidenceIds: [oldEvidenceAlias],
+                confidence: "high"
+              }
+            ],
+            assumptions: [],
+            risks: [],
+            openQuestions: []
+          },
           createdAt: state.workspace.createdAt,
           completedAt: state.workspace.updatedAt
         }
@@ -373,16 +395,28 @@ describe("ConversationRun", () => {
       completedAt: state.workspace.updatedAt
     });
     const store = new MemoryStore(state);
-    const engine = new RecordingModelGateway(() => [
-      JSON.stringify(createFixtureTurnPayload("cross_response"))
-    ]);
+    const engine = new RecordingModelGateway((request) =>
+      request.purpose === "discussion_compression"
+        ? [
+            JSON.stringify({
+              summary: "Compressed older history.",
+              highlights: [
+                {
+                  statement: "Old supported fact",
+                  evidenceIds: [oldEvidenceAlias]
+                }
+              ]
+            })
+          ]
+        : [JSON.stringify(createFixtureTurnPayload("cross_response"))]
+    );
     const runs = new ConversationRunService(
       store,
       new AesCredentialCipher(TEST_KEY),
       engine,
       {
         modelContext: () => ({
-          contextWindow: 3_000,
+          contextWindow: 5_500,
           maxOutputTokens: 200
         })
       }
@@ -406,7 +440,117 @@ describe("ConversationRun", () => {
     expect(revision.countSource).toBe("estimated");
     expect(revision.turnIds).toContain(discussion.rounds[2].turns[0].id);
     expect(revision.turnIds).toContain(unresolvedTurnId);
-    expect(revision.turnIds).not.toContain(oldTurnId);
+    expect(revision.turnIds).toContain(oldTurnId);
+    expect(revision.compressionIds).toHaveLength(1);
+    const compression = await store.read(
+      (current) => current.discussionCompressions[0]
+    );
+    expect(compression).toMatchObject({
+      strategy: "semantic",
+      sourceSpanHash: expect.any(String),
+      sourceTurnIds: expect.arrayContaining([oldTurnId]),
+      evidenceIds: [evidenceReferenceId(oldEvidenceAlias)],
+      content: expect.stringContaining("Old supported fact")
+    });
+    expect(compression.content).not.toContain("Compressed older history.");
+    const attempts = await store.read((current) =>
+      current.providerAttempts.filter(
+        (attempt) =>
+          attempt.discussionId === discussion.id &&
+          attempt.purpose === "discussion_compression"
+      )
+    );
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0].status).toBe("succeeded");
+    expect(
+      await store.read((current) =>
+        current.discussions
+          .find((item) => item.id === discussion.id)
+          ?.events?.map((event) => event.type)
+      )
+    ).toContain("compression_applied");
+    expect(
+      await store.read((current) =>
+        current.discussions
+          .find((item) => item.id === discussion.id)
+          ?.events?.map((event) => event.type)
+      )
+    ).toContain("compression_used");
+  });
+
+  it("falls back to a deterministic digest when semantic compression fails", async () => {
+    const state = createFixtureState();
+    const { discussion, round } = addFixturePhase(state);
+    discussion.rounds.unshift({
+      id: `${discussion.id}-old-round`,
+      roundNumber: 0,
+      phase: "positions",
+      status: "completed",
+      participantSnapshot: structuredClone(discussion.participants),
+      turns: [
+        {
+          id: `${discussion.id}-old-turn`,
+          employeeId: discussion.participants[0].employeeId,
+          role: "analyst",
+          order: 1,
+          status: "completed",
+          content: `Old context ${"x".repeat(30_000)}`,
+          createdAt: state.workspace.createdAt,
+          completedAt: state.workspace.updatedAt
+        }
+      ],
+      createdAt: state.workspace.createdAt,
+      completedAt: state.workspace.updatedAt
+    });
+    const store = new MemoryStore(state);
+    const engine = new RecordingModelGateway((request) =>
+      request.purpose === "discussion_compression"
+        ? [
+            JSON.stringify({
+              highlights: [
+                {
+                  statement: "Invented unsupported claim",
+                  evidenceIds: ["external:https://invalid.example"]
+                }
+              ]
+            })
+          ]
+        : [JSON.stringify(createFixtureTurnPayload("cross_response"))]
+    );
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      engine,
+      {
+        modelContext: () => ({
+          contextWindow: 5_500,
+          maxOutputTokens: 200
+        })
+      }
+    );
+    const started = await runs.startPhaseRun(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        discussionId: discussion.id,
+        roundId: round.id,
+        participantSnapshot: round.participantSnapshot,
+        context: "Exercise deterministic compression.",
+        purpose: "Compress old context."
+      }
+    );
+
+    await runs.processRun(started.run.id);
+
+    const compression = await store.read(
+      (current) => current.discussionCompressions[0]
+    );
+    expect(compression.strategy).toBe("extractive");
+    expect(compression.content).toContain(
+      "Round 0 (positions)"
+    );
+    expect(compression.content).not.toContain(
+      "Invented unsupported claim"
+    );
   });
 
   it("includes applied interventions in structured Discussion context", async () => {

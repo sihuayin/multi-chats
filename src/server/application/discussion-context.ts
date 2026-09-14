@@ -6,9 +6,14 @@ import {
 } from "@/server/application/discussion-prompts";
 import { phasePurpose } from "@/server/application/discussion-protocol";
 import { availableEvidence } from "@/server/application/discussion-evidence";
+import {
+  compressionMatches,
+  compressionSource
+} from "@/server/application/discussion-compression";
 import type {
   AppState,
   Discussion,
+  DiscussionCompression,
   DiscussionIntervention,
   DiscussionParticipant,
   DiscussionRound,
@@ -35,6 +40,7 @@ export type DiscussionContextPlan = {
   promptProfileVersion: string;
   messages: ModelMessage[];
   contextWindow: number;
+  inputBudget: number;
   maxOutputTokens: number;
   safetyMarginTokens: number;
   schemaOverheadTokens: number;
@@ -46,6 +52,8 @@ export type DiscussionContextPlan = {
   roundIds: string[];
   turnIds: string[];
   messageIds: string[];
+  compressionIds: string[];
+  omittedRoundIds: string[];
 };
 
 type HistoryItem = {
@@ -235,6 +243,45 @@ function appliedInterventionMessages(
     }));
 }
 
+function compressionMessage(
+  compression: DiscussionCompression,
+  discussion: Discussion,
+  currentTurnId: string,
+  round: DiscussionRound,
+  participant: DiscussionParticipant
+): ModelMessage {
+  return {
+    id: `compression-${compression.id}`,
+    role: "user",
+    content: [
+      `Compressed history version ${compression.schemaVersion} (${compression.strategy})`,
+      `Source span: ${compression.sourceSpanHash}`,
+      compression.content,
+      ...(compression.unresolvedQuestions.length
+        ? [
+            `Unresolved questions:\n${compression.unresolvedQuestions
+              .map((question) => `- ${question}`)
+              .join("\n")}`
+          ]
+        : []),
+      ...(compression.minorityPositions.length
+        ? [
+            `Minority positions:\n${compression.minorityPositions
+              .map((position) => `- ${position}`)
+              .join("\n")}`
+          ]
+        : [])
+    ].join("\n"),
+    kind: "conversation",
+    discussionId: discussion.id,
+    roundId: round.id,
+    turnId: currentTurnId,
+    participantId: participant.id,
+    phase: round.phase,
+    evidenceIds: compression.evidenceIds
+  };
+}
+
 function systemPromptFor(
   employee: Employee,
   skills: Skill[],
@@ -275,6 +322,10 @@ export function planDiscussionContext(input: {
   contextWindow: number;
   maxOutputTokens?: number;
   tokenCounter?: (value: string) => number;
+  compressionTarget?: {
+    provider?: AppState["providers"][number]["provider"];
+    modelId?: string;
+  };
 }): DiscussionContextPlan {
   const count = input.tokenCounter ?? defaultTokenCount;
   const countSource = input.tokenCounter ? "exact" : "estimated";
@@ -478,20 +529,93 @@ export function planDiscussionContext(input: {
     });
   }
 
-  const selectedHistory = [...mandatoryHistory];
+  const selectedMessages = mandatoryHistory.map((item) => ({
+    roundNumber: item.roundNumber,
+    order: item.order,
+    message: item.message,
+    roundIds: [item.roundId],
+    turnIds: [item.turnId],
+    messageIds: item.messageId ? [item.messageId] : [],
+    compressionId: undefined as string | undefined
+  }));
   let usedTokens = fixedTokens + mandatoryHistoryTokens;
-  const mandatoryIds = new Set(
+  const mandatoryTurnIds = new Set(
     mandatoryHistory.map((item) => item.turnId)
   );
-  for (const item of history
-    .filter((candidate) => !mandatoryIds.has(candidate.turnId))
-    .reverse()) {
-    const nextTokens = messageTokenCount(item.message, count);
-    if (usedTokens + nextTokens > inputBudget) continue;
-    selectedHistory.push(item);
-    usedTokens += nextTokens;
+  const optionalByRound = new Map<number, HistoryItem[]>();
+  for (const item of history) {
+    if (mandatoryTurnIds.has(item.turnId)) continue;
+    const values = optionalByRound.get(item.roundNumber) ?? [];
+    values.push(item);
+    optionalByRound.set(item.roundNumber, values);
   }
-  selectedHistory.sort(
+  const compressionIds: string[] = [];
+  const omittedRoundIds: string[] = [];
+  for (const roundNumber of [...optionalByRound.keys()].sort(
+    (left, right) => right - left
+  )) {
+    const items = optionalByRound.get(roundNumber) ?? [];
+    const roundId = items[0]?.roundId;
+    const round = input.discussion.rounds.find(
+      (item) => item.id === roundId
+    );
+    if (!round) continue;
+    const rawTokens = items.reduce(
+      (total, item) => total + messageTokenCount(item.message, count),
+      0
+    );
+    if (usedTokens + rawTokens <= inputBudget) {
+      for (const item of items) {
+        selectedMessages.push({
+          roundNumber: item.roundNumber,
+          order: item.order,
+          message: item.message,
+          roundIds: [item.roundId],
+          turnIds: [item.turnId],
+          messageIds: item.messageId ? [item.messageId] : [],
+          compressionId: undefined
+        });
+      }
+      usedTokens += rawTokens;
+      continue;
+    }
+
+    const source = compressionSource([round]);
+    const compression = input.state.discussionCompressions.find(
+      (item) =>
+        item.discussionId === input.discussion.id &&
+        compressionMatches(item, source, input.compressionTarget)
+    );
+    if (compression) {
+      const message = compressionMessage(
+        compression,
+        input.discussion,
+        input.currentTurn.id,
+        input.round,
+        input.participant
+      );
+      const nextTokens = messageTokenCount(message, count);
+      if (usedTokens + nextTokens > inputBudget) {
+        omittedRoundIds.push(round.id);
+        continue;
+      }
+      selectedMessages.push({
+        roundNumber,
+        order: 0,
+        message,
+        roundIds: compression.sourceRoundIds,
+        turnIds: compression.sourceTurnIds,
+        messageIds: [],
+        compressionId: compression.id
+      });
+      compressionIds.push(compression.id);
+      usedTokens += nextTokens;
+      continue;
+    }
+
+    omittedRoundIds.push(round.id);
+  }
+  selectedMessages.sort(
     (left, right) =>
       left.roundNumber - right.roundNumber || left.order - right.order
   );
@@ -514,28 +638,26 @@ export function planDiscussionContext(input: {
     ...interventionMessages,
     evidenceMessage,
     currentRequestMessage,
-    ...selectedHistory.map((item) => item.message),
+    ...selectedMessages.map((item) => item.message),
     ...selectedRelated,
     responseMessage
   ];
   const roundIds = [
     ...new Set([
       input.round.id,
-      ...selectedHistory.map((item) => item.roundId)
+      ...selectedMessages.flatMap((item) => item.roundIds)
     ])
   ];
   const turnIds = [
     ...new Set([
       input.currentTurn.id,
-      ...selectedHistory.map((item) => item.turnId)
+      ...selectedMessages.flatMap((item) => item.turnIds)
     ])
   ];
   const messageIds = [
     ...new Set([
       ...(input.triggerMessageId ? [input.triggerMessageId] : []),
-      ...selectedHistory
-        .map((item) => item.messageId)
-        .filter((id): id is string => Boolean(id))
+      ...selectedMessages.flatMap((item) => item.messageIds)
     ])
   ];
 
@@ -544,6 +666,7 @@ export function planDiscussionContext(input: {
     promptProfileVersion: DISCUSSION_PROMPT_PROFILE_VERSION,
     messages,
     contextWindow,
+    inputBudget,
     maxOutputTokens,
     safetyMarginTokens,
     schemaOverheadTokens: count(responseMessage.content),
@@ -559,6 +682,8 @@ export function planDiscussionContext(input: {
     contextHash: contextHash(systemPrompt, messages),
     roundIds,
     turnIds,
-    messageIds
+    messageIds,
+    compressionIds,
+    omittedRoundIds
   };
 }

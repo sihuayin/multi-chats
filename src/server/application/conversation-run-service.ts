@@ -2,6 +2,7 @@ import type {
   AppState,
   Approval,
   Discussion,
+  DiscussionCompression,
   DiscussionRound,
   DiscussionTurn,
   DiscussionTurnPayload,
@@ -23,8 +24,17 @@ import { validateDiscussionParticipants } from "@/server/application/discussion-
 import { appendDiscussionEvent } from "@/server/application/discussion-ledger";
 import { parseDiscussionBrief } from "@/server/application/discussion-brief";
 import {
+  buildExtractiveDigest,
+  compressionMatches,
+  compressionSource,
+  contentHash,
+  DISCUSSION_COMPRESSION_PROFILE_VERSION,
+  DISCUSSION_COMPRESSION_SCHEMA_VERSION
+} from "@/server/application/discussion-compression";
+import {
   DiscussionEvidenceError,
   DISCUSSION_EVIDENCE_INVALID_CODE,
+  evidenceReferenceId,
   validateDiscussionBriefEvidence,
   validateDiscussionTurnEvidence
 } from "@/server/application/discussion-evidence";
@@ -38,6 +48,7 @@ import {
   type ModelContext,
   planDiscussionContext
 } from "@/server/application/discussion-context";
+import { DISCUSSION_PROMPT_PROFILE_VERSION } from "@/server/application/discussion-prompts";
 import { parseDiscussionTurnPayload } from "@/server/application/discussion-turn-payload";
 import { ApiError, notFound } from "@/server/application/errors";
 import { appendEvent } from "@/server/application/run-ledger";
@@ -997,11 +1008,292 @@ export class ConversationRunService {
     });
   }
 
+  private async ensureDiscussionCompression(input: {
+    runId: string;
+    discussionId: string;
+    omittedRoundIds: string[];
+    signal: AbortSignal;
+  }): Promise<void> {
+    const pending = await this.store.read((state) => {
+      const discussion = state.discussions.find(
+        (item) => item.id === input.discussionId
+      );
+      if (!discussion) throw new Error("Discussion is missing");
+      const facilitatorParticipant = discussion.participants.find(
+        (participant) =>
+          participant.id === discussion.facilitatorParticipantId
+      );
+      const facilitator = facilitatorParticipant
+        ? state.employees.find(
+            (employee) => employee.id === facilitatorParticipant.employeeId
+          )
+        : undefined;
+      const provider = facilitator
+        ? state.providers.find(
+            (item) => item.id === facilitator.providerCredentialId
+          )
+        : undefined;
+      const target =
+        facilitator && provider
+          ? {
+              provider: provider.provider,
+              modelId: facilitator.modelId,
+              encryptedCredential: provider.encryptedCredential
+            }
+          : undefined;
+
+      return input.omittedRoundIds.flatMap((roundId) => {
+        const round = discussion.rounds.find((item) => item.id === roundId);
+        if (!round) return [];
+        const source = compressionSource([round]);
+        const existing = state.discussionCompressions.find(
+          (compression) =>
+            compression.discussionId === discussion.id &&
+            compressionMatches(
+              compression,
+              source,
+              target
+                ? {
+                    provider: target.provider,
+                    modelId: target.modelId
+                  }
+                : {}
+            )
+        );
+        return existing
+          ? []
+          : [
+              {
+                discussion,
+                round,
+                source,
+                target,
+                digest: buildExtractiveDigest([round])
+              }
+            ];
+      });
+    });
+
+    for (const item of pending) {
+      const summary = await this.generateCompressionSummary({
+        runId: input.runId,
+        roundId: item.round.id,
+        digest: item.digest,
+        source: item.source,
+        target: item.target,
+        signal: input.signal
+      });
+      await this.store.update((state) => {
+        const discussion = state.discussions.find(
+          (candidate) => candidate.id === input.discussionId
+        );
+        if (!discussion) throw new Error("Discussion is missing");
+        const alreadyStored = state.discussionCompressions.some(
+          (compression) =>
+            compression.discussionId === discussion.id &&
+            compression.sourceSpanHash === item.source.sourceSpanHash &&
+            compression.promptProfileVersion ===
+              DISCUSSION_PROMPT_PROFILE_VERSION &&
+            compression.provider === summary.provider &&
+            compression.modelId === summary.modelId
+        );
+        if (alreadyStored) return;
+        const timestamp = now();
+        const compression: DiscussionCompression = {
+          id: crypto.randomUUID(),
+          workspaceId: state.workspace.id,
+          discussionId: discussion.id,
+          status: "completed",
+          sourceRoundIds: item.source.sourceRoundIds,
+          sourceTurnIds: item.source.sourceTurnIds,
+          evidenceIds: item.source.evidenceIds.map(evidenceReferenceId),
+          content: summary.content,
+          unresolvedQuestions: item.source.unresolvedQuestions,
+          minorityPositions: item.source.minorityPositions,
+          schemaVersion: DISCUSSION_COMPRESSION_SCHEMA_VERSION,
+          promptProfileVersion: DISCUSSION_PROMPT_PROFILE_VERSION,
+          compressionProfileVersion:
+            DISCUSSION_COMPRESSION_PROFILE_VERSION,
+          contentHash: contentHash(summary.content),
+          sourceSpanHash: item.source.sourceSpanHash,
+          strategy: summary.strategy,
+          provider: summary.provider,
+          modelId: summary.modelId,
+          createdByAttemptId: summary.attemptId,
+          createdAt: timestamp,
+          updatedAt: timestamp
+        };
+        state.discussionCompressions.push(compression);
+        appendDiscussionEvent(discussion, "compression_applied", {
+          runId: input.runId,
+          compressionId: compression.id,
+          sourceSpanHash: compression.sourceSpanHash,
+          sourceRoundIds: compression.sourceRoundIds,
+          strategy: compression.strategy,
+          schemaVersion: compression.schemaVersion
+        });
+        state.workspace.updatedAt = timestamp;
+      });
+    }
+  }
+
+  private async generateCompressionSummary(input: {
+    runId: string;
+    roundId: string;
+    digest: string;
+    source: {
+      evidenceIds: string[];
+    };
+    target?: {
+      provider: ProviderId;
+      modelId: string;
+      encryptedCredential: string;
+    };
+    signal: AbortSignal;
+  }): Promise<{
+    content: string;
+    strategy: "semantic" | "extractive";
+    provider?: ProviderId;
+    modelId?: string;
+    attemptId?: string;
+  }> {
+    const fallback = {
+      content: input.digest,
+      strategy: "extractive" as const,
+      provider: input.target?.provider,
+      modelId: input.target?.modelId
+    };
+    if (!input.target || input.signal.aborted) return fallback;
+
+    const attemptId = await this.startProviderAttempt({
+      runId: input.runId,
+      purpose: "discussion_compression",
+      provider: input.target.provider,
+      modelId: input.target.modelId,
+      roundId: input.roundId
+    });
+    const systemPrompt =
+      "Compress the supplied Discussion history. Return only JSON shaped as {\"highlights\": [{\"statement\": string, \"evidenceIds\": string[]}]}. Every highlight must cite at least one evidence ID present in the source. Do not add claims or omit unresolved questions or minority positions.";
+    const messages: ModelMessage[] = [
+      {
+        role: "user",
+        content: input.digest,
+        kind: "conversation"
+      }
+    ];
+    let content = "";
+    let failureKind = "model_error";
+    let failed = false;
+    try {
+      for await (const event of this.gateway.run({
+        provider: input.target.provider,
+        credential: this.cipher.decrypt(
+          input.target.encryptedCredential
+        ),
+        modelId: input.target.modelId,
+        purpose: "discussion_compression",
+        maxOutputTokens: 1_500,
+        systemPrompt,
+        prompt: input.digest,
+        messages,
+        tools: [],
+        signal: input.signal
+      })) {
+        if (event.type === "text_delta") content += event.delta;
+        if (event.type === "text_completed" && event.text) {
+          content = event.text;
+        }
+        if (event.type === "error") {
+          failureKind = event.kind ?? "model_error";
+          failed = true;
+        }
+        await this.recordModelEvent(
+          input.runId,
+          undefined,
+          undefined,
+          attemptId,
+          event
+        );
+      }
+      if (failed || input.signal.aborted) {
+        await this.finalizeProviderAttempt({
+          runId: input.runId,
+          attemptId,
+          status: input.signal.aborted ? "cancelled" : "failed",
+          errorKind: input.signal.aborted ? "cancelled" : failureKind
+        });
+        return { ...fallback, attemptId };
+      }
+      const parsed = JSON.parse(content) as {
+        highlights?: unknown;
+      };
+      const sourceEvidence = new Set(input.source.evidenceIds);
+      const highlights = Array.isArray(parsed.highlights)
+        ? parsed.highlights
+        : [];
+      const validHighlights =
+        highlights.length > 0 &&
+        highlights.every((value) => {
+          if (!value || typeof value !== "object") return false;
+          const highlight = value as {
+            statement?: unknown;
+            evidenceIds?: unknown;
+          };
+          return (
+            typeof highlight.statement === "string" &&
+            highlight.statement.trim().length > 0 &&
+            Array.isArray(highlight.evidenceIds) &&
+            highlight.evidenceIds.length > 0 &&
+            highlight.evidenceIds.every(
+              (evidenceId) =>
+                typeof evidenceId === "string" &&
+                sourceEvidence.has(evidenceId)
+            )
+          );
+        });
+      if (
+        !validHighlights
+      ) {
+        throw new Error("Compression summary is invalid");
+      }
+      await this.finalizeProviderAttempt({
+        runId: input.runId,
+        attemptId,
+        status: "succeeded"
+      });
+      return {
+        content: [
+          "Evidence-backed highlights:",
+          ...highlights.map((value) => {
+            const highlight = value as {
+              statement: string;
+              evidenceIds: string[];
+            };
+            return `- ${highlight.statement} [evidence: ${highlight.evidenceIds.join(", ")}]`;
+          })
+        ].join("\n"),
+        strategy: "semantic",
+        provider: input.target.provider,
+        modelId: input.target.modelId,
+        attemptId
+      };
+    } catch {
+      await this.finalizeProviderAttempt({
+        runId: input.runId,
+        attemptId,
+        status: input.signal.aborted ? "cancelled" : "failed",
+        errorKind: input.signal.aborted ? "cancelled" : failureKind
+      });
+      return { ...fallback, attemptId };
+    }
+  }
+
   private async processEmployeeTurn(
     runId: string,
     employeeId: string,
     triggerMessageId: string,
-    signal: AbortSignal
+    signal: AbortSignal,
+    allowCompression = true
   ): Promise<void> {
     const context = await this.store.read((state) => {
       const run = state.runs.find((item) => item.id === runId);
@@ -1043,6 +1335,22 @@ export class ConversationRunService {
         .map((id) => state.skills.find((skill) => skill.id === id))
         .filter((skill): skill is NonNullable<typeof skill> => Boolean(skill));
       const tools = toolDefinitionsForEmployee(state, employee);
+      const facilitatorParticipant = discussion?.participants.find(
+        (participant) =>
+          participant.id === discussion.facilitatorParticipantId
+      );
+      const facilitator = facilitatorParticipant
+        ? state.employees.find(
+            (item) =>
+              item.id === facilitatorParticipant.employeeId &&
+              item.active
+          )
+        : undefined;
+      const facilitatorProvider = facilitator
+        ? state.providers.find(
+            (item) => item.id === facilitator.providerCredentialId
+          )
+        : undefined;
       const modelContext = this.options.modelContext?.({
         provider: credential.provider,
         modelId: employee.modelId
@@ -1084,12 +1392,51 @@ export class ConversationRunService {
                   triggerContent: trigger.content,
                   contextWindow: modelContext.contextWindow,
                   maxOutputTokens: modelContext.maxOutputTokens,
-                  tokenCounter: this.options.tokenCounter
+                  tokenCounter: this.options.tokenCounter,
+                  compressionTarget:
+                    facilitator && facilitatorProvider
+                      ? {
+                          provider: facilitatorProvider.provider,
+                          modelId: facilitator.modelId
+                        }
+                      : undefined
                 })
               }
             : undefined
       };
     });
+
+    if (
+      context.phaseContext &&
+      context.phaseContext.plan.omittedRoundIds.length > 0
+    ) {
+      if (!allowCompression) {
+        throw new DiscussionContextBudgetError({
+          contextWindow: context.phaseContext.plan.contextWindow,
+          inputBudget: context.phaseContext.plan.inputBudget,
+          requiredTokens: context.phaseContext.plan.inputTokens,
+          outputReserveTokens:
+            context.phaseContext.plan.outputReserveTokens,
+          safetyMarginTokens:
+            context.phaseContext.plan.safetyMarginTokens,
+          toolOverheadTokens:
+            context.phaseContext.plan.toolOverheadTokens
+        });
+      }
+      await this.ensureDiscussionCompression({
+        runId,
+        discussionId: context.phaseContext.discussionId,
+        omittedRoundIds: context.phaseContext.plan.omittedRoundIds,
+        signal
+      });
+      return this.processEmployeeTurn(
+        runId,
+        employeeId,
+        triggerMessageId,
+        signal,
+        false
+      );
+    }
 
     const message = await this.store.update((state) => {
       const run = state.runs.find((item) => item.id === runId);
@@ -1145,9 +1492,28 @@ export class ConversationRunService {
           roundIds: plan.roundIds,
           turnIds: plan.turnIds,
           messageIds: plan.messageIds,
-          compressionIds: [],
+          compressionIds: plan.compressionIds,
           createdAt: timestamp
         });
+        for (const compressionId of plan.compressionIds) {
+          const compression = state.discussionCompressions.find(
+            (item) => item.id === compressionId
+          );
+          const discussion = state.discussions.find(
+            (item) => item.id === context.phaseContext?.discussionId
+          );
+          if (compression && discussion) {
+            appendDiscussionEvent(discussion, "compression_used", {
+              runId,
+              discussionTurnId: context.phaseContext?.turnId,
+              compressionId: compression.id,
+              schemaVersion: compression.schemaVersion,
+              compressionProfileVersion:
+                compression.compressionProfileVersion,
+              sourceSpanHash: compression.sourceSpanHash
+            });
+          }
+        }
       }
       appendEvent(state, run, "employee_turn_started", {
         employeeId,
@@ -1553,18 +1919,23 @@ export class ConversationRunService {
 
   private async recordModelEvent(
     runId: string,
-    messageId: string,
-    employeeId: string,
+    messageId: string | undefined,
+    employeeId: string | undefined,
     providerAttemptId: string,
     event: ModelEvent
   ): Promise<void> {
     await this.store.update((state) => {
       const run = state.runs.find((item) => item.id === runId);
-      const message = state.messages.find((item) => item.id === messageId);
-      if (!run || !message) return;
-      const attribution = { messageId, employeeId };
+      const message = messageId
+        ? state.messages.find((item) => item.id === messageId)
+        : undefined;
+      if (!run || (messageId && !message)) return;
+      const attribution = {
+        ...(messageId ? { messageId } : {}),
+        ...(employeeId ? { employeeId } : {})
+      };
 
-      if (event.type === "text_delta") {
+      if (event.type === "text_delta" && message) {
         message.content += event.delta;
         message.updatedAt = now();
         appendEvent(state, run, "message_delta", {

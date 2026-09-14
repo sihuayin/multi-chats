@@ -28,7 +28,7 @@ describe("AppState migrations", () => {
 
     const migrated = migrateAppState(legacy);
 
-    expect(migrated.schemaVersion).toBe(3);
+    expect(migrated.schemaVersion).toBe(4);
     expect(migrated.discussions).toEqual([]);
     expect(migrated.artifacts[0]).toMatchObject({
       id: "artifact-1",
@@ -71,13 +71,53 @@ describe("AppState migrations", () => {
     const migrated = migrateAppState(legacy);
 
     expect(migrated).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       providerAttempts: [],
       evidenceReferences: [],
       discussionCompressions: [],
       discussionInterventions: [],
       discussionContextRevisions: [],
       modelPricing: []
+    });
+  });
+
+  it("backfills legacy v3 compression provenance", () => {
+    const state = createFixtureState() as unknown as Record<string, unknown>;
+    state.schemaVersion = 3;
+    const discussion = createFixtureDiscussion({
+      workspaceId: "00000000-0000-4000-8000-000000000001",
+      conversationId: "30000000-0000-4000-8000-000000000001"
+    });
+    state.discussions = [
+      discussion
+    ];
+    state.discussionCompressions = [
+      {
+        id: "legacy-compression",
+        workspaceId: "00000000-0000-4000-8000-000000000001",
+        discussionId: discussion.id,
+        status: "completed",
+        sourceRoundIds: [],
+        sourceTurnIds: [],
+        evidenceIds: [],
+        content: "Legacy summary",
+        unresolvedQuestions: [],
+        minorityPositions: [],
+        schemaVersion: 1,
+        promptProfileVersion: "discussion-prompts.v1",
+        contentHash: "legacy-content",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      }
+    ];
+
+    const migrated = migrateAppState(state);
+
+    expect(migrated.schemaVersion).toBe(4);
+    expect(migrated.discussionCompressions[0]).toMatchObject({
+      sourceSpanHash: "legacy:legacy-content",
+      strategy: "extractive",
+      compressionProfileVersion: "legacy"
     });
   });
 

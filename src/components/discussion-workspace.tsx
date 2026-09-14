@@ -78,6 +78,14 @@ function usageSourceKey(
   return "chat.usageUnknown";
 }
 
+function compressionStrategyKey(
+  strategy: "semantic" | "extractive"
+): TranslationKey {
+  return strategy === "semantic"
+    ? "chat.compressionSemantic"
+    : "chat.compressionExtractive";
+}
+
 type DiscussionAction =
   | "edit"
   | "start"
@@ -158,6 +166,13 @@ type DiscussionView = {
       toolOverheadTokens: number;
       roundIds: string[];
       turnIds: string[];
+      compressionIds: string[];
+      compressions: Array<{
+        id: string;
+        schemaVersion: number;
+        strategy: "semantic" | "extractive";
+        sourceSpanHash: string;
+      }>;
     };
   };
   usage: {
@@ -778,6 +793,25 @@ export function DiscussionWorkspace() {
                     <span>
                       {view.budget.context.turnIds.length} Turns selected
                     </span>
+                    {view.budget.context.compressionIds.length > 0 ? (
+                      <>
+                        <span>
+                          {t("chat.compressedSpans", {
+                            count: view.budget.context.compressionIds.length
+                          })}
+                        </span>
+                        {view.budget.context.compressions.map((compression) => (
+                          <Badge
+                            key={compression.id}
+                            variant="outline"
+                            title={compression.sourceSpanHash}
+                          >
+                            v{compression.schemaVersion}{" "}
+                            {t(compressionStrategyKey(compression.strategy))}
+                          </Badge>
+                        ))}
+                      </>
+                    ) : null}
                   </div>
                 ) : null}
                 {view.usage.attemptCount > 0 ? (
