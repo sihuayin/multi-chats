@@ -437,6 +437,11 @@ async function handleApiRoute(
           if (child === "start") {
             emptyCommandSchema.parse(rawInput);
             await discussions.startDiscussion(id);
+          } else if (child === "interventions") {
+            await discussions.addIntervention(id, rawInput, {
+              idempotencyKey:
+                request.headers.get("idempotency-key") ?? undefined
+            });
           } else if (child === "stop") {
             await discussions.stopDiscussion(
               id,

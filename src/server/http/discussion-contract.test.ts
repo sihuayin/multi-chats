@@ -235,4 +235,162 @@ describe("Discussion HTTP contract", () => {
     expect(frame).toContain('"discussionId":"');
     await reader.cancel();
   });
+
+  it("queues interventions idempotently and rejects terminal Discussions", async () => {
+    const store = new MemoryStore(createFixtureState());
+    setStoreForTests(store);
+    process.env.DATABASE_URL = "postgres://discussion-contract";
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      discussionModelGateway()
+    );
+    const discussions = new DiscussionOrchestrator(store, runs);
+    setServicesForTests({
+      workspace: getServices().workspace,
+      runs,
+      discussions
+    });
+    const view = await discussions.createDiscussion(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        title: "Queue steering",
+        mode: "problem",
+        participants: [
+          {
+            employeeId: "20000000-0000-4000-8000-000000000001",
+            role: "analyst"
+          },
+          {
+            employeeId: "20000000-0000-4000-8000-000000000002",
+            role: "facilitator"
+          }
+        ],
+        facilitatorId: "20000000-0000-4000-8000-000000000002"
+      }
+    );
+    await discussions.startDiscussion(view.discussion.id);
+
+    const createIntervention = (key = "intervention-one") =>
+      handleApiRequest(
+        new Request(
+          `http://localhost/api/discussions/${view.discussion.id}/interventions`,
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "idempotency-key": key
+            },
+            body: JSON.stringify({
+              kind: "material",
+              content: "Use the latest incident report."
+            })
+          }
+        ),
+        ["discussions", view.discussion.id, "interventions"]
+      );
+
+    const [created, replay] = await Promise.all([
+      createIntervention(),
+      createIntervention()
+    ]);
+    expect(created.status).toBe(200);
+    const createdView = await created.json();
+    expect(await replay.json()).toEqual(createdView);
+    expect(createdView.interventions).toEqual([
+      expect.objectContaining({
+        kind: "material",
+        content: "Use the latest incident report.",
+        status: "pending",
+        idempotencyKey: "intervention-one"
+      })
+    ]);
+    expect(
+      await store.read((state) =>
+        state.discussionInterventions.filter(
+          (intervention) =>
+            intervention.discussionId === view.discussion.id
+        )
+      )
+    ).toEqual([
+      expect.objectContaining({
+        idempotencyKey: "intervention-one"
+      })
+    ]);
+
+    await discussions.cancelDiscussion(view.discussion.id);
+    const terminal = await createIntervention("terminal-one");
+    expect(terminal.status).toBe(409);
+    expect(await terminal.json()).toMatchObject({
+      code: "discussion_invalid_state"
+    });
+
+    const updateMode = await handleApiRequest(
+      new Request(
+        `http://localhost/api/discussions/${view.discussion.id}`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ mode: "review" })
+        }
+      ),
+      ["discussions", view.discussion.id]
+    );
+    expect(updateMode.status).toBe(409);
+    expect(await updateMode.json()).toMatchObject({
+      code: "discussion_invalid_state"
+    });
+
+    for (const body of [
+      { maxRounds: 4 },
+      {
+        participants: [
+          {
+            employeeId: "20000000-0000-4000-8000-000000000001",
+            role: "analyst"
+          },
+          {
+            employeeId: "20000000-0000-4000-8000-000000000002",
+            role: "facilitator"
+          }
+        ],
+        facilitatorId: "20000000-0000-4000-8000-000000000002"
+      }
+    ]) {
+      const update = await handleApiRequest(
+        new Request(
+          `http://localhost/api/discussions/${view.discussion.id}`,
+          {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body)
+          }
+        ),
+        ["discussions", view.discussion.id]
+      );
+      expect(update.status).toBe(409);
+      expect(await update.json()).toMatchObject({
+        code: "discussion_invalid_state"
+      });
+    }
+
+    const extend = await handleApiRequest(
+      new Request(
+        `http://localhost/api/discussions/${view.discussion.id}/extend`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "idempotency-key": "extend-terminal"
+          },
+          body: "{}"
+        }
+      ),
+      ["discussions", view.discussion.id, "extend"]
+    );
+    expect(extend.status).toBe(409);
+    expect(await extend.json()).toMatchObject({
+      code: "discussion_invalid_state"
+    });
+  });
 });

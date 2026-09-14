@@ -479,6 +479,7 @@ export const DISCUSSION_EVENT_TYPES = [
   "constraints_updated",
   "discussion_review_requested",
   "compression_applied",
+  "intervention_queued",
   "intervention_applied",
   "context_budget_rejected",
   "provider_fallback_started"
@@ -508,6 +509,7 @@ export type Discussion = {
   facilitatorParticipantId: string;
   maxRounds: number;
   currentRound: number;
+  revision?: number;
   latestBriefArtifactId?: string;
   confirmedBriefArtifactId?: string;
   constraints?: string[];

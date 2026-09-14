@@ -32,6 +32,8 @@ import type {
 import type {
   AppState,
   Discussion,
+  DiscussionIntervention,
+  DiscussionInterventionKind,
   DiscussionRound,
   DiscussionRoundPhase,
   Run
@@ -40,6 +42,7 @@ import type { StateStore } from "@/server/store/store";
 import {
   discussionConstraintsSchema,
   discussionCreateSchema,
+  discussionInterventionCreateSchema,
   discussionPatchSchema,
   taskInputSchema
 } from "@/server/domain/schemas";
@@ -100,10 +103,150 @@ export type DiscussionConfirmInput = {
   operator?: string;
 };
 
+type InterventionInput = Pick<
+  DiscussionIntervention,
+  "kind" | "content" | "idempotencyKey"
+>;
+
 function discussionById(state: AppState, discussionId: string): Discussion {
   const discussion = state.discussions.find((item) => item.id === discussionId);
   if (!discussion) notFound("Discussion");
   return discussion;
+}
+
+function incrementDiscussionRevision(discussion: Discussion): number {
+  discussion.revision = (discussion.revision ?? 0) + 1;
+  return discussion.revision;
+}
+
+function applyIntervention(
+  discussion: Discussion,
+  intervention: DiscussionIntervention,
+  timestamp: string,
+  eventFactory: DiscussionEventFactory
+): void {
+  if (intervention.status === "applied") return;
+  const round = discussion.rounds.at(-1);
+  intervention.status = "applied";
+  intervention.appliedPhase = round?.phase;
+  intervention.appliedRoundId = round?.id;
+  intervention.resultingDiscussionRevision =
+    incrementDiscussionRevision(discussion);
+  intervention.appliedAt = timestamp;
+  intervention.updatedAt = timestamp;
+
+  if (intervention.kind === "constraint") {
+    discussion.constraints = [
+      ...new Set([
+        ...(discussion.constraints ?? []),
+        intervention.content
+      ])
+    ];
+  } else if (intervention.kind === "question") {
+    discussion.questions = [
+      ...new Set([
+        ...(discussion.questions ?? []),
+        intervention.content
+      ])
+    ];
+  } else if (intervention.kind === "focus") {
+    discussion.note = intervention.content;
+  }
+
+  discussion.updatedAt = timestamp;
+  appendDiscussionEvent(
+    discussion,
+    "intervention_applied",
+    {
+      interventionId: intervention.id,
+      kind: intervention.kind,
+      content: intervention.content,
+      appliedPhase: intervention.appliedPhase,
+      appliedRoundId: intervention.appliedRoundId,
+      resultingDiscussionRevision:
+        intervention.resultingDiscussionRevision
+    },
+    eventFactory
+  );
+}
+
+function queueIntervention(
+  discussion: Discussion,
+  intervention: DiscussionIntervention,
+  timestamp: string,
+  eventFactory: DiscussionEventFactory
+): void {
+  intervention.status = "pending";
+  intervention.updatedAt = timestamp;
+  discussion.updatedAt = timestamp;
+  appendDiscussionEvent(
+    discussion,
+    "intervention_queued",
+    {
+      interventionId: intervention.id,
+      kind: intervention.kind,
+      content: intervention.content
+    },
+    eventFactory
+  );
+}
+
+function applyPendingInterventionsInState(
+  state: AppState,
+  discussion: Discussion,
+  timestamp: string,
+  eventFactory: DiscussionEventFactory
+): number {
+  const pending = state.discussionInterventions
+    .filter(
+      (intervention) =>
+        intervention.discussionId === discussion.id &&
+        intervention.status === "pending"
+    )
+    .sort((left, right) =>
+      left.createdAt.localeCompare(right.createdAt)
+    );
+  for (const intervention of pending) {
+    applyIntervention(discussion, intervention, timestamp, eventFactory);
+  }
+  return pending.length;
+}
+
+function activeRunInState(
+  state: AppState,
+  discussion: Discussion
+): Run | undefined {
+  const round = discussion.rounds.at(-1);
+  if (!round?.runId) return undefined;
+  return state.runs.find(
+    (run) =>
+      run.id === round.runId &&
+      ["queued", "running", "waiting_approval"].includes(run.status)
+  );
+}
+
+function applyLifecycleIntervention(
+  state: AppState,
+  discussion: Discussion,
+  kind: DiscussionInterventionKind,
+  content: string,
+  timestamp: string,
+  eventFactory: DiscussionEventFactory
+): DiscussionIntervention {
+  const intervention: DiscussionIntervention = {
+    id: crypto.randomUUID(),
+    workspaceId: state.workspace.id,
+    discussionId: discussion.id,
+    kind,
+    content,
+    status: "pending",
+    createdBy: "user",
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+  state.discussionInterventions.push(intervention);
+  applyIntervention(discussion, intervention, timestamp, eventFactory);
+  return intervention;
 }
 
 export class DiscussionOrchestrator {
@@ -225,11 +368,21 @@ export class DiscussionOrchestrator {
     const parsed = discussionPatchSchema.parse(input);
     await this.store.update((state) => {
       const discussion = discussionById(state, discussionId);
-      if (discussion.status !== "draft") {
+      if (
+        discussion.status === "completed" ||
+        discussion.status === "cancelled"
+      ) {
         throw new ApiError(
           409,
-          "Only draft Discussions can be edited",
+          "Terminal Discussions cannot be edited",
           "discussion_invalid_state"
+        );
+      }
+      if (activeRunInState(state, discussion)) {
+        throw new ApiError(
+          409,
+          "Discussion configuration cannot change during an active Run",
+          "discussion_active_conflict"
         );
       }
       const previousFacilitatorEmployeeId = discussion.participants.find(
@@ -302,7 +455,56 @@ export class DiscussionOrchestrator {
         );
       }
       discussion.facilitatorParticipantId = facilitator.id;
-      discussion.updatedAt = this.clock();
+      const timestamp = this.clock();
+      const lifecycleInputs: InterventionInput[] = [
+        ...(parsed.mode !== undefined
+          ? [
+              {
+                kind: "mode_change" as const,
+                content: `Mode changed to ${parsed.mode}.`
+              }
+            ]
+          : []),
+        ...(parsed.participants !== undefined ||
+        parsed.facilitatorId !== undefined
+          ? [
+              {
+                kind: "participant_change" as const,
+                content: "Discussion Participants were changed."
+              }
+            ]
+          : []),
+        ...(parsed.maxRounds !== undefined
+          ? [
+              {
+                kind: "budget_change" as const,
+                content: `Maximum content rounds changed to ${parsed.maxRounds}.`
+              }
+            ]
+          : [])
+      ];
+      for (const input of lifecycleInputs) {
+        applyLifecycleIntervention(
+          state,
+          discussion,
+          input.kind,
+          input.content,
+          timestamp,
+          this.eventFactory
+        );
+      }
+      if (lifecycleInputs.length > 0 && discussion.status === "review") {
+        discussion.status = "interrupted";
+        appendDiscussionEvent(
+          discussion,
+          "discussion_interrupted",
+          {
+            code: "intervention_requires_resynthesis"
+          },
+          this.eventFactory
+        );
+      }
+      discussion.updatedAt = timestamp;
       state.workspace.updatedAt = discussion.updatedAt;
     });
     return this.getDiscussionView(discussionId);
@@ -313,6 +515,39 @@ export class DiscussionOrchestrator {
     input: unknown
   ) {
     const parsed = discussionConstraintsSchema.parse(input);
+    const interventions: InterventionInput[] = [
+      ...(parsed.constraints ?? []).map((content) => ({
+        kind: "constraint" as const,
+        content
+      })),
+      ...(parsed.questions ?? []).map((content) => ({
+        kind: "question" as const,
+        content
+      })),
+      ...(parsed.note
+        ? [{ kind: "focus" as const, content: parsed.note }]
+        : [])
+    ];
+    return this.addInterventions(discussionId, interventions);
+  }
+
+  async addIntervention(
+    discussionId: string,
+    input: unknown,
+    options: { idempotencyKey?: string } = {}
+  ) {
+    return this.addInterventions(discussionId, [
+      {
+        ...discussionInterventionCreateSchema.parse(input),
+        idempotencyKey: options.idempotencyKey
+      }
+    ]);
+  }
+
+  private async addInterventions(
+    discussionId: string,
+    inputs: InterventionInput[]
+  ) {
     await this.store.update((state) => {
       const discussion = discussionById(state, discussionId);
       if (
@@ -321,35 +556,66 @@ export class DiscussionOrchestrator {
       ) {
         throw new ApiError(
           409,
-          "Terminal Discussions cannot accept constraints",
+          "Terminal Discussions cannot accept interventions",
           "discussion_invalid_state"
         );
       }
       const timestamp = this.clock();
-      if (parsed.constraints) {
-        discussion.constraints = [
-          ...(discussion.constraints ?? []),
-          ...parsed.constraints
-        ];
-      }
-      if (parsed.questions) {
-        discussion.questions = [
-          ...(discussion.questions ?? []),
-          ...parsed.questions
-        ];
-      }
-      if (parsed.note) discussion.note = parsed.note;
-      discussion.updatedAt = timestamp;
-      appendDiscussionEvent(
-        discussion,
-        "constraints_updated",
-        {
-          constraints: parsed.constraints,
-          questions: parsed.questions,
-          note: parsed.note
-        },
-        this.eventFactory
+      const latestRound = discussion.rounds.at(-1);
+      const activeRun = activeRunInState(state, discussion);
+      const pending = Boolean(
+        activeRun ||
+          state.discussionInterventions.some(
+            (intervention) =>
+              intervention.discussionId === discussion.id &&
+              intervention.status === "pending"
+          ) ||
+          discussion.status === "running" ||
+          latestRound?.status === "running" ||
+          latestRound?.phase === "synthesis"
       );
+      for (const input of inputs) {
+        const intervention: DiscussionIntervention = {
+          id: crypto.randomUUID(),
+          workspaceId: state.workspace.id,
+          discussionId: discussion.id,
+          kind: input.kind,
+          content: input.content,
+          status: "pending",
+          createdBy: "user",
+          idempotencyKey: input.idempotencyKey,
+          createdAt: timestamp,
+          updatedAt: timestamp
+        };
+        state.discussionInterventions.push(intervention);
+        if (pending) {
+          queueIntervention(
+            discussion,
+            intervention,
+            timestamp,
+            this.eventFactory
+          );
+        } else {
+          applyIntervention(
+            discussion,
+            intervention,
+            timestamp,
+            this.eventFactory
+          );
+          if (discussion.status === "review") {
+            discussion.status = "interrupted";
+            appendDiscussionEvent(
+              discussion,
+              "discussion_interrupted",
+              {
+                code: "intervention_requires_resynthesis",
+                interventionId: intervention.id
+              },
+              this.eventFactory
+            );
+          }
+        }
+      }
       state.workspace.updatedAt = timestamp;
     });
     return this.getDiscussionView(discussionId);
@@ -374,6 +640,20 @@ export class DiscussionOrchestrator {
         );
       }
       const timestamp = this.clock();
+      applyPendingInterventionsInState(
+        state,
+        discussion,
+        timestamp,
+        this.eventFactory
+      );
+      applyLifecycleIntervention(
+        state,
+        discussion,
+        "extension",
+        "One additional Cross-response Round was added.",
+        timestamp,
+        this.eventFactory
+      );
       const round: DiscussionRound = {
         id: phaseRoundId(
           discussion.id,
@@ -625,6 +905,14 @@ export class DiscussionOrchestrator {
         );
       }
       const timestamp = this.clock();
+      applyLifecycleIntervention(
+        state,
+        discussion,
+        "stop",
+        input.reason ?? "Discussion stopped by the user.",
+        timestamp,
+        this.eventFactory
+      );
       discussion.status = "interrupted";
       discussion.updatedAt = timestamp;
       const round = discussion.rounds.at(-1);
@@ -666,6 +954,14 @@ export class DiscussionOrchestrator {
         );
       }
       const timestamp = this.clock();
+      applyLifecycleIntervention(
+        state,
+        discussion,
+        "cancel",
+        input.reason ?? "Discussion cancelled by the user.",
+        timestamp,
+        this.eventFactory
+      );
       discussion.status = "cancelled";
       discussion.completedAt = timestamp;
       discussion.updatedAt = timestamp;
@@ -770,6 +1066,12 @@ export class DiscussionOrchestrator {
         );
       }
       const timestamp = this.clock();
+      applyPendingInterventionsInState(
+        state,
+        discussion,
+        timestamp,
+        this.eventFactory
+      );
       discussion.promptProfileVersion =
         DISCUSSION_PROMPT_PROFILE_VERSION;
       round.status = "pending";
@@ -938,6 +1240,12 @@ export class DiscussionOrchestrator {
       }
 
       const timestamp = this.clock();
+      applyPendingInterventionsInState(
+        state,
+        discussion,
+        timestamp,
+        this.eventFactory
+      );
       discussion.promptProfileVersion =
         DISCUSSION_PROMPT_PROFILE_VERSION;
       let round = discussion.rounds.findLast(
@@ -1302,6 +1610,12 @@ export class DiscussionOrchestrator {
       const id = phaseRoundId(discussion.id, roundNumber, phase);
       if (discussion.rounds.some((round) => round.id === id)) return;
       const timestamp = this.clock();
+      applyPendingInterventionsInState(
+        state,
+        discussion,
+        timestamp,
+        this.eventFactory
+      );
       discussion.rounds.push({
         id,
         roundNumber,
@@ -1442,6 +1756,26 @@ export class DiscussionOrchestrator {
       const discussion = discussionById(state, discussionId);
       if (discussion.status !== "running") return;
       const timestamp = this.clock();
+      const applied = applyPendingInterventionsInState(
+        state,
+        discussion,
+        timestamp,
+        this.eventFactory
+      );
+      if (applied > 0) {
+        discussion.status = "interrupted";
+        discussion.updatedAt = timestamp;
+        appendDiscussionEvent(
+          discussion,
+          "discussion_interrupted",
+          {
+            code: "intervention_requires_resynthesis"
+          },
+          this.eventFactory
+        );
+        state.workspace.updatedAt = timestamp;
+        return;
+      }
       discussion.status = "review";
       discussion.updatedAt = timestamp;
       appendDiscussionEvent(

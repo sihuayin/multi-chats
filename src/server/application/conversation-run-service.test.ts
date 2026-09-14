@@ -409,6 +409,57 @@ describe("ConversationRun", () => {
     expect(revision.turnIds).not.toContain(oldTurnId);
   });
 
+  it("includes applied interventions in structured Discussion context", async () => {
+    const state = createFixtureState();
+    const { discussion, round } = addFixturePhase(state);
+    const intervention = {
+      id: "intervention-context",
+      workspaceId: state.workspace.id,
+      discussionId: discussion.id,
+      kind: "material" as const,
+      content: "Use payroll data as external validation.",
+      status: "applied" as const,
+      createdBy: "user",
+      appliedPhase: "positions" as const,
+      appliedRoundId: discussion.rounds[0].id,
+      resultingDiscussionRevision: 1,
+      appliedAt: state.workspace.updatedAt,
+      createdAt: state.workspace.createdAt,
+      updatedAt: state.workspace.updatedAt
+    };
+    state.discussionInterventions.push(intervention);
+    const store = new MemoryStore(state);
+    const engine = new RecordingModelGateway(() => [
+      JSON.stringify(createFixtureTurnPayload("cross_response"))
+    ]);
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      engine
+    );
+    const started = await runs.startPhaseRun(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        discussionId: discussion.id,
+        roundId: round.id,
+        participantSnapshot: round.participantSnapshot,
+        context: "Prior phase context.",
+        purpose: "Challenge the assumptions from the earlier phase."
+      }
+    );
+
+    await runs.processRun(started.run.id);
+
+    expect(
+      engine.requests[0].messages?.some(
+        (message) =>
+          message.kind === "user_intervention" &&
+          message.interventionId === intervention.id &&
+          message.content.includes(intervention.content)
+      )
+    ).toBe(true);
+  });
+
   it("preserves Run failure outcomes and settles the phase Turn", async () => {
     const state = createFixtureState();
     const { discussion, round } = addFixturePhase(state);

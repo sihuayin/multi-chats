@@ -8,6 +8,7 @@ import { phasePurpose } from "@/server/application/discussion-protocol";
 import type {
   AppState,
   Discussion,
+  DiscussionIntervention,
   DiscussionParticipant,
   DiscussionRound,
   DiscussionTurn,
@@ -212,6 +213,27 @@ function relatedContextMessages(
   return [...tasks, ...artifacts];
 }
 
+function appliedInterventionMessages(
+  interventions: DiscussionIntervention[],
+  discussion: Discussion,
+  currentTurnId: string,
+  round: DiscussionRound,
+  participant: DiscussionParticipant
+): ModelMessage[] {
+  return interventions.map((intervention): ModelMessage => ({
+      id: `intervention-${intervention.id}`,
+      role: "user",
+      content: `User ${intervention.kind}:\n${intervention.content}`,
+      kind: "user_intervention",
+      discussionId: discussion.id,
+      roundId: intervention.appliedRoundId ?? round.id,
+      turnId: currentTurnId,
+      participantId: participant.id,
+      phase: intervention.appliedPhase ?? round.phase,
+      interventionId: intervention.id
+    }));
+}
+
 function systemPromptFor(
   employee: Employee,
   skills: Skill[],
@@ -312,6 +334,39 @@ export function planDiscussionContext(input: {
     input.skills,
     profile
   );
+  const appliedInterventions = input.state.discussionInterventions
+    .filter(
+      (intervention) =>
+        intervention.discussionId === input.discussion.id &&
+        intervention.status === "applied"
+    )
+    .sort((left, right) =>
+      left.createdAt.localeCompare(right.createdAt)
+    );
+  const interventionMessages = appliedInterventionMessages(
+    appliedInterventions,
+    input.discussion,
+    input.currentTurn.id,
+    input.round,
+    input.participant
+  );
+  const appliedContentByKind = new Map<
+    DiscussionIntervention["kind"],
+    Set<string>
+  >();
+  for (const intervention of appliedInterventions) {
+    const values =
+      appliedContentByKind.get(intervention.kind) ?? new Set<string>();
+    values.add(intervention.content);
+    appliedContentByKind.set(intervention.kind, values);
+  }
+  const legacyConstraints = input.discussion.constraints?.filter(
+    (constraint) =>
+      !appliedContentByKind.get("constraint")?.has(constraint)
+  );
+  const legacyQuestions = input.discussion.questions?.filter(
+    (question) => !appliedContentByKind.get("question")?.has(question)
+  );
   const baseMessage = (content: string): ModelMessage => ({
     id: `context-${input.round.id}-${input.currentTurn.id}`,
     role: "user",
@@ -332,13 +387,16 @@ export function planDiscussionContext(input: {
         `Round: ${input.round.roundNumber}`,
         `Phase: ${input.round.phase}`,
         `Purpose: ${phasePurpose(input.round)}`,
-        ...(input.discussion.constraints?.length
-          ? [`Constraints:\n${input.discussion.constraints.join("\n")}`]
+        ...(legacyConstraints?.length
+          ? [`Constraints:\n${legacyConstraints.join("\n")}`]
           : []),
-        ...(input.discussion.questions?.length
-          ? [`Questions:\n${input.discussion.questions.join("\n")}`]
+        ...(legacyQuestions?.length
+          ? [`Questions:\n${legacyQuestions.join("\n")}`]
           : []),
-        ...(input.discussion.note ? [`Note:\n${input.discussion.note}`] : [])
+        ...(input.discussion.note &&
+        !appliedContentByKind.get("focus")?.has(input.discussion.note)
+          ? [`Note:\n${input.discussion.note}`]
+          : [])
       ].join("\n")
     ),
     kind: "conversation"
@@ -360,6 +418,7 @@ export function planDiscussionContext(input: {
   const fixedMessages = [
     discussionBrief,
     objectiveMessage,
+    ...interventionMessages,
     currentRequestMessage,
     responseMessage
   ];
@@ -438,6 +497,7 @@ export function planDiscussionContext(input: {
   const messages = [
     discussionBrief,
     objectiveMessage,
+    ...interventionMessages,
     currentRequestMessage,
     ...selectedHistory.map((item) => item.message),
     ...selectedRelated,

@@ -117,6 +117,21 @@ export const discussionConstraintsSchema = z.object({
   "At least one constraint field is required"
 );
 
+export const discussionInterventionCreateSchema = z.object({
+  kind: z.enum([
+    "constraint",
+    "question",
+    "material",
+    "correction",
+    "focus"
+  ]),
+  content: z.string().trim().min(1).max(8000),
+  idempotencyKey: z.string().trim().min(1).max(200).optional()
+}).strict();
+export type DiscussionInterventionCreateInput = z.infer<
+  typeof discussionInterventionCreateSchema
+>;
+
 export const discussionSkipSchema = z.object({
   employeeId: z.string().trim().min(1),
   reason: z.string().trim().min(1).max(1000).optional()

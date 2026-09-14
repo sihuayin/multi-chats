@@ -2,6 +2,7 @@ import type {
   AppState,
   Discussion,
   DiscussionEvent,
+  DiscussionIntervention,
   DiscussionRound,
   Run
 } from "@/server/domain/types";
@@ -93,6 +94,24 @@ function taskView(task: AppState["tasks"][number]) {
     status: task.status,
     assigneeIds: task.assigneeIds,
     confirmedBriefArtifactId: task.confirmedBriefArtifactId
+  };
+}
+
+function interventionView(intervention: DiscussionIntervention) {
+  return {
+    id: intervention.id,
+    kind: intervention.kind,
+    content: intervention.content,
+    status: intervention.status,
+    createdBy: intervention.createdBy,
+    idempotencyKey: intervention.idempotencyKey,
+    appliedPhase: intervention.appliedPhase,
+    appliedRoundId: intervention.appliedRoundId,
+    resultingDiscussionRevision:
+      intervention.resultingDiscussionRevision,
+    appliedAt: intervention.appliedAt,
+    createdAt: intervention.createdAt,
+    updatedAt: intervention.updatedAt
   };
 }
 
@@ -192,6 +211,14 @@ export function buildDiscussionView(
         };
       }),
     rounds: discussion.rounds.map(roundView),
+    interventions: state.discussionInterventions
+      .filter(
+        (intervention) => intervention.discussionId === discussion.id
+      )
+      .sort((left, right) =>
+        left.createdAt.localeCompare(right.createdAt)
+      )
+      .map(interventionView),
     latestBrief,
     confirmedBrief,
     sourceTask: sourceTask ? taskView(sourceTask) : undefined,

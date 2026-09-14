@@ -11,6 +11,7 @@ import {
   CircleStop,
   FileJson,
   LoaderCircle,
+  MessageSquarePlus,
   Play,
   Plus,
   RefreshCw,
@@ -19,6 +20,7 @@ import {
   X
 } from "lucide-react";
 import { apiRequest } from "@/lib/api";
+import { useI18n } from "@/components/i18n-provider";
 import { useWorkspace } from "@/components/workspace-provider";
 import { cn } from "@/lib/utils";
 import styles from "./discussion-workspace.module.css";
@@ -45,10 +47,27 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 import type {
   DiscussionMode,
   DiscussionRole
 } from "@/server/domain/types";
+import type { TranslationKey } from "@/lib/i18n";
+
+function interventionKindKey(kind: string): TranslationKey {
+  if (kind === "question") return "chat.interventionQuestion";
+  if (kind === "material") return "chat.interventionMaterial";
+  if (kind === "correction") return "chat.interventionCorrection";
+  if (kind === "focus") return "chat.interventionFocus";
+  return "chat.interventionConstraint";
+}
+
+function interventionStatusKey(status: string): TranslationKey {
+  if (status === "applied") return "chat.interventionApplied";
+  if (status === "rejected") return "chat.interventionRejected";
+  if (status === "superseded") return "chat.interventionSuperseded";
+  return "chat.interventionPending";
+}
 
 type DiscussionAction =
   | "edit"
@@ -94,6 +113,17 @@ type DiscussionView = {
     runId?: string;
     turnCount: number;
     completedTurnCount: number;
+  }>;
+  interventions: Array<{
+    id: string;
+    kind: string;
+    content: string;
+    status: string;
+    appliedPhase?: string;
+    appliedRoundId?: string;
+    resultingDiscussionRevision?: number;
+    appliedAt?: string;
+    createdAt: string;
   }>;
   latestBrief?: {
     artifactId: string;
@@ -171,6 +201,7 @@ function statusVariant(status: string) {
 }
 
 export function DiscussionWorkspace() {
+  const { t } = useI18n();
   const { data, refresh } = useWorkspace();
   const [selectedConversationId, setSelectedConversationId] = useState("");
   const [selectedDiscussionId, setSelectedDiscussionId] = useState("");
@@ -190,6 +221,10 @@ export function DiscussionWorkspace() {
   const [facilitatorId, setFacilitatorId] = useState("");
   const [selectedOptionId, setSelectedOptionId] = useState("");
   const [taskTitle, setTaskTitle] = useState("");
+  const [interventionKind, setInterventionKind] = useState<
+    "constraint" | "question" | "material" | "correction" | "focus"
+  >("constraint");
+  const [interventionContent, setInterventionContent] = useState("");
 
   const conversations = data?.conversations ?? [];
   const conversation =
@@ -372,6 +407,31 @@ export function DiscussionWorkspace() {
       setLoadedView(created);
       setSelectedDiscussionId(created.discussion.id);
       setTitle("");
+      await refresh();
+    } catch (nextError) {
+      setError(String(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function addIntervention() {
+    if (!view || !interventionContent.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await apiRequest<DiscussionView>(
+        `/api/discussions/${view.discussion.id}/interventions`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            kind: interventionKind,
+            content: interventionContent
+          })
+        }
+      );
+      setLoadedView(next);
+      setInterventionContent("");
       await refresh();
     } catch (nextError) {
       setError(String(nextError));
@@ -770,6 +830,81 @@ export function DiscussionWorkspace() {
                       </div>
                     </div>
                   ))}
+                  {!["completed", "cancelled"].includes(
+                    view.discussion.status
+                  ) ? (
+                    <>
+                      <Separator className="my-2" />
+                      <div className="grid gap-2 px-2 pb-2">
+                        <div>
+                          <p className="text-xs font-semibold">
+                            {t("chat.addIntervention")}
+                          </p>
+                          <p className="text-[10px] text-[var(--muted-foreground)]">
+                            {t("chat.addInterventionHint")}
+                          </p>
+                        </div>
+                        <Select
+                          value={interventionKind}
+                          onValueChange={(value) =>
+                            setInterventionKind(
+                              value as
+                                | "constraint"
+                                | "question"
+                                | "material"
+                                | "correction"
+                                | "focus"
+                            )
+                          }
+                        >
+                          <SelectTrigger
+                            aria-label={t("chat.interventionType")}
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="constraint">
+                              {t("chat.interventionConstraint")}
+                            </SelectItem>
+                            <SelectItem value="question">
+                              {t("chat.interventionQuestion")}
+                            </SelectItem>
+                            <SelectItem value="material">
+                              {t("chat.interventionMaterial")}
+                            </SelectItem>
+                            <SelectItem value="correction">
+                              {t("chat.interventionCorrection")}
+                            </SelectItem>
+                            <SelectItem value="focus">
+                              {t("chat.interventionFocus")}
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Textarea
+                          aria-label="Intervention content"
+                          value={interventionContent}
+                          onChange={(event) =>
+                            setInterventionContent(event.target.value)
+                          }
+                          placeholder={t("chat.interventionPlaceholder")}
+                          className="min-h-20"
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => void addIntervention()}
+                          disabled={busy || !interventionContent.trim()}
+                        >
+                          {busy ? (
+                            <LoaderCircle className="spin" />
+                          ) : (
+                            <MessageSquarePlus />
+                          )}
+                          {t("chat.addInterventionAction")}
+                        </Button>
+                      </div>
+                    </>
+                  ) : null}
                 </CardContent>
               </Card>
 
@@ -862,6 +997,51 @@ export function DiscussionWorkspace() {
                   </div>
                 ) : null}
               </Card>
+
+              {view.interventions.length > 0 ? (
+                <Card className="gap-3 py-4">
+                  <CardHeader className="px-4">
+                    <CardTitle className="flex items-center gap-2 text-sm">
+                      <MessageSquarePlus /> {t("chat.interventions")}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="grid gap-2 px-4">
+                    {view.interventions.map((intervention) => (
+                      <div
+                        key={intervention.id}
+                        className="grid gap-1 rounded-md border p-3"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <strong className="text-xs">
+                            {t(interventionKindKey(intervention.kind))}
+                          </strong>
+                          <Badge
+                            variant={
+                              intervention.status === "applied"
+                                ? "secondary"
+                                : "outline"
+                            }
+                          >
+                            {t(interventionStatusKey(intervention.status))}
+                          </Badge>
+                        </div>
+                        <p className="text-xs leading-5">
+                          {intervention.content}
+                        </p>
+                        {intervention.appliedPhase ? (
+                          <small className="text-[10px] text-[var(--muted-foreground)]">
+                            {t("chat.appliedAt", {
+                              phase: titleCase(intervention.appliedPhase),
+                              revision:
+                                intervention.resultingDiscussionRevision ?? 1
+                            })}
+                          </small>
+                        ) : null}
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              ) : null}
 
               <Card className={cn(styles.brief, "gap-4 py-5")}>
                 <CardHeader className="px-5">

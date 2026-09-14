@@ -841,6 +841,229 @@ describe("DiscussionOrchestrator", () => {
     });
   });
 
+  it("applies an intervention immediately when no Run is active", async () => {
+    const { store, orchestrator, discussion } =
+      await createRunningDiscussion();
+    await orchestrator.stopDiscussion(discussion.id);
+
+    const view = await orchestrator.addIntervention(discussion.id, {
+      kind: "material",
+      content: "Use the payroll dataset for validation."
+    });
+
+    expect(view.interventions).toContainEqual(
+      expect.objectContaining({
+        kind: "material",
+        content: "Use the payroll dataset for validation.",
+        status: "applied",
+        appliedPhase: "positions",
+        resultingDiscussionRevision: 2
+      })
+    );
+    const persisted = await store.read(
+      (state) =>
+        state.discussions.find((item) => item.id === discussion.id)!
+    );
+    expect(persisted.revision).toBe(2);
+    expect(persisted.events?.at(-1)).toMatchObject({
+      type: "intervention_applied"
+    });
+  });
+
+  it("queues interventions during a Run and applies them at the phase boundary", async () => {
+    const { store, runs, orchestrator, discussion } =
+      await createRunningDiscussion();
+
+    const queued = await orchestrator.addIntervention(discussion.id, {
+      kind: "constraint",
+      content: "Keep the migration reversible."
+    });
+    expect(queued.interventions).toContainEqual(
+      expect.objectContaining({
+        kind: "constraint",
+        status: "pending",
+        appliedPhase: undefined
+      })
+    );
+
+    await processLatestDiscussionRun(store, runs, discussion.id);
+    await orchestrator.advanceDiscussion(discussion.id);
+
+    const persisted = await store.read((state) => ({
+      discussion: state.discussions.find(
+        (item) => item.id === discussion.id
+      )!,
+      intervention: state.discussionInterventions.find(
+        (item) => item.discussionId === discussion.id
+      )!
+    }));
+    expect(persisted.intervention).toMatchObject({
+      kind: "constraint",
+      status: "applied",
+      appliedPhase: "positions",
+      resultingDiscussionRevision: 1
+    });
+    expect(persisted.discussion.constraints).toContain(
+      "Keep the migration reversible."
+    );
+    expect(
+      persisted.discussion.events?.map((event) => event.type)
+    ).toEqual(
+      expect.arrayContaining(["intervention_queued", "intervention_applied"])
+    );
+  });
+
+  it("keeps the legacy constraint command backward compatible", async () => {
+    const { store, orchestrator, discussion } =
+      await createRunningDiscussion();
+    await orchestrator.stopDiscussion(discussion.id);
+
+    const view = await orchestrator.addConstraints(discussion.id, {
+      constraints: ["Keep the API stable."],
+      questions: ["What is the rollback path?"],
+      note: "Focus on migration risk."
+    });
+
+    expect(
+      view.interventions
+        .map((intervention) => intervention.kind)
+        .filter((kind) =>
+          ["constraint", "question", "focus"].includes(kind)
+        )
+    ).toEqual(["constraint", "question", "focus"]);
+    const persisted = await store.read(
+      (state) =>
+        state.discussions.find((item) => item.id === discussion.id)!
+    );
+    expect(persisted).toMatchObject({
+      constraints: ["Keep the API stable."],
+      questions: ["What is the rollback path?"],
+      note: "Focus on migration risk.",
+      revision: 4
+    });
+  });
+
+  it("invalidates review when a new intervention is applied", async () => {
+    const { store, orchestrator, discussion } =
+      await createRunningDiscussion();
+    await orchestrator.stopDiscussion(discussion.id);
+    await store.update((state) => {
+      const current = state.discussions.find(
+        (item) => item.id === discussion.id
+      )!;
+      current.status = "review";
+    });
+
+    const view = await orchestrator.addIntervention(discussion.id, {
+      kind: "correction",
+      content: "The previous recommendation used stale evidence."
+    });
+
+    expect(view.discussion.status).toBe("interrupted");
+    expect(view.interventions.at(-1)).toMatchObject({
+      kind: "correction",
+      status: "applied"
+    });
+    expect(
+      await store.read((state) =>
+        state.discussions
+          .find((item) => item.id === discussion.id)
+          ?.events?.at(-1)
+      )
+    ).toMatchObject({
+      type: "discussion_interrupted",
+      payload: { code: "intervention_requires_resynthesis" }
+    });
+  });
+
+  it("records mode, participant, and budget changes as interventions", async () => {
+    const { store, orchestrator, discussion } =
+      await createRunningDiscussion();
+    await orchestrator.stopDiscussion(discussion.id);
+    await store.update((state) => {
+      const current = state.discussions.find(
+        (item) => item.id === discussion.id
+      )!;
+      current.status = "review";
+    });
+
+    const view = await orchestrator.updateDiscussion(discussion.id, {
+      mode: "review",
+      maxRounds: 4,
+      participants: discussion.participants.map((participant) => ({
+        employeeId: participant.employeeId,
+        role: participant.role,
+        objective: participant.objective
+      })),
+      facilitatorId:
+        discussion.participants.find(
+          (participant) =>
+            participant.id === discussion.facilitatorParticipantId
+        )!.employeeId
+    });
+
+    expect(view.discussion).toMatchObject({
+      status: "interrupted",
+      mode: "review",
+      maxRounds: 4
+    });
+    expect(
+      view.interventions.map((intervention) => intervention.kind)
+    ).toEqual(
+      expect.arrayContaining([
+        "mode_change",
+        "participant_change",
+        "budget_change"
+      ])
+    );
+    expect(
+      view.interventions.every(
+        (intervention) =>
+          intervention.status === "applied" &&
+          intervention.resultingDiscussionRevision !== undefined
+      )
+    ).toBe(true);
+  });
+
+  it("preserves intervention queue order across stop and resume", async () => {
+    const { store, orchestrator, discussion } =
+      await createRunningDiscussion();
+    await orchestrator.addIntervention(discussion.id, {
+      kind: "constraint",
+      content: "First queued intervention."
+    });
+    await orchestrator.stopDiscussion(discussion.id);
+    await orchestrator.addIntervention(discussion.id, {
+      kind: "correction",
+      content: "Second queued intervention."
+    });
+    await orchestrator.retryPhase(discussion.id);
+
+    const queued = await store.read((state) =>
+      state.discussionInterventions
+        .filter(
+          (intervention) =>
+            intervention.discussionId === discussion.id &&
+            ["First queued intervention.", "Second queued intervention."].includes(
+              intervention.content
+            )
+        )
+        .sort((left, right) =>
+          left.createdAt.localeCompare(right.createdAt)
+        )
+    );
+    expect(
+      queued.map((intervention) => [
+        intervention.content,
+        intervention.status,
+        intervention.resultingDiscussionRevision
+      ])
+    ).toEqual([
+      ["First queued intervention.", "applied", 2],
+      ["Second queued intervention.", "applied", 3]
+    ]);
+  });
+
   it("uses stable phase and total timeout codes", async () => {
     let now = "2026-01-01T00:00:00.000Z";
     const { store, runs, orchestrator, discussion } =
