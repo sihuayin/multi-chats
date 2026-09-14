@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { AppState } from "@/server/domain/types";
+import { validateRuntimeContracts } from "@/server/domain/runtime-contracts";
 import { createInitialState } from "@/server/store/initial-state";
 import { migrateAppState } from "@/server/store/migrations";
 import type { StateStore } from "@/server/store/store";
@@ -38,6 +39,10 @@ export class SqliteStore implements StateStore {
       try {
         const state = this.loadState();
         const result = await updater(state);
+        validateRuntimeContracts(
+          state as unknown as Record<string, unknown>,
+          state.workspace.id
+        );
         this.database
           .prepare(
             "UPDATE app_state SET state = ?, updated_at = ? WHERE workspace_id = ?"

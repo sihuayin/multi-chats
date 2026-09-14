@@ -16,6 +16,10 @@ const payloadSchema = z
           .object({
             statement: z.string().trim().min(1),
             evidence: z.string().optional(),
+            evidenceIds: z.array(z.string().trim().min(1)).optional(),
+            kind: z
+              .enum(["fact", "inference", "opinion", "assumption"])
+              .optional(),
             confidence: confidenceSchema
           })
           .strict()

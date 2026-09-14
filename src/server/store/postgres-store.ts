@@ -1,5 +1,6 @@
 import { Pool, type PoolClient } from "pg";
 import type { AppState } from "@/server/domain/types";
+import { validateRuntimeContracts } from "@/server/domain/runtime-contracts";
 import { createInitialState } from "@/server/store/initial-state";
 import { migrateAppState } from "@/server/store/migrations";
 import type { StateStore } from "@/server/store/store";
@@ -48,6 +49,10 @@ export class PostgresStore implements StateStore {
       await client.query("BEGIN");
       const state = await this.load(client);
       const result = await updater(state);
+      validateRuntimeContracts(
+        state as unknown as Record<string, unknown>,
+        state.workspace.id
+      );
       await client.query(
         "UPDATE app_state SET state = $2::jsonb, updated_at = now() WHERE workspace_id = $1",
         [state.workspace.id, JSON.stringify(state)]

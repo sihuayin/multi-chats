@@ -25,6 +25,25 @@ describe("Discussion Turn payload", () => {
     ).toEqual(position);
   });
 
+  it("accepts structured evidence references and claim kinds", () => {
+    const payload = {
+      ...position,
+      claims: [
+        {
+          statement: "The current store already persists Discussions.",
+          evidence: "Schema migration test",
+          evidenceIds: ["evidence-1"],
+          kind: "fact",
+          confidence: "high"
+        }
+      ]
+    };
+
+    expect(
+      parseDiscussionTurnPayload(JSON.stringify(payload), "positions")
+    ).toEqual(payload);
+  });
+
   it("requires Cross-response agreements, disagreements, and corrections", () => {
     expect(() =>
       parseDiscussionTurnPayload(JSON.stringify(position), "cross_response")

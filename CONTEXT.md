@@ -80,6 +80,30 @@ _Avoid_: Job, execution
 The terminal disposition of a Run: completed, failed, cancelled, or interrupted.
 _Avoid_: Result, status
 
+**Provider attempt**:
+One auditable call to a Provider model made for a Run, synthesis, compression, or smoke test.
+_Avoid_: Provider call, invocation
+
+**Model usage**:
+The exact, estimated, or unknown input, output, cached, reasoning, and total token counts for a Provider attempt.
+_Avoid_: Token count, metrics
+
+**Evidence reference**:
+A stable reference from a claim or compression record to its supporting Message, Turn, Task, Artifact, Tool result, or external source.
+_Avoid_: Citation, source text
+
+**Discussion intervention**:
+A user-authored constraint, question, correction, material addition, or lifecycle change applied to a Discussion between Rounds.
+_Avoid_: Steering message, prompt
+
+**Compression record**:
+An immutable, source-linked representation of completed Discussion history that replaces older Turns in a model request when the token budget requires it.
+_Avoid_: Summary, truncation
+
+**Pricing snapshot**:
+The versioned model rates used to calculate the cost of a Provider attempt without changing historical cost when Provider prices change.
+_Avoid_: Price table, current rate
+
 **Approval**:
 A user decision required before an employee invokes a side-effecting tool.
 _Avoid_: Permission, confirmation

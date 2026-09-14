@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createWorkspaceBackup,
+  parseWorkspaceBackup,
   restoreWorkspaceBackup
 } from "@/server/application/backup-service";
 import { createInitialState } from "@/server/store/initial-state";
@@ -206,5 +207,94 @@ describe("Workspace backup and restore", () => {
     }
     expect(await store.read((state) => state.workspace.name)).toBe(original);
     await store.close();
+  });
+
+  it("round-trips runtime contract ledgers without credentials", async () => {
+    const store = new SqliteStore(":memory:");
+    const state = createFixtureState();
+    const provider = state.providers[0];
+    const employee = state.employees[0];
+    employee.fallbackTargets = [
+      {
+        providerCredentialId: provider.id,
+        modelId: "fallback-model"
+      }
+    ];
+    state.providerAttempts.push({
+      id: "attempt-1",
+      workspaceId: state.workspace.id,
+      purpose: "discussion_turn",
+      provider: provider.provider,
+      modelId: employee.modelId,
+      targetOrder: 0,
+      attempt: 1,
+      status: "succeeded",
+      usage: {
+        inputTokens: 120,
+        outputTokens: 40,
+        source: "provider"
+      },
+      startedAt: state.workspace.createdAt,
+      completedAt: state.workspace.updatedAt
+    });
+    state.modelPricing.push({
+      id: "pricing-1",
+      workspaceId: state.workspace.id,
+      provider: provider.provider,
+      modelId: employee.modelId,
+      currency: "USD",
+      inputMicrosPerMillionTokens: 1_000_000,
+      outputMicrosPerMillionTokens: 2_000_000,
+      effectiveAt: state.workspace.createdAt,
+      source: "test",
+      version: "1",
+      createdAt: state.workspace.createdAt
+    });
+
+    const backup = JSON.stringify(state);
+    await restoreWorkspaceBackup(store, backup);
+
+    expect(await store.read((restored) => restored.providerAttempts)).toEqual(
+      state.providerAttempts
+    );
+    expect(await store.read((restored) => restored.modelPricing)).toEqual(
+      state.modelPricing
+    );
+    expect(await store.read((restored) => restored.employees[0].fallbackTargets))
+      .toEqual(employee.fallbackTargets);
+
+    const invalid = structuredClone(state) as unknown as {
+      providerAttempts: Array<Record<string, unknown>>;
+    };
+    invalid.providerAttempts[0].credential = "must-not-persist";
+    expect(() => parseWorkspaceBackup(JSON.stringify(invalid))).toThrow(
+      "Backup file is invalid"
+    );
+    await store.close();
+  });
+
+  it("migrates v2 backups before restore", () => {
+    const legacy = createFixtureState() as unknown as Record<string, unknown>;
+    legacy.schemaVersion = 2;
+    for (const key of [
+      "providerAttempts",
+      "evidenceReferences",
+      "discussionCompressions",
+      "discussionInterventions",
+      "discussionContextRevisions",
+      "modelPricing"
+    ]) {
+      delete legacy[key];
+    }
+
+    expect(parseWorkspaceBackup(JSON.stringify(legacy))).toMatchObject({
+      schemaVersion: 3,
+      providerAttempts: [],
+      evidenceReferences: [],
+      discussionCompressions: [],
+      discussionInterventions: [],
+      discussionContextRevisions: [],
+      modelPricing: []
+    });
   });
 });

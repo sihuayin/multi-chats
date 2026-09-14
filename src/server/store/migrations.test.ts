@@ -28,7 +28,7 @@ describe("AppState migrations", () => {
 
     const migrated = migrateAppState(legacy);
 
-    expect(migrated.schemaVersion).toBe(2);
+    expect(migrated.schemaVersion).toBe(3);
     expect(migrated.discussions).toEqual([]);
     expect(migrated.artifacts[0]).toMatchObject({
       id: "artifact-1",
@@ -50,6 +50,35 @@ describe("AppState migrations", () => {
 
     expect(migrated).toEqual(current);
     expect(migrateAppState(structuredClone(migrated))).toEqual(current);
+  });
+
+  it("migrates v2 state to the runtime contract ledgers", () => {
+    const legacy = createInitialState(
+      "00000000-0000-4000-8000-000000000001"
+    ) as unknown as Record<string, unknown>;
+    legacy.schemaVersion = 2;
+    for (const key of [
+      "providerAttempts",
+      "evidenceReferences",
+      "discussionCompressions",
+      "discussionInterventions",
+      "discussionContextRevisions",
+      "modelPricing"
+    ]) {
+      delete legacy[key];
+    }
+
+    const migrated = migrateAppState(legacy);
+
+    expect(migrated).toMatchObject({
+      schemaVersion: 3,
+      providerAttempts: [],
+      evidenceReferences: [],
+      discussionCompressions: [],
+      discussionInterventions: [],
+      discussionContextRevisions: [],
+      modelPricing: []
+    });
   });
 
   it("does not mutate its input", () => {
@@ -136,6 +165,43 @@ describe("AppState migrations", () => {
     });
     expect(() => migrateAppState(danglingMessage)).toThrow(
       "Message references an unknown Discussion"
+    );
+  });
+
+  it("rejects runtime records that contain credentials", () => {
+    const state = createInitialState(
+      "00000000-0000-4000-8000-000000000001"
+    );
+    state.providerAttempts.push({
+      id: "attempt-invalid",
+      workspaceId: state.workspace.id,
+      purpose: "conversation",
+      provider: "openai",
+      modelId: "test-model",
+      targetOrder: 0,
+      attempt: 1,
+      status: "succeeded",
+      usage: { source: "unknown" },
+      credential: "must-not-persist",
+      startedAt: state.workspace.createdAt
+    } as never);
+
+    expect(() => migrateAppState(state)).toThrow(
+      "Workspace providerAttempts are invalid"
+    );
+  });
+
+  it("rejects invalid Employee fallback targets", () => {
+    const state = createFixtureState();
+    state.employees[0].fallbackTargets = [
+      {
+        providerCredentialId: "",
+        modelId: "fallback-model"
+      }
+    ];
+
+    expect(() => migrateAppState(state)).toThrow(
+      "Workspace Employee fallback targets are invalid"
     );
   });
 

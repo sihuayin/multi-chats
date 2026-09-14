@@ -1,11 +1,12 @@
 import type { AppState } from "@/server/domain/types";
 import { isArtifactType } from "@/lib/artifact-types";
+import { validateRuntimeContracts } from "@/server/domain/runtime-contracts";
 import {
   validateDiscussion,
   validateDiscussionReferences
 } from "@/server/application/discussion-domain";
 
-export const CURRENT_SCHEMA_VERSION = 2;
+export const CURRENT_SCHEMA_VERSION = 3;
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -55,6 +56,20 @@ function migrateV1ToV2(state: Record<string, unknown>): void {
     delete artifact.taskId;
   }
   state.discussions = [];
+  state.schemaVersion = 2;
+}
+
+function migrateV2ToV3(state: Record<string, unknown>): void {
+  for (const key of [
+    "providerAttempts",
+    "evidenceReferences",
+    "discussionCompressions",
+    "discussionInterventions",
+    "discussionContextRevisions",
+    "modelPricing"
+  ]) {
+    state[key] ??= [];
+  }
   state.schemaVersion = CURRENT_SCHEMA_VERSION;
 }
 
@@ -91,6 +106,15 @@ function validateCurrentState(state: Record<string, unknown>): void {
   if (!Array.isArray(state.messages) || !Array.isArray(state.runs)) {
     throw new Error("Workspace correlations are invalid");
   }
+  if (!Array.isArray(state.employees)) {
+    throw new Error("Workspace Employees are invalid");
+  }
+  const workspace = record(state.workspace);
+  const workspaceId = workspace.id;
+  if (typeof workspaceId !== "string" || !workspaceId) {
+    throw new Error("Workspace identity is invalid");
+  }
+  validateRuntimeContracts(state, workspaceId);
   validateDiscussionReferences({
     discussions: state.discussions as never,
     artifacts: state.artifacts as never,
@@ -105,11 +129,14 @@ export function migrateAppState(input: unknown): AppState {
   const version = state.schemaVersion;
   if (version === undefined || version === 1) {
     migrateV1ToV2(state);
-    validateCurrentState(state);
-    return state as unknown as AppState;
   }
+  if (state.schemaVersion === 2) migrateV2ToV3(state);
   if (version !== CURRENT_SCHEMA_VERSION) {
-    throw new Error(`Unsupported Workspace schema version: ${String(version)}`);
+    if (state.schemaVersion !== CURRENT_SCHEMA_VERSION) {
+      throw new Error(
+        `Unsupported Workspace schema version: ${String(version)}`
+      );
+    }
   }
   validateCurrentState(state);
   return state as unknown as AppState;

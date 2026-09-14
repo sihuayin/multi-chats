@@ -1,9 +1,15 @@
-import { Agent, type AgentEvent, type AgentTool } from "@earendil-works/pi-agent-core";
+import {
+  Agent,
+  type AgentEvent,
+  type AgentMessage,
+  type AgentTool
+} from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
 import { createProviderModels } from "@/server/adapters/model/provider-registry";
 import type {
   ModelEvent,
   ModelGateway,
+  ModelMessage,
   ModelRequest
 } from "@/server/application/model-gateway";
 import { isToolExecutionErrorKind } from "@/server/application/tool-gateway";
@@ -14,7 +20,13 @@ export class FakeModelGateway implements ModelGateway {
   ) {}
 
   async *run(request: ModelRequest): AsyncIterable<ModelEvent> {
-    if (request.prompt.includes("FAIL_MODEL")) {
+    const latestUserContent =
+      [...(request.messages ?? [])]
+        .reverse()
+        .find((message) => message.role === "user")?.content ??
+      [...request.prompt.matchAll(/^User: (.+)$/gm)].at(-1)?.[1] ??
+      request.prompt;
+    if (latestUserContent.includes("FAIL_MODEL")) {
       yield { type: "text_delta", delta: "Partial failure output." };
       yield {
         type: "error",
@@ -23,9 +35,7 @@ export class FakeModelGateway implements ModelGateway {
       };
       return;
     }
-    const currentRequest =
-      [...request.prompt.matchAll(/^User: (.+)$/gm)].at(-1)?.[1] ?? "";
-    if (currentRequest.includes("USE_CURRENT_TIME")) {
+    if (latestUserContent.includes("USE_CURRENT_TIME")) {
       const tool = request.tools.find((item) => item.name === "current_time");
       if (!tool) {
         yield { type: "error", message: "current_time Tool is unavailable", kind: "terminal" };
@@ -53,7 +63,7 @@ export class FakeModelGateway implements ModelGateway {
       yield { type: "text_completed", text };
       return;
     }
-    if (currentRequest.includes("USE_POST_WEBHOOK")) {
+    if (latestUserContent.includes("USE_POST_WEBHOOK")) {
       const tool = request.tools.find((item) => item.name === "post_webhook");
       if (!tool) {
         yield { type: "error", message: "post_webhook Tool is unavailable", kind: "terminal" };
@@ -227,6 +237,40 @@ export class PiModelGateway implements ModelGateway {
         };
       }
     }));
+    const promptMessages: AgentMessage[] | null = request.messages?.length
+      ? request.messages.map((message: ModelMessage): AgentMessage => {
+          if (message.role === "user") {
+            return {
+              role: "user",
+              content: message.content,
+              timestamp: Date.now()
+            };
+          }
+          return {
+            role: "assistant",
+            content: [{ type: "text", text: message.content }],
+            api: model.api,
+            provider: model.provider,
+            model: model.id,
+            usage: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              totalTokens: 0,
+              cost: {
+                input: 0,
+                output: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+                total: 0
+              }
+            },
+            stopReason: "stop",
+            timestamp: Date.now()
+          };
+        })
+      : null;
 
     const agent = new Agent({
       initialState: {
@@ -299,16 +343,21 @@ export class PiModelGateway implements ModelGateway {
     request.signal?.addEventListener("abort", abortAgent, { once: true });
     if (request.signal?.aborted) agent.abort();
 
-    const runPromise = agent.prompt(request.prompt).catch((error: unknown) => {
-      push({
-        type: "error",
-        message: error instanceof Error ? error.message : String(error),
-        kind: "terminal"
+    const runPromise = (
+      promptMessages
+        ? agent.prompt(promptMessages)
+        : agent.prompt(request.prompt)
+    )
+      .catch((error: unknown) => {
+        push({
+          type: "error",
+          message: error instanceof Error ? error.message : String(error),
+          kind: "terminal"
+        });
+        finished = true;
+        wake?.();
+        wake = undefined;
       });
-      finished = true;
-      wake?.();
-      wake = undefined;
-    });
 
     try {
       while (!finished || queue.length > 0) {

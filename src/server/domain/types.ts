@@ -31,10 +31,165 @@ export type Employee = {
   identity: string;
   providerCredentialId: string;
   modelId: string;
+  fallbackTargets?: ModelTargetConfig[];
   skillIds: string[];
   active: boolean;
   createdAt: IsoDate;
   updatedAt: IsoDate;
+};
+
+export type ModelTargetConfig = {
+  providerCredentialId: string;
+  modelId: string;
+};
+
+export type ModelUsage = {
+  inputTokens?: number;
+  outputTokens?: number;
+  cachedInputTokens?: number;
+  reasoningTokens?: number;
+  totalTokens?: number;
+  source: "provider" | "estimated" | "unknown";
+};
+
+export type ProviderAttemptPurpose =
+  | "conversation"
+  | "discussion_turn"
+  | "discussion_synthesis"
+  | "discussion_compression"
+  | "smoke_test";
+
+export type ProviderAttemptStatus =
+  | "started"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "interrupted"
+  | "ambiguous";
+
+export type ProviderAttempt = {
+  id: string;
+  workspaceId: string;
+  runId?: string;
+  discussionId?: string;
+  roundId?: string;
+  turnId?: string;
+  purpose: ProviderAttemptPurpose;
+  provider: ProviderId;
+  modelId: string;
+  targetOrder: number;
+  attempt: number;
+  status: ProviderAttemptStatus;
+  requestId?: string;
+  providerRequestId?: string;
+  fallbackFromAttemptId?: string;
+  errorKind?: string;
+  usage: ModelUsage;
+  pricingId?: string;
+  estimatedCostMicros?: number | null;
+  startedAt: IsoDate;
+  completedAt?: IsoDate;
+};
+
+export type EvidenceReferenceKind =
+  | "message"
+  | "turn"
+  | "task"
+  | "artifact"
+  | "tool_result"
+  | "external_source";
+
+export type EvidenceReference = {
+  id: string;
+  workspaceId: string;
+  kind: EvidenceReferenceKind;
+  sourceId: string;
+  locator?: string;
+  excerptHash?: string;
+  retrievedAt?: IsoDate;
+  createdAt: IsoDate;
+};
+
+export type DiscussionInterventionKind =
+  | "constraint"
+  | "question"
+  | "material"
+  | "correction"
+  | "focus"
+  | "participant_change"
+  | "mode_change"
+  | "budget_change"
+  | "extension"
+  | "stop"
+  | "cancel";
+
+export type DiscussionIntervention = {
+  id: string;
+  workspaceId: string;
+  discussionId: string;
+  kind: DiscussionInterventionKind;
+  content: string;
+  status: "pending" | "applied" | "rejected" | "superseded";
+  createdBy: string;
+  idempotencyKey?: string;
+  appliedPhase?: DiscussionRoundPhase;
+  appliedRoundId?: string;
+  resultingDiscussionRevision?: number;
+  appliedAt?: IsoDate;
+  createdAt: IsoDate;
+  updatedAt: IsoDate;
+};
+
+export type DiscussionCompression = {
+  id: string;
+  workspaceId: string;
+  discussionId: string;
+  status: "pending" | "completed" | "failed";
+  sourceRoundIds: string[];
+  sourceTurnIds: string[];
+  evidenceIds: string[];
+  content: string;
+  unresolvedQuestions: string[];
+  minorityPositions: string[];
+  schemaVersion: number;
+  promptProfileVersion: string;
+  contentHash: string;
+  provider?: ProviderId;
+  modelId?: string;
+  createdByAttemptId?: string;
+  previousCompressionId?: string;
+  createdAt: IsoDate;
+  updatedAt: IsoDate;
+};
+
+export type DiscussionContextRevision = {
+  id: string;
+  workspaceId: string;
+  discussionId: string;
+  roundId: string;
+  turnId: string;
+  inputTokens: number;
+  outputReserveTokens: number;
+  countSource: "exact" | "estimated" | "unknown";
+  contextHash: string;
+  messageIds: string[];
+  compressionIds: string[];
+  createdAt: IsoDate;
+};
+
+export type ModelPricing = {
+  id: string;
+  workspaceId: string;
+  provider: ProviderId;
+  modelId: string;
+  currency: string;
+  inputMicrosPerMillionTokens: number;
+  outputMicrosPerMillionTokens: number;
+  cachedInputMicrosPerMillionTokens?: number;
+  effectiveAt: IsoDate;
+  source: string;
+  version: string;
+  createdAt: IsoDate;
 };
 
 export type Skill = {
@@ -143,6 +298,9 @@ export type RunEvent = {
     | "approval_resolved"
     | "task_changed"
     | "artifact_created"
+    | "provider_attempt_started"
+    | "provider_attempt_completed"
+    | "usage_recorded"
     | "model_error"
     | "tool_error"
     | "run_error"
@@ -252,6 +410,8 @@ export type DiscussionTurnPayload = {
   claims: Array<{
     statement: string;
     evidence?: string;
+    evidenceIds?: string[];
+    kind?: "fact" | "inference" | "opinion" | "assumption";
     confidence: "low" | "medium" | "high";
   }>;
   assumptions: string[];
@@ -309,7 +469,11 @@ export const DISCUSSION_EVENT_TYPES = [
   "participant_skipped",
   "facilitator_replaced",
   "constraints_updated",
-  "discussion_review_requested"
+  "discussion_review_requested",
+  "compression_applied",
+  "intervention_applied",
+  "context_budget_rejected",
+  "provider_fallback_started"
 ] as const;
 
 export type DiscussionEventType = (typeof DISCUSSION_EVENT_TYPES)[number];
@@ -394,6 +558,12 @@ export type AppState = {
   tasks: Task[];
   artifacts: Artifact[];
   discussions: Discussion[];
+  providerAttempts: ProviderAttempt[];
+  evidenceReferences: EvidenceReference[];
+  discussionCompressions: DiscussionCompression[];
+  discussionInterventions: DiscussionIntervention[];
+  discussionContextRevisions: DiscussionContextRevision[];
+  modelPricing: ModelPricing[];
   approvals: Approval[];
   idempotencyRecords?: IdempotencyRecord[];
 };

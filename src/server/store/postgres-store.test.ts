@@ -31,7 +31,7 @@ describeWithDatabase("PostgresStore", () => {
     });
   });
 
-  it("round-trips Discussion aggregates", async () => {
+  it("round-trips Discussion and runtime contract aggregates", async () => {
     await store.migrate();
     const discussion = createFixtureDiscussion({
       id: randomUUID()
@@ -43,6 +43,31 @@ describeWithDatabase("PostgresStore", () => {
         (item) => item.id !== discussion.id
       );
       state.discussions.push(discussion);
+      state.providerAttempts.push({
+        id: `attempt-${id}`,
+        workspaceId: state.workspace.id,
+        purpose: "discussion_turn",
+        provider: "openai",
+        modelId: "test-model",
+        targetOrder: 0,
+        attempt: 1,
+        status: "succeeded",
+        usage: { source: "unknown" },
+        startedAt: state.workspace.createdAt
+      });
+      state.modelPricing.push({
+        id: `pricing-${id}`,
+        workspaceId: state.workspace.id,
+        provider: "openai",
+        modelId: "test-model",
+        currency: "USD",
+        inputMicrosPerMillionTokens: 1_000_000,
+        outputMicrosPerMillionTokens: 2_000_000,
+        effectiveAt: state.workspace.createdAt,
+        source: "test",
+        version: "1",
+        createdAt: state.workspace.createdAt
+      });
     });
 
     expect(
@@ -50,12 +75,48 @@ describeWithDatabase("PostgresStore", () => {
         state.discussions.find((item) => item.id === id)
       )
     ).toEqual(discussion);
+    expect(
+      await store.read(
+        (state) => state.providerAttempts.find((item) => item.id === `attempt-${id}`)
+      )
+    ).toMatchObject({ status: "succeeded" });
+    expect(
+      await store.read(
+        (state) => state.modelPricing.find((item) => item.id === `pricing-${id}`)
+      )
+    ).toMatchObject({ version: "1" });
 
     await store.update((state) => {
       state.discussions = state.discussions.filter(
         (item) => item.id !== discussion.id
       );
+      state.providerAttempts = state.providerAttempts.filter(
+        (item) => item.id !== `attempt-${id}`
+      );
+      state.modelPricing = state.modelPricing.filter(
+        (item) => item.id !== `pricing-${id}`
+      );
     });
+  });
+
+  it("rejects runtime records that contain credentials", async () => {
+    await expect(
+      store.update((state) => {
+        state.providerAttempts.push({
+          id: `attempt-credential-${randomUUID()}`,
+          workspaceId: state.workspace.id,
+          purpose: "conversation",
+          provider: "openai",
+          modelId: "test-model",
+          targetOrder: 0,
+          attempt: 1,
+          status: "succeeded",
+          usage: { source: "unknown" },
+          credential: "must-not-persist",
+          startedAt: state.workspace.createdAt
+        } as never);
+      })
+    ).rejects.toThrow("Workspace providerAttempts are invalid");
   });
 
   it("migrates legacy state in PostgreSQL", async () => {
@@ -75,7 +136,7 @@ describeWithDatabase("PostgresStore", () => {
           discussions: state.discussions
         }))
       ).toEqual({
-        schemaVersion: 2,
+        schemaVersion: 3,
         discussions: []
       });
     } finally {

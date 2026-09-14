@@ -56,7 +56,31 @@ describe("SqliteStore", () => {
     await store.close();
   });
 
-  it("round-trips Discussion aggregates across reopen", async () => {
+  it("rolls back runtime records that contain credentials", async () => {
+    const store = new SqliteStore(":memory:");
+
+    await expect(
+      store.update((state) => {
+        state.providerAttempts.push({
+          id: "attempt-credential",
+          workspaceId: state.workspace.id,
+          purpose: "conversation",
+          provider: "openai",
+          modelId: "test-model",
+          targetOrder: 0,
+          attempt: 1,
+          status: "succeeded",
+          usage: { source: "unknown" },
+          credential: "must-not-persist",
+          startedAt: state.workspace.createdAt
+        } as never);
+      })
+    ).rejects.toThrow("Workspace providerAttempts are invalid");
+    expect(await store.read((state) => state.providerAttempts)).toEqual([]);
+    await store.close();
+  });
+
+  it("round-trips Discussion and runtime contract aggregates across reopen", async () => {
     const directory = mkdtempSync(join(tmpdir(), "multi-chats-sqlite-"));
     directories.push(directory);
     const path = join(directory, "state.sqlite");
@@ -65,6 +89,32 @@ describe("SqliteStore", () => {
 
     await first.update((state) => {
       state.discussions.push(discussion);
+      state.providerAttempts.push({
+        id: "attempt-sqlite",
+        workspaceId: state.workspace.id,
+        purpose: "discussion_turn",
+        provider: "openai",
+        modelId: "test-model",
+        targetOrder: 0,
+        attempt: 1,
+        status: "succeeded",
+        usage: { inputTokens: 10, outputTokens: 5, source: "provider" },
+        startedAt: state.workspace.createdAt,
+        completedAt: state.workspace.updatedAt
+      });
+      state.modelPricing.push({
+        id: "pricing-sqlite",
+        workspaceId: state.workspace.id,
+        provider: "openai",
+        modelId: "test-model",
+        currency: "USD",
+        inputMicrosPerMillionTokens: 1_000_000,
+        outputMicrosPerMillionTokens: 2_000_000,
+        effectiveAt: state.workspace.createdAt,
+        source: "test",
+        version: "1",
+        createdAt: state.workspace.createdAt
+      });
     });
     await first.close();
 
@@ -72,6 +122,8 @@ describe("SqliteStore", () => {
     expect(await second.read((state) => state.discussions)).toEqual([
       discussion
     ]);
+    expect(await second.read((state) => state.providerAttempts)).toHaveLength(1);
+    expect(await second.read((state) => state.modelPricing)).toHaveLength(1);
     await second.close();
   });
 
@@ -121,7 +173,7 @@ describe("SqliteStore", () => {
         artifact: state.artifacts[0]
       }))
     ).toEqual({
-      schemaVersion: 2,
+      schemaVersion: 3,
       discussions: [],
       artifact: expect.objectContaining({
         ownerType: "task",
@@ -141,7 +193,7 @@ describe("SqliteStore", () => {
     };
     migratedDatabase.close();
 
-    expect(persisted.schemaVersion).toBe(2);
+    expect(persisted.schemaVersion).toBe(3);
     expect(persisted.discussions).toEqual([]);
     expect(persisted.artifacts[0]).toMatchObject({
       ownerType: "task",

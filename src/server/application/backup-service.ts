@@ -4,7 +4,13 @@ import {
   validateDiscussion,
   validateDiscussionReferences
 } from "@/server/application/discussion-domain";
-import { CURRENT_SCHEMA_VERSION } from "@/server/store/migrations";
+import {
+  validateRuntimeContracts
+} from "@/server/domain/runtime-contracts";
+import {
+  CURRENT_SCHEMA_VERSION,
+  migrateAppState
+} from "@/server/store/migrations";
 import type { StateStore } from "@/server/store/store";
 
 const stateArrayKeys = Object.keys({
@@ -19,6 +25,12 @@ const stateArrayKeys = Object.keys({
   tasks: true,
   artifacts: true,
   discussions: true,
+  providerAttempts: true,
+  evidenceReferences: true,
+  discussionCompressions: true,
+  discussionInterventions: true,
+  discussionContextRevisions: true,
+  modelPricing: true,
   approvals: true
 } satisfies Record<
   Exclude<
@@ -101,6 +113,11 @@ function validateState(candidate: Record<string, unknown>): void {
   stringField(workspace, "createdAt");
   stringField(workspace, "updatedAt");
   if (stateArrayKeys.some((key) => !Array.isArray(candidate[key]))) invalid();
+  try {
+    validateRuntimeContracts(candidate, workspaceId);
+  } catch {
+    invalid();
+  }
 
   const array = (key: string) => candidate[key] as unknown[];
   const workspaceRecords = (key: string) =>
@@ -290,8 +307,14 @@ export function parseWorkspaceBackup(input: string): AppState {
     throw new Error("Backup file is invalid");
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) invalid();
-  validateState(parsed as Record<string, unknown>);
-  return parsed as AppState;
+  let migrated: AppState;
+  try {
+    migrated = migrateAppState(parsed);
+  } catch {
+    invalid();
+  }
+  validateState(migrated as unknown as Record<string, unknown>);
+  return migrated;
 }
 
 export async function restoreWorkspaceBackup(

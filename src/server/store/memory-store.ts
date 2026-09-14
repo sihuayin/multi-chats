@@ -1,5 +1,10 @@
 import type { AppState } from "@/server/domain/types";
+import { validateRuntimeContracts } from "@/server/domain/runtime-contracts";
 import { createInitialState } from "@/server/store/initial-state";
+import {
+  CURRENT_SCHEMA_VERSION,
+  migrateAppState
+} from "@/server/store/migrations";
 import type { StateStore } from "@/server/store/store";
 
 export class MemoryStore implements StateStore {
@@ -7,7 +12,10 @@ export class MemoryStore implements StateStore {
   private queue: Promise<unknown> = Promise.resolve();
 
   constructor(initialState: AppState = createInitialState("00000000-0000-4000-8000-000000000001")) {
-    this.state = structuredClone(initialState);
+    this.state =
+      initialState.schemaVersion < CURRENT_SCHEMA_VERSION
+        ? migrateAppState(initialState)
+        : structuredClone(initialState);
   }
 
   async read<T>(reader: (state: Readonly<AppState>) => T | Promise<T>): Promise<T> {
@@ -18,6 +26,10 @@ export class MemoryStore implements StateStore {
     const operation = this.queue.then(async () => {
       const draft = structuredClone(this.state);
       const result = await updater(draft);
+      validateRuntimeContracts(
+        draft as unknown as Record<string, unknown>,
+        draft.workspace.id
+      );
       this.state = draft;
       return result;
     });
