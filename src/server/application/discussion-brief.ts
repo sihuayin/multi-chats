@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { DISCUSSION_PROMPT_PROFILE_VERSION } from "@/server/application/discussion-prompts";
+import { validateDiscussionBriefEvidence } from "@/server/application/discussion-evidence";
 import { parseJsonObject } from "@/server/application/structured-output";
 import type {
   AppState,
@@ -7,13 +8,11 @@ import type {
   Discussion
 } from "@/server/domain/types";
 
-export const DISCUSSION_BRIEF_SCHEMA_VERSION = 1;
+export const DISCUSSION_BRIEF_SCHEMA_VERSION = 2;
 
 const confidenceSchema = z.enum(["low", "medium", "high"]);
 
-const briefSchema = z
-  .object({
-    schemaVersion: z.literal(DISCUSSION_BRIEF_SCHEMA_VERSION),
+const commonShape = {
     promptProfileVersion: z
       .string()
       .regex(/^discussion-prompts\.v\d+$/),
@@ -28,14 +27,6 @@ const briefSchema = z
       })
       .strict(),
     context: z.string().trim().min(1),
-    facts: z.array(
-      z
-        .object({
-          statement: z.string().trim().min(1),
-          evidence: z.string().optional()
-        })
-        .strict()
-    ),
     constraints: z.array(
       z
         .object({
@@ -90,34 +81,80 @@ const briefSchema = z
         .strict()
     ),
     openQuestions: z.array(z.string())
+};
+
+const briefV1Schema = z
+  .object({
+    ...commonShape,
+    schemaVersion: z.literal(1),
+    facts: z.array(
+      z
+        .object({
+          statement: z.string().trim().min(1),
+          evidence: z.string().optional()
+        })
+        .strict()
+    )
   })
   .strict();
 
-export type DiscussionBrief = z.infer<typeof briefSchema>;
+const briefV2Schema = z
+  .object({
+    ...commonShape,
+    schemaVersion: z.literal(2),
+    facts: z.array(
+      z
+        .object({
+          statement: z.string().trim().min(1),
+          kind: z.literal("fact"),
+          evidenceIds: z.array(z.string().trim().min(1)).min(1)
+        })
+        .strict()
+    ),
+    minorityPositions: z.array(z.string())
+  })
+  .strict();
 
-export function parseDiscussionBrief(raw: string): DiscussionBrief {
-  const parsed = briefSchema.safeParse(
-    parseJsonObject(raw, "Discussion Brief")
-  );
-  if (!parsed.success) {
-    throw new Error("Discussion Brief JSON is invalid");
-  }
+export type DiscussionBriefV1 = z.infer<typeof briefV1Schema>;
+export type DiscussionBriefV2 = z.infer<typeof briefV2Schema>;
+export type DiscussionBrief = DiscussionBriefV1 | DiscussionBriefV2;
+
+function validateReferences(brief: DiscussionBrief): DiscussionBrief {
   const optionIds = new Set(
-    parsed.data.options.map((option) => option.id)
+    brief.options.map((option) => option.id)
   );
-  if (optionIds.size !== parsed.data.options.length) {
+  if (optionIds.size !== brief.options.length) {
     throw new Error("Discussion Brief option IDs must be unique");
   }
-  if (!optionIds.has(parsed.data.recommendation.optionId)) {
+  if (!optionIds.has(brief.recommendation.optionId)) {
     throw new Error(
       "Discussion Brief recommendation must reference an option"
     );
   }
-  return parsed.data;
+  return brief;
+}
+
+export function parseDiscussionBrief(raw: string): DiscussionBrief {
+  const value = parseJsonObject(raw, "Discussion Brief");
+  const parsedV2 = briefV2Schema.safeParse(value);
+  if (parsedV2.success) return validateReferences(parsedV2.data);
+  const parsedV1 = briefV1Schema.safeParse(value);
+  if (parsedV1.success) return validateReferences(parsedV1.data);
+  throw new Error("Discussion Brief JSON is invalid");
 }
 
 export function createDiscussionBriefRevision(
-  state: Pick<AppState, "artifacts" | "workspace">,
+  state: Pick<
+    AppState,
+    | "artifacts"
+    | "workspace"
+    | "messages"
+    | "runs"
+    | "tasks"
+    | "runEvents"
+    | "discussions"
+    | "evidenceReferences"
+  >,
   discussion: Discussion,
   raw: string,
   factory: {
@@ -129,7 +166,13 @@ export function createDiscussionBriefRevision(
   brief: DiscussionBrief;
 } {
   const brief = parseDiscussionBrief(raw);
-  if (brief.promptProfileVersion !== DISCUSSION_PROMPT_PROFILE_VERSION) {
+  if (
+    brief.promptProfileVersion !== DISCUSSION_PROMPT_PROFILE_VERSION &&
+    !(
+      brief.schemaVersion === 1 &&
+      brief.promptProfileVersion === "discussion-prompts.v1"
+    )
+  ) {
     throw new Error("Discussion Brief prompt profile is unsupported");
   }
   if (
@@ -152,6 +195,22 @@ export function createDiscussionBriefRevision(
   ) {
     throw new Error("Previous Discussion Brief revision is invalid");
   }
+  if (brief.schemaVersion === 2) {
+    const references = validateDiscussionBriefEvidence(
+      state as AppState,
+      discussion,
+      brief
+    );
+    for (const reference of references) {
+      if (
+        !state.evidenceReferences.some(
+          (item) => item.id === reference.id
+        )
+      ) {
+        state.evidenceReferences.push(reference);
+      }
+    }
+  }
 
   const id = factory.id ?? (() => crypto.randomUUID());
   const now = factory.now ?? (() => new Date().toISOString());
@@ -165,7 +224,7 @@ export function createDiscussionBriefRevision(
     name: `${discussion.title} Brief`,
     content: JSON.stringify(brief),
     kind: "discussion_brief",
-    schemaVersion: DISCUSSION_BRIEF_SCHEMA_VERSION,
+    schemaVersion: brief.schemaVersion,
     revision: (previous?.revision ?? 0) + 1,
     previousArtifactId: previous?.id,
     createdAt: timestamp,

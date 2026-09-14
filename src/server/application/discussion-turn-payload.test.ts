@@ -4,10 +4,11 @@ import { parseDiscussionTurnPayload } from "@/server/application/discussion-turn
 const position = {
   summary: "Keep the current state store.",
   claims: [
-    {
-      statement: "The current store already persists Discussions.",
-      evidence: "Schema v2",
-      confidence: "high"
+      {
+        statement: "The current store already persists Discussions.",
+        evidence: "Schema v2",
+        kind: "inference",
+        confidence: "high"
     }
   ],
   assumptions: ["The workspace remains single-tenant."],

@@ -26,7 +26,8 @@ function brief() {
     facts: [
       {
         statement: "SQLite and PostgreSQL are supported.",
-        evidence: "Store tests"
+        kind: "fact",
+        evidenceIds: ["external:https://example.com/store-tests"]
       }
     ],
     constraints: [
@@ -47,6 +48,7 @@ function brief() {
         ]
       }
     ],
+    minorityPositions: ["PostgreSQL may become mandatory later."],
     options: [
       {
         id: "state-document",
@@ -74,15 +76,24 @@ function brief() {
 }
 
 describe("Discussion Brief", () => {
-  it("parses the canonical v1 Brief", () => {
+  it("parses the canonical v2 Brief", () => {
     expect(parseDiscussionBrief(JSON.stringify(brief()))).toEqual(brief());
   });
 
   it("keeps historical prompt-profile versions readable", () => {
-    const historical = {
+    const historicalWithMinority = {
       ...brief(),
-      promptProfileVersion: "discussion-prompts.v2"
+      schemaVersion: 1,
+      promptProfileVersion: "discussion-prompts.v1",
+      facts: [
+        {
+          statement: "SQLite and PostgreSQL are supported.",
+          evidence: "Store tests"
+        }
+      ]
     };
+    const { minorityPositions, ...historical } = historicalWithMinority;
+    void minorityPositions;
     expect(parseDiscussionBrief(JSON.stringify(historical))).toEqual(
       historical
     );
@@ -140,7 +151,7 @@ describe("Discussion Brief", () => {
       ownerId: discussion.id,
       type: "json",
       kind: "discussion_brief",
-      schemaVersion: 1,
+      schemaVersion: 2,
       revision: 1
     });
     expect(second.artifact).toMatchObject({
@@ -148,7 +159,60 @@ describe("Discussion Brief", () => {
       revision: 2,
       previousArtifactId: "brief-artifact-1"
     });
+    expect(state.evidenceReferences).toContainEqual(
+      expect.objectContaining({
+        kind: "external_source",
+        sourceId: "https://example.com/store-tests"
+      })
+    );
+    expect(JSON.parse(second.artifact.content)).toMatchObject({
+      minorityPositions: [
+        "PostgreSQL may become mandatory later."
+      ]
+    });
     expect(discussion.latestBriefArtifactId).toBe("brief-artifact-2");
     expect(state.artifacts).toHaveLength(2);
+  });
+
+  it("rejects promoting an inference Turn into a Brief fact", () => {
+    const state = createFixtureState();
+    const discussion = createFixtureDiscussion({
+      workspaceId: state.workspace.id,
+      conversationId: state.conversations[0].id
+    });
+    state.discussions.push(discussion);
+    const turn = discussion.rounds[0].turns[0];
+    turn.payload = {
+      summary: "Inference only",
+      claims: [
+        {
+          statement: "A possible explanation.",
+          kind: "inference",
+          confidence: "medium"
+        }
+      ],
+      assumptions: [],
+      risks: [],
+      openQuestions: []
+    };
+    const value = {
+      ...brief(),
+      discussionId: discussion.id,
+      facts: [
+        {
+          statement: "A possible explanation is established fact.",
+          kind: "fact" as const,
+          evidenceIds: [`turn:${turn.id}`]
+        }
+      ]
+    };
+
+    expect(() =>
+      createDiscussionBriefRevision(
+        state,
+        discussion,
+        JSON.stringify(value)
+      )
+    ).toThrow("Inference cannot be promoted");
   });
 });

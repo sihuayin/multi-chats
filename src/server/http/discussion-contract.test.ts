@@ -10,10 +10,12 @@ import { AesCredentialCipher } from "@/server/security/credential-cipher";
 import { setStoreForTests } from "@/server/store";
 import { MemoryStore } from "@/server/store/memory-store";
 import {
+  createFixtureTurnPayload,
   createFixtureState,
   discussionModelGateway,
   TEST_KEY
 } from "@/server/test-support/fixtures";
+import type { ModelGateway } from "@/server/application/model-gateway";
 
 const originalDatabaseUrl = process.env.DATABASE_URL;
 
@@ -392,5 +394,106 @@ describe("Discussion HTTP contract", () => {
     expect(await extend.json()).toMatchObject({
       code: "discussion_invalid_state"
     });
+  });
+
+  it("exposes evidence validation failures through the Discussion API", async () => {
+    const store = new MemoryStore(createFixtureState());
+    setStoreForTests(store);
+    process.env.DATABASE_URL = "postgres://discussion-contract";
+    const gateway: ModelGateway = {
+      async *run() {
+        const payload = createFixtureTurnPayload("positions");
+        payload.claims = [
+          {
+            statement: "Unsupported fact",
+            kind: "fact",
+            confidence: "high"
+          }
+        ];
+        yield { type: "text_completed", text: JSON.stringify(payload) };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway
+    );
+    const discussions = new DiscussionOrchestrator(store, runs);
+    setServicesForTests({
+      workspace: getServices().workspace,
+      runs,
+      discussions
+    });
+    const view = await discussions.createDiscussion(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        title: "Reject unsupported facts",
+        mode: "problem",
+        participants: [
+          {
+            employeeId: "20000000-0000-4000-8000-000000000001",
+            role: "analyst"
+          },
+          {
+            employeeId: "20000000-0000-4000-8000-000000000002",
+            role: "facilitator"
+          }
+        ],
+        facilitatorId: "20000000-0000-4000-8000-000000000002"
+      }
+    );
+    await discussions.startDiscussion(view.discussion.id);
+    const runId = await store.read(
+      (state) =>
+        state.runs.find(
+          (run) => run.discussionId === view.discussion.id
+        )!.id
+    );
+    await runs.processRun(runId);
+
+    const response = await handleApiRequest(
+      new Request(
+        `http://localhost/api/discussions/${view.discussion.id}`
+      ),
+      ["discussions", view.discussion.id]
+    );
+    expect(response.status).toBe(200);
+    const failedView = await response.json();
+    expect(failedView).toMatchObject({
+      evidence: {
+        validationFailureCount: 2
+      }
+    });
+    const roundResponse = await handleApiRequest(
+      new Request(
+        `http://localhost/api/discussions/${view.discussion.id}/rounds/${failedView.rounds[0].id}`
+      ),
+      [
+        "discussions",
+        view.discussion.id,
+        "rounds",
+        failedView.rounds[0].id
+      ]
+    );
+    expect(await roundResponse.json()).toMatchObject({
+      run: { errorCode: "discussion_evidence_invalid" }
+    });
+
+    const events = await handleApiRequest(
+      new Request(
+        `http://localhost/api/discussions/${view.discussion.id}/events?afterSequence=0`
+      ),
+      ["discussions", view.discussion.id, "events"]
+    );
+    const reader = events.body!.getReader();
+    let frame = "";
+    for (let index = 0; index < 10; index += 1) {
+      const { value, done } = await reader.read();
+      if (done || !value) break;
+      frame += new TextDecoder().decode(value);
+      if (frame.includes('"type":"evidence_validation_failed"')) break;
+    }
+    expect(frame).toContain('"type":"evidence_validation_failed"');
+    await reader.cancel();
   });
 });

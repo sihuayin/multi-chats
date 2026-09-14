@@ -179,6 +179,20 @@ export function buildDiscussionView(
       (attempt) => attempt.discussionId === discussion.id
     )
   );
+  const turns = discussion.rounds.flatMap((round) => round.turns);
+  const factClaims = turns.flatMap(
+    (turn) =>
+      turn.payload?.claims.filter((claim) => claim.kind === "fact") ?? []
+  );
+  const evidence = {
+    factCount: factClaims.length,
+    factsWithEvidence: factClaims.filter(
+      (claim) => (claim.evidenceIds?.length ?? 0) > 0
+    ).length,
+    validationFailureCount: (discussion.events ?? []).filter(
+      (event) => event.type === "evidence_validation_failed"
+    ).length
+  };
 
   return {
     discussion: {
@@ -231,6 +245,7 @@ export function buildDiscussionView(
     confirmedTask: confirmedTask ? taskView(confirmedTask) : undefined,
     activeRun: activeRun ? runView(activeRun) : undefined,
     usage,
+    evidence,
     budget: {
       usedRounds: discussion.rounds.filter(
         (round) => round.phase !== "synthesis"

@@ -103,7 +103,7 @@ describe("ConversationRun", () => {
       "UNRELATED CONVERSATION CONTEXT"
     );
     expect(engine.requests[1].prompt).toContain(
-      `Assistant: ${expectedResponse}`
+      'Assistant: {"summary":"response"'
     );
 
     const persisted = await store.read((current) => {
@@ -677,6 +677,139 @@ describe("ConversationRun", () => {
         "provider_attempt_completed"
       ])
     );
+  });
+
+  it("regenerates fact claims without evidence and persists valid references", async () => {
+    const state = createFixtureState();
+    const { discussion, round } = addFixturePhase(state);
+    const store = new MemoryStore(state);
+    let calls = 0;
+    const gateway: ModelGateway = {
+      async *run() {
+        calls += 1;
+        const response = createFixtureTurnPayload(
+          "cross_response",
+          "evidence response"
+        );
+        response.claims =
+          calls === 1
+            ? [
+                {
+                  statement: "Unsupported fact",
+                  kind: "fact",
+                  confidence: "high"
+                }
+              ]
+            : [
+                {
+                  statement: "Supported fact",
+                  kind: "fact",
+                  evidenceIds: ["external:https://example.com/evidence"],
+                  confidence: "high"
+                }
+              ];
+        yield { type: "text_completed", text: JSON.stringify(response) };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway
+    );
+    const started = await runs.startPhaseRun(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        discussionId: discussion.id,
+        roundId: round.id,
+        participantSnapshot: round.participantSnapshot,
+        context: "Validate evidence.",
+        purpose: "Require evidence for facts."
+      }
+    );
+
+    await runs.processRun(started.run.id);
+
+    const persisted = await store.read((current) => ({
+      attempts: current.providerAttempts.filter(
+        (attempt) => attempt.runId === started.run.id
+      ),
+      references: current.evidenceReferences,
+      discussion: current.discussions.find(
+        (item) => item.id === discussion.id
+      )!
+    }));
+    expect(persisted.attempts.slice(0, 2)).toMatchObject([
+      { attempt: 1, status: "failed", errorKind: "evidence_invalid" },
+      { attempt: 2, status: "succeeded" }
+    ]);
+    expect(persisted.references).toContainEqual(
+      expect.objectContaining({
+        kind: "external_source",
+        sourceId: "https://example.com/evidence"
+      })
+    );
+    expect(
+      persisted.discussion.events?.map((event) => event.type)
+    ).toEqual(
+      expect.arrayContaining([
+        "evidence_validation_failed",
+        "evidence_validated"
+      ])
+    );
+  });
+
+  it("fails with a stable evidence error after one regeneration", async () => {
+    const state = createFixtureState();
+    const { discussion, round } = addFixturePhase(state);
+    const store = new MemoryStore(state);
+    const gateway: ModelGateway = {
+      async *run() {
+        yield {
+          type: "text_completed",
+          text: JSON.stringify(
+            createFixtureTurnPayload("cross_response", "unsupported")
+          ).replace('"confidence":"medium"', '"kind":"fact","confidence":"medium"')
+        };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway
+    );
+    const started = await runs.startPhaseRun(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        discussionId: discussion.id,
+        roundId: round.id,
+        participantSnapshot: round.participantSnapshot,
+        context: "Reject unsupported facts.",
+        purpose: "Require evidence."
+      }
+    );
+
+    const failed = await runs.processRun(started.run.id);
+
+    expect(failed).toMatchObject({
+      status: "failed",
+      errorCode: "discussion_evidence_invalid"
+    });
+    const attempts = await store.read((current) =>
+      current.providerAttempts.filter(
+        (attempt) => attempt.runId === started.run.id
+      )
+    );
+    expect(attempts).toMatchObject([
+      { status: "failed", errorKind: "evidence_invalid" },
+      { status: "failed", errorKind: "evidence_invalid" }
+    ]);
+    expect(
+      await store.read((current) =>
+        current.runEvents
+          .filter((event) => event.runId === started.run.id)
+          .map((event) => event.type)
+      )
+    ).toContain("evidence_validation_failed");
   });
 
   it("aggregates attempt usage in the Discussion view", async () => {

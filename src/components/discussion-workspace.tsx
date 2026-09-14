@@ -175,6 +175,11 @@ type DiscussionView = {
     cancelledAttemptCount: number;
     unknownUsageAttemptCount: number;
   };
+  evidence: {
+    factCount: number;
+    factsWithEvidence: number;
+    validationFailureCount: number;
+  };
   availableActions: DiscussionAction[];
 };
 
@@ -801,6 +806,21 @@ export function DiscussionWorkspace() {
                     ) : null}
                   </div>
                 ) : null}
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[var(--muted-foreground)]">
+                  <span>
+                    {t("chat.evidenceCoverage", {
+                      withEvidence: view.evidence.factsWithEvidence,
+                      facts: view.evidence.factCount
+                    })}
+                  </span>
+                  {view.evidence.validationFailureCount > 0 ? (
+                    <span className="text-[var(--danger)]">
+                      {t("chat.evidenceFailures", {
+                        count: view.evidence.validationFailureCount
+                      })}
+                    </span>
+                  ) : null}
+                </div>
               </div>
               <div className={styles.commandRow}>
                 {view.availableActions.includes("start") ? (

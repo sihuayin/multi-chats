@@ -23,6 +23,12 @@ import { validateDiscussionParticipants } from "@/server/application/discussion-
 import { appendDiscussionEvent } from "@/server/application/discussion-ledger";
 import { parseDiscussionBrief } from "@/server/application/discussion-brief";
 import {
+  DiscussionEvidenceError,
+  DISCUSSION_EVIDENCE_INVALID_CODE,
+  validateDiscussionBriefEvidence,
+  validateDiscussionTurnEvidence
+} from "@/server/application/discussion-evidence";
+import {
   mergeModelUsage
 } from "@/server/application/model-usage";
 import {
@@ -838,6 +844,8 @@ export class ConversationRunService {
       const message = error instanceof Error ? error.message : String(error);
       const budgetError =
         error instanceof DiscussionContextBudgetError ? error : undefined;
+      const evidenceError =
+        error instanceof DiscussionEvidenceError ? error : undefined;
       const failure = await this.store.update((state) => {
         const run = state.runs.find((item) => item.id === runId);
         if (!run) notFound("Run");
@@ -865,9 +873,13 @@ export class ConversationRunService {
         const settlement = settleRun(state, {
           runId,
           outcome: "failed",
-          reason: budgetError ? "context_budget_exceeded" : "model_error",
+          reason: budgetError
+            ? "context_budget_exceeded"
+            : evidenceError
+              ? "evidence_validation_failed"
+              : "model_error",
           error: message,
-          errorCode: budgetError?.code
+          errorCode: budgetError?.code ?? evidenceError?.code
         });
         settleDiscussionTurns(state, runId, message);
         return { run: structuredClone(run), settlement };
@@ -1301,14 +1313,119 @@ export class ConversationRunService {
                   "Discussion Brief does not match the Discussion"
                 );
               }
+              const snapshot = await this.store.read((state) => state);
+              const discussion = snapshot.discussions.find(
+                (item) =>
+                  item.id === context.phaseContext?.discussionId
+              );
+              if (!discussion) throw new Error("Discussion is missing");
+              const references =
+                brief.schemaVersion === 2
+                  ? validateDiscussionBriefEvidence(
+                      snapshot,
+                      discussion,
+                      brief
+                    )
+                  : [];
+              await this.store.update((state) => {
+                const run = state.runs.find((item) => item.id === runId);
+                if (!run) notFound("Run");
+                for (const reference of references) {
+                  if (
+                    !state.evidenceReferences.some(
+                      (item) => item.id === reference.id
+                    )
+                  ) {
+                    state.evidenceReferences.push(reference);
+                  }
+                }
+                appendEvent(state, run, "evidence_validated", {
+                  discussionId:
+                    context.phaseContext?.discussionId,
+                  discussionTurnId: context.phaseContext?.turnId,
+                  evidenceIds: references.map((item) => item.id),
+                  schemaVersion: brief.schemaVersion
+                });
+                const currentDiscussion = state.discussions.find(
+                  (item) =>
+                    item.id === context.phaseContext?.discussionId
+                );
+                if (!currentDiscussion) {
+                  throw new Error("Discussion is missing");
+                }
+                appendDiscussionEvent(
+                  currentDiscussion,
+                  "evidence_validated",
+                  {
+                    runId,
+                    discussionTurnId: context.phaseContext?.turnId,
+                    evidenceIds: references.map((item) => item.id),
+                    schemaVersion: brief.schemaVersion
+                  }
+                );
+              });
             } else {
-              validatedPayload = parseDiscussionTurnPayload(
+              const payload = parseDiscussionTurnPayload(
                 finalText,
                 context.phaseContext.phase
               );
+              const validation = await this.store.read((state) => {
+                const discussion = state.discussions.find(
+                  (item) =>
+                    item.id === context.phaseContext?.discussionId
+                );
+                if (!discussion) throw new Error("Discussion is missing");
+                return validateDiscussionTurnEvidence(
+                  state,
+                  discussion,
+                  payload
+                );
+              });
+              validatedPayload = validation.payload;
+              await this.store.update((state) => {
+                const run = state.runs.find((item) => item.id === runId);
+                if (!run) notFound("Run");
+                for (const reference of validation.references) {
+                  if (
+                    !state.evidenceReferences.some(
+                      (item) => item.id === reference.id
+                    )
+                  ) {
+                    state.evidenceReferences.push(reference);
+                  }
+                }
+                const discussion = state.discussions.find(
+                  (item) =>
+                    item.id === context.phaseContext?.discussionId
+                );
+                if (!discussion) throw new Error("Discussion is missing");
+                appendEvent(state, run, "evidence_validated", {
+                  discussionId: discussion.id,
+                  discussionTurnId: context.phaseContext?.turnId,
+                  evidenceIds: validation.references.map(
+                    (item) => item.id
+                  ),
+                  coverage: validation.coverage
+                });
+                appendDiscussionEvent(
+                  discussion,
+                  "evidence_validated",
+                  {
+                    runId,
+                    discussionTurnId: context.phaseContext?.turnId,
+                    evidenceIds: validation.references.map(
+                      (item) => item.id
+                    ),
+                    coverage: validation.coverage
+                  }
+                );
+              });
             }
           } catch (error) {
-            failureKind = "malformed_output";
+            failureKind =
+              error instanceof DiscussionEvidenceError
+                ? "evidence_invalid"
+                : "malformed_output";
             await this.finalizeProviderAttempt({
               runId,
               attemptId: currentProviderAttemptId,
@@ -1316,16 +1433,45 @@ export class ConversationRunService {
               errorKind: failureKind
             });
             finalized = true;
-            if (attempt >= 2) throw error;
             await this.store.update((state) => {
+              const run = state.runs.find((item) => item.id === runId);
               const current = state.messages.find(
                 (item) => item.id === message.id
               );
-              if (current) {
+              if (failureKind === "evidence_invalid" && run) {
+                const details =
+                  error instanceof DiscussionEvidenceError
+                    ? error.details
+                    : { reason: "unknown" };
+                appendEvent(state, run, "evidence_validation_failed", {
+                  discussionId: context.phaseContext?.discussionId,
+                  discussionTurnId: context.phaseContext?.turnId,
+                  code: DISCUSSION_EVIDENCE_INVALID_CODE,
+                  ...details
+                });
+                const discussion = state.discussions.find(
+                  (item) =>
+                    item.id === context.phaseContext?.discussionId
+                );
+                if (discussion) {
+                  appendDiscussionEvent(
+                    discussion,
+                    "evidence_validation_failed",
+                    {
+                      runId,
+                      discussionTurnId: context.phaseContext?.turnId,
+                      code: DISCUSSION_EVIDENCE_INVALID_CODE,
+                      ...details
+                    }
+                  );
+                }
+              }
+              if (attempt < 2 && current) {
                 current.content = "";
                 current.updatedAt = now();
               }
             });
+            if (attempt >= 2) throw error;
             finalText = "";
             continue;
           }

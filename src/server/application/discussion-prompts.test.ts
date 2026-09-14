@@ -15,13 +15,15 @@ describe("Discussion prompt profiles", () => {
     });
 
     expect(prompt.version).toBe(DISCUSSION_PROMPT_PROFILE_VERSION);
-    expect(prompt.version).toBe("discussion-prompts.v1");
+    expect(prompt.version).toBe("discussion-prompts.v2");
     expect(prompt.systemInstructions).toContain("solution");
     expect(prompt.systemInstructions).toContain("facilitator");
     expect(prompt.systemInstructions).toContain("synthesis");
     expect(prompt.objectiveContext).toContain("Choose the migration path.");
     expect(prompt.systemInstructions).toContain("Chinese");
     expect(prompt.responseInstructions).toContain("Discussion Brief JSON");
+    expect(prompt.responseInstructions).toContain("minorityPositions");
+    expect(prompt.responseInstructions).toContain("evidenceIds");
   });
 
   it("requires agreement, disagreement, and correction fields for cross-response", () => {

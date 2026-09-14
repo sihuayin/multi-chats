@@ -312,6 +312,8 @@ export type RunEvent = {
     | "provider_attempt_started"
     | "provider_attempt_completed"
     | "usage_recorded"
+    | "evidence_validated"
+    | "evidence_validation_failed"
     | "model_error"
     | "tool_error"
     | "run_error"
@@ -488,6 +490,8 @@ export const DISCUSSION_EVENT_TYPES = [
   "provider_attempt_started",
   "provider_attempt_completed",
   "usage_recorded",
+  "evidence_validated",
+  "evidence_validation_failed",
   "provider_fallback_started"
 ] as const;
 

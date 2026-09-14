@@ -116,7 +116,7 @@ export function createFixtureDiscussion(
     title: "Choose a persistence model",
     mode: "solution",
     language: "en",
-    promptProfileVersion: "discussion-prompts.v1",
+    promptProfileVersion: "discussion-prompts.v2",
     status: "review",
     facilitatorParticipantId: participants[1].id,
     maxRounds: 3,
@@ -144,6 +144,8 @@ export function createFixtureDiscussion(
             claims: [
               {
                 statement: "Use the existing state document.",
+                kind: "inference",
+                evidenceIds: [],
                 confidence: "high"
               }
             ],
@@ -175,6 +177,8 @@ export function createFixtureTurnPayload(
     claims: [
       {
         statement: summary,
+        kind: "inference",
+        evidenceIds: [],
         confidence: "medium"
       }
     ],
@@ -195,8 +199,8 @@ export function createFixtureBrief(
   discussionId = "70000000-0000-4000-8000-000000000001"
 ): DiscussionBrief {
   return {
-    schemaVersion: 1,
-    promptProfileVersion: "discussion-prompts.v1",
+    schemaVersion: 2,
+    promptProfileVersion: "discussion-prompts.v2",
     discussionId,
     mode: "solution",
     title: "Choose a persistence model",
@@ -209,12 +213,14 @@ export function createFixtureBrief(
     facts: [
       {
         statement: "SQLite and PostgreSQL are supported.",
-        evidence: "Store tests"
+        kind: "fact",
+        evidenceIds: ["external:https://example.com/store-tests"]
       }
     ],
     constraints: [],
     assumptions: [],
     disagreements: [],
+    minorityPositions: [],
     options: [
       {
         id: "state-document",

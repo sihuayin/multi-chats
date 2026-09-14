@@ -85,7 +85,7 @@ describe("DiscussionOrchestrator", () => {
     expect(persisted.discussion).toMatchObject({
       status: "running",
       currentRound: 1,
-      promptProfileVersion: "discussion-prompts.v1",
+      promptProfileVersion: "discussion-prompts.v2",
       rounds: [
         {
           roundNumber: 1,
@@ -198,8 +198,10 @@ describe("DiscussionOrchestrator", () => {
       "discussion_started",
       "phase_started",
       "provider_attempt_started",
+      "evidence_validated",
       "provider_attempt_completed",
       "provider_attempt_started",
+      "evidence_validated",
       "provider_attempt_completed",
       "phase_completed",
       "phase_started"
@@ -503,7 +505,7 @@ describe("DiscussionOrchestrator", () => {
       name: "Latest Brief",
       content: JSON.stringify(createFixtureBrief(discussion.id)),
       kind: "discussion_brief",
-      schemaVersion: 1,
+      schemaVersion: 2,
       revision: 1,
       createdAt: state.workspace.createdAt,
       updatedAt: state.workspace.updatedAt
@@ -527,7 +529,7 @@ describe("DiscussionOrchestrator", () => {
     });
     expect(forced).toMatchObject({
       status: "running",
-      promptProfileVersion: "discussion-prompts.v1"
+      promptProfileVersion: "discussion-prompts.v2"
     });
     const synthesis = forced.rounds.at(-1)!;
     expect(synthesis).toMatchObject({
@@ -571,12 +573,12 @@ describe("DiscussionOrchestrator", () => {
       ownerId: discussion.id,
       type: "json",
       kind: "discussion_brief",
-      schemaVersion: 1,
+      schemaVersion: 2,
       revision: 2,
       previousArtifactId: "brief-context"
     });
     expect(JSON.parse(briefArtifact!.content)).toMatchObject({
-      promptProfileVersion: "discussion-prompts.v1"
+      promptProfileVersion: "discussion-prompts.v2"
     });
     expect(reviewed.events?.map((event) => event.type)).toContain(
       "brief_created"

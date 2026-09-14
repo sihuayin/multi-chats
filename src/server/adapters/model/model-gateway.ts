@@ -103,7 +103,7 @@ export class FakeModelGateway implements ModelGateway {
       .split("\n")[0]
       .replace("You are ", "")
       .replace(/\.$/, "");
-    if (request.systemPrompt.includes("Profile version: discussion-prompts.v1")) {
+    if (request.systemPrompt.includes("Profile version: discussion-prompts.v2")) {
       const phase =
         request.systemPrompt.match(/^Phase: (\w+)\./m)?.[1] ??
         "positions";
@@ -119,8 +119,8 @@ export class FakeModelGateway implements ModelGateway {
       const response =
         phase === "synthesis"
           ? {
-              schemaVersion: 1,
-              promptProfileVersion: "discussion-prompts.v1",
+              schemaVersion: 2,
+              promptProfileVersion: "discussion-prompts.v2",
               discussionId,
               mode,
               title,
@@ -130,10 +130,17 @@ export class FakeModelGateway implements ModelGateway {
                 nonGoals: []
               },
               context: "Deterministic fake Discussion context.",
-              facts: [],
+              facts: [
+                {
+                  statement: "The Discussion has a deterministic fixture.",
+                  kind: "fact",
+                  evidenceIds: ["external:https://example.com/fixture"]
+                }
+              ],
               constraints: [],
               assumptions: [],
               disagreements: [],
+              minorityPositions: [],
               options: [
                 {
                   id: "recommended",
@@ -157,6 +164,8 @@ export class FakeModelGateway implements ModelGateway {
               claims: [
                 {
                   statement: `${phase} produced a deterministic claim`,
+                  kind: "inference",
+                  evidenceIds: [],
                   confidence: "high"
                 }
               ],

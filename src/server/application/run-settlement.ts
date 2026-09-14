@@ -23,7 +23,10 @@ export type RunSettlementCommand =
     })
   | (SettlementBase & {
       outcome: "failed";
-      reason: "model_error" | "context_budget_exceeded";
+      reason:
+        | "model_error"
+        | "context_budget_exceeded"
+        | "evidence_validation_failed";
       error: string;
       errorCode?: string;
     })

@@ -166,7 +166,13 @@ function validateTurnPayload(
         !nonEmptyString(claim.statement) ||
         !confidenceLevels.has(claim.confidence) ||
         (claim.evidence !== undefined &&
-          typeof claim.evidence !== "string")
+          typeof claim.evidence !== "string") ||
+        (claim.kind !== undefined &&
+          !["fact", "inference", "opinion", "assumption"].includes(
+            claim.kind
+          )) ||
+        (claim.evidenceIds !== undefined &&
+          !stringArray(claim.evidenceIds))
     ) ||
     !stringArray(payload.assumptions) ||
     !stringArray(payload.risks) ||

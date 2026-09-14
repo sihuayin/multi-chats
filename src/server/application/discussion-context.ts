@@ -5,6 +5,7 @@ import {
   DISCUSSION_PROMPT_PROFILE_VERSION
 } from "@/server/application/discussion-prompts";
 import { phasePurpose } from "@/server/application/discussion-protocol";
+import { availableEvidence } from "@/server/application/discussion-evidence";
 import type {
   AppState,
   Discussion,
@@ -378,6 +379,18 @@ export function planDiscussionContext(input: {
     participantId: input.participant.id,
     phase: input.round.phase
   });
+  const evidenceMessage: ModelMessage = {
+    ...baseMessage(
+      [
+        "Available evidence IDs:",
+        ...availableEvidence(input.state, input.discussion).map(
+          (item) => `- ${item.id}: ${item.label}`
+        ),
+        "External sources may be cited as external:<https URL>."
+      ].join("\n")
+    ),
+    kind: "conversation"
+  };
   const discussionBrief: ModelMessage = {
     ...baseMessage(
       [
@@ -419,6 +432,7 @@ export function planDiscussionContext(input: {
     discussionBrief,
     objectiveMessage,
     ...interventionMessages,
+    evidenceMessage,
     currentRequestMessage,
     responseMessage
   ];
@@ -498,6 +512,7 @@ export function planDiscussionContext(input: {
     discussionBrief,
     objectiveMessage,
     ...interventionMessages,
+    evidenceMessage,
     currentRequestMessage,
     ...selectedHistory.map((item) => item.message),
     ...selectedRelated,
