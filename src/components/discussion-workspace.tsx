@@ -69,6 +69,15 @@ function interventionStatusKey(status: string): TranslationKey {
   return "chat.interventionPending";
 }
 
+function usageSourceKey(
+  source: "provider" | "estimated" | "unknown" | "mixed"
+): TranslationKey {
+  if (source === "provider") return "chat.usageProvider";
+  if (source === "estimated") return "chat.usageEstimated";
+  if (source === "mixed") return "chat.usageMixed";
+  return "chat.usageUnknown";
+}
+
 type DiscussionAction =
   | "edit"
   | "start"
@@ -150,6 +159,21 @@ type DiscussionView = {
       roundIds: string[];
       turnIds: string[];
     };
+  };
+  usage: {
+    source: "provider" | "estimated" | "unknown" | "mixed";
+    inputTokens?: number;
+    outputTokens?: number;
+    cachedInputTokens?: number;
+    cacheWriteTokens?: number;
+    cacheWrite1hTokens?: number;
+    reasoningTokens?: number;
+    totalTokens?: number;
+    attemptCount: number;
+    succeededAttemptCount: number;
+    failedAttemptCount: number;
+    cancelledAttemptCount: number;
+    unknownUsageAttemptCount: number;
   };
   availableActions: DiscussionAction[];
 };
@@ -749,6 +773,32 @@ export function DiscussionWorkspace() {
                     <span>
                       {view.budget.context.turnIds.length} Turns selected
                     </span>
+                  </div>
+                ) : null}
+                {view.usage.attemptCount > 0 ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[var(--muted-foreground)]">
+                    <Badge variant="outline">
+                      {t(usageSourceKey(view.usage.source))}
+                    </Badge>
+                    <span>
+                      {view.usage.totalTokens !== undefined
+                        ? t("chat.tokens", {
+                            count: view.usage.totalTokens.toLocaleString()
+                          })
+                        : t("chat.tokenTotalUnknown")}
+                    </span>
+                    <span>
+                      {t("chat.attempts", {
+                        count: view.usage.attemptCount
+                      })}
+                    </span>
+                    {view.usage.unknownUsageAttemptCount > 0 ? (
+                      <span>
+                        {t("chat.usageMissing", {
+                          count: view.usage.unknownUsageAttemptCount
+                        })}
+                      </span>
+                    ) : null}
                   </div>
                 ) : null}
               </div>

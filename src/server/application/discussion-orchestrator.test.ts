@@ -197,6 +197,10 @@ describe("DiscussionOrchestrator", () => {
     expect(persisted.discussion.events?.map((event) => event.type)).toEqual([
       "discussion_started",
       "phase_started",
+      "provider_attempt_started",
+      "provider_attempt_completed",
+      "provider_attempt_started",
+      "provider_attempt_completed",
       "phase_completed",
       "phase_started"
     ]);

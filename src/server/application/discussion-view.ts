@@ -7,6 +7,7 @@ import type {
   Run
 } from "@/server/domain/types";
 import { notFound } from "@/server/application/errors";
+import { aggregateModelUsage } from "@/server/application/model-usage";
 
 export type DiscussionAction =
   | "edit"
@@ -173,6 +174,11 @@ export function buildDiscussionView(
       left.createdAt.localeCompare(right.createdAt)
     )
     .at(-1);
+  const usage = aggregateModelUsage(
+    state.providerAttempts.filter(
+      (attempt) => attempt.discussionId === discussion.id
+    )
+  );
 
   return {
     discussion: {
@@ -224,6 +230,7 @@ export function buildDiscussionView(
     sourceTask: sourceTask ? taskView(sourceTask) : undefined,
     confirmedTask: confirmedTask ? taskView(confirmedTask) : undefined,
     activeRun: activeRun ? runView(activeRun) : undefined,
+    usage,
     budget: {
       usedRounds: discussion.rounds.filter(
         (round) => round.phase !== "synthesis"

@@ -60,9 +60,15 @@ export type ModelRequest = {
 };
 
 export type ModelEvent =
+  | { type: "provider_attempt_started"; attempt: number }
   | { type: "text_delta"; delta: string }
   | { type: "text_completed"; text: string }
-  | { type: "usage"; usage: ModelUsage }
+  | {
+      type: "usage";
+      usage: ModelUsage;
+      providerRequestId?: string;
+      responseModel?: string;
+    }
   | {
       type: "tool_started";
       toolCallId: string;

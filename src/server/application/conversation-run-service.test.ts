@@ -460,6 +460,306 @@ describe("ConversationRun", () => {
     ).toBe(true);
   });
 
+  it("records provider attempts with exact usage and stable correlation", async () => {
+    const state = createFixtureState();
+    const store = new MemoryStore(state);
+    const gateway: ModelGateway = {
+      async *run() {
+        yield {
+          type: "usage",
+          usage: {
+            inputTokens: 120,
+            outputTokens: 30,
+            cachedInputTokens: 40,
+            cacheWriteTokens: 12,
+            cacheWrite1hTokens: 4,
+            reasoningTokens: 10,
+            totalTokens: 150,
+            source: "provider"
+          },
+          providerRequestId: "provider-request-1",
+          responseModel: "resolved-model"
+        };
+        yield { type: "text_completed", text: "recorded" };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway
+    );
+    const started = await runs.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice record this" }
+    );
+
+    await runs.processRun(started.run!.id);
+
+    const persisted = await store.read((current) => ({
+      attempt: current.providerAttempts.at(-1),
+      events: current.runEvents.filter(
+        (event) => event.runId === started.run!.id
+      )
+    }));
+    expect(persisted.attempt).toMatchObject({
+      runId: started.run!.id,
+      purpose: "conversation",
+      provider: "openai",
+      modelId: "test-model",
+      targetOrder: 0,
+      attempt: 1,
+      status: "succeeded",
+      providerRequestId: "provider-request-1",
+      responseModel: "resolved-model",
+      usage: {
+        inputTokens: 120,
+        outputTokens: 30,
+        cachedInputTokens: 40,
+        cacheWriteTokens: 12,
+        cacheWrite1hTokens: 4,
+        reasoningTokens: 10,
+        totalTokens: 150,
+        source: "provider"
+      }
+    });
+    expect(persisted.attempt?.completedAt).toBeDefined();
+    expect(persisted.events.map((event) => event.type)).toEqual(
+      expect.arrayContaining([
+        "provider_attempt_started",
+        "usage_recorded",
+        "provider_attempt_completed"
+      ])
+    );
+  });
+
+  it("records each provider call in a tool-using Turn", async () => {
+    const store = new MemoryStoreFixture();
+    const gateway: ModelGateway = {
+      async *run() {
+        yield { type: "provider_attempt_started", attempt: 1 };
+        yield {
+          type: "usage",
+          usage: {
+            inputTokens: 30,
+            outputTokens: 10,
+            totalTokens: 40,
+            source: "provider"
+          },
+          providerRequestId: "provider-call-1"
+        };
+        yield { type: "provider_attempt_started", attempt: 2 };
+        yield {
+          type: "usage",
+          usage: {
+            inputTokens: 20,
+            outputTokens: 5,
+            totalTokens: 25,
+            source: "provider"
+          },
+          providerRequestId: "provider-call-2"
+        };
+        yield { type: "text_completed", text: "done" };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway
+    );
+    const started = await runs.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice use a tool loop" }
+    );
+
+    await runs.processRun(started.run!.id);
+
+    const attempts = await store.read((state) =>
+      state.providerAttempts.filter(
+        (attempt) => attempt.runId === started.run!.id
+      )
+    );
+    expect(attempts).toMatchObject([
+      {
+        attempt: 1,
+        status: "succeeded",
+        providerRequestId: "provider-call-1",
+        usage: { totalTokens: 40 }
+      },
+      {
+        attempt: 2,
+        status: "succeeded",
+        providerRequestId: "provider-call-2",
+        usage: { totalTokens: 25 }
+      }
+    ]);
+  });
+
+  it("records failed and retried provider attempts", async () => {
+    const state = createFixtureState();
+    const { discussion, round } = addFixturePhase(state);
+    const store = new MemoryStore(state);
+    let calls = 0;
+    const engine: ModelGateway = {
+      async *run() {
+        calls += 1;
+        if (calls === 1) {
+          yield { type: "text_completed", text: "not-json" };
+          return;
+        }
+        yield {
+          type: "usage",
+          usage: {
+            inputTokens: 80,
+            outputTokens: 20,
+            totalTokens: 100,
+            source: "provider"
+          }
+        };
+        yield {
+          type: "text_completed",
+          text: JSON.stringify(
+            createFixtureTurnPayload("cross_response")
+          )
+        };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      engine
+    );
+    const started = await runs.startPhaseRun(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        discussionId: discussion.id,
+        roundId: round.id,
+        participantSnapshot: round.participantSnapshot,
+        context: "Retry malformed output.",
+        purpose: "Validate retries."
+      }
+    );
+
+    await runs.processRun(started.run.id);
+
+    const attempts = await store.read((current) =>
+      current.providerAttempts.filter(
+        (attempt) => attempt.runId === started.run.id
+      )
+    );
+    expect(attempts.slice(0, 2)).toMatchObject([
+      {
+        attempt: 1,
+        status: "failed",
+        errorKind: "malformed_output"
+      },
+      {
+        attempt: 2,
+        status: "succeeded",
+        usage: {
+          inputTokens: 80,
+          outputTokens: 20,
+          totalTokens: 100,
+          source: "provider"
+        }
+      }
+    ]);
+    expect(
+      await store.read(
+        (current) =>
+          current.discussions
+            .find((item) => item.id === discussion.id)
+            ?.events?.map((event) => event.type) ?? []
+      )
+    ).toEqual(
+      expect.arrayContaining([
+        "provider_attempt_started",
+        "usage_recorded",
+        "provider_attempt_completed"
+      ])
+    );
+  });
+
+  it("aggregates attempt usage in the Discussion view", async () => {
+    const state = createFixtureState();
+    const { discussion, round } = addFixturePhase(state);
+    state.providerAttempts.push({
+      id: "attempt-unknown",
+      workspaceId: state.workspace.id,
+      discussionId: discussion.id,
+      roundId: round.id,
+      purpose: "discussion_turn",
+      provider: "openai",
+      modelId: "test-model",
+      targetOrder: 0,
+      attempt: 1,
+      status: "failed",
+      usage: { source: "unknown" },
+      startedAt: state.workspace.createdAt,
+      completedAt: state.workspace.updatedAt
+    });
+    state.providerAttempts.push({
+      id: "attempt-estimated",
+      workspaceId: state.workspace.id,
+      discussionId: discussion.id,
+      roundId: round.id,
+      purpose: "discussion_turn",
+      provider: "openai",
+      modelId: "test-model",
+      targetOrder: 0,
+      attempt: 3,
+      status: "succeeded",
+      usage: {
+        inputTokens: 7,
+        outputTokens: 3,
+        source: "estimated"
+      },
+      startedAt: state.workspace.createdAt,
+      completedAt: state.workspace.updatedAt
+    });
+    state.providerAttempts.push({
+      id: "attempt-known",
+      workspaceId: state.workspace.id,
+      discussionId: discussion.id,
+      roundId: round.id,
+      purpose: "discussion_turn",
+      provider: "openai",
+      modelId: "test-model",
+      targetOrder: 0,
+      attempt: 2,
+      status: "succeeded",
+      usage: {
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 15,
+        source: "provider"
+      },
+      startedAt: state.workspace.createdAt,
+      completedAt: state.workspace.updatedAt
+    });
+    const store = new MemoryStore(state);
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      new RecordingModelGateway()
+    );
+
+    const view = await new DiscussionOrchestrator(
+      store,
+      runs
+    ).getDiscussionView(discussion.id);
+
+    expect(view.usage).toMatchObject({
+      source: "mixed",
+      inputTokens: 17,
+      outputTokens: 8,
+      totalTokens: 25,
+      attemptCount: 3,
+      succeededAttemptCount: 2,
+      failedAttemptCount: 1,
+      unknownUsageAttemptCount: 1
+    });
+  });
+
   it("preserves Run failure outcomes and settles the phase Turn", async () => {
     const state = createFixtureState();
     const { discussion, round } = addFixturePhase(state);
@@ -724,8 +1024,10 @@ describe("ConversationRun", () => {
       "run_started",
       "employee_turn_started",
       "skill_loaded",
+      "provider_attempt_started",
       "message_delta",
       "message_delta",
+      "provider_attempt_completed",
       "message_completed",
       "employee_turn_completed",
       "run_completed"
@@ -1904,6 +2206,16 @@ describe("ConversationRun", () => {
     ).toMatchObject({
       cooperative: true,
       stopRequested: true
+    });
+    expect(
+      await store.read((state) =>
+        state.providerAttempts.find(
+          (attempt) => attempt.runId === started.run!.id
+        )
+      )
+    ).toMatchObject({
+      status: "cancelled",
+      errorKind: "cancelled"
     });
   });
 

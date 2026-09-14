@@ -210,6 +210,7 @@ export class PiModelGateway implements ModelGateway {
     let wake: (() => void) | undefined;
     let finished = false;
     let finalText = "";
+    let providerAttempt = 0;
 
     const push = (event: ModelEvent) => {
       queue.push(event);
@@ -279,6 +280,14 @@ export class PiModelGateway implements ModelGateway {
         tools
       },
       streamFn: models.streamSimple.bind(models),
+      onPayload: () => {
+        providerAttempt += 1;
+        push({
+          type: "provider_attempt_started",
+          attempt: providerAttempt
+        });
+        return undefined;
+      },
       toolExecution: "sequential",
       afterToolCall: async ({ result, isError }) => ({
         isError:
@@ -329,6 +338,29 @@ export class PiModelGateway implements ModelGateway {
           errorKind: isToolExecutionErrorKind(details.errorKind)
             ? details.errorKind
             : undefined
+        });
+      }
+
+      if (
+        event.type === "message_end" &&
+        event.message.role === "assistant"
+      ) {
+        const usage = event.message.usage;
+        push({
+          type: "usage",
+          usage: {
+            inputTokens: usage.input,
+            outputTokens: usage.output,
+            cachedInputTokens: usage.cacheRead,
+            cacheWriteTokens: usage.cacheWrite,
+            cacheWrite1hTokens: usage.cacheWrite1h,
+            reasoningTokens: usage.reasoning,
+            totalTokens: usage.totalTokens,
+            source: "provider"
+          },
+          providerRequestId: event.message.responseId,
+          responseModel:
+            event.message.responseModel ?? event.message.model
         });
       }
 

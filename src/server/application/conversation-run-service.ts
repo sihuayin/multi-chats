@@ -7,6 +7,7 @@ import type {
   DiscussionTurnPayload,
   Employee,
   Message,
+  ProviderAttempt,
   ProviderId,
   Run,
   RunEvent,
@@ -21,6 +22,9 @@ import type {
 import { validateDiscussionParticipants } from "@/server/application/discussion-domain";
 import { appendDiscussionEvent } from "@/server/application/discussion-ledger";
 import { parseDiscussionBrief } from "@/server/application/discussion-brief";
+import {
+  mergeModelUsage
+} from "@/server/application/model-usage";
 import {
   DEFAULT_MAX_OUTPUT_TOKENS,
   DEFAULT_MODEL_CONTEXT_WINDOW,
@@ -879,6 +883,108 @@ export class ConversationRunService {
     }
   }
 
+  private async startProviderAttempt(input: {
+    runId: string;
+    purpose: ProviderAttempt["purpose"];
+    provider: ProviderId;
+    modelId: string;
+    attempt?: number;
+    targetOrder?: number;
+    roundId?: string;
+    turnId?: string;
+  }): Promise<string> {
+    const id = crypto.randomUUID();
+    await this.store.update((state) => {
+      const run = state.runs.find((item) => item.id === input.runId);
+      if (!run) notFound("Run");
+      const timestamp = now();
+      const attempt =
+        input.attempt ??
+        Math.max(
+          0,
+          ...state.providerAttempts
+            .filter((item) => item.runId === run.id)
+            .map((item) => item.attempt)
+        ) +
+          1;
+      state.providerAttempts.push({
+        id,
+        workspaceId: state.workspace.id,
+        runId: run.id,
+        discussionId: run.discussionId,
+        roundId: input.roundId,
+        turnId: input.turnId,
+        purpose: input.purpose,
+        provider: input.provider,
+        modelId: input.modelId,
+        targetOrder: input.targetOrder ?? 0,
+        attempt,
+        status: "started",
+        requestId: run.requestId,
+        usage: { source: "unknown" },
+        startedAt: timestamp
+      });
+      const payload = {
+        attemptId: id,
+        provider: input.provider,
+        modelId: input.modelId,
+        purpose: input.purpose,
+        targetOrder: input.targetOrder ?? 0,
+        attempt
+      };
+      appendEvent(state, run, "provider_attempt_started", payload);
+      const discussion = run.discussionId
+        ? state.discussions.find((item) => item.id === run.discussionId)
+        : undefined;
+      if (discussion) {
+        appendDiscussionEvent(
+          discussion,
+          "provider_attempt_started",
+          payload
+        );
+      }
+      state.workspace.updatedAt = timestamp;
+    });
+    return id;
+  }
+
+  private async finalizeProviderAttempt(input: {
+    runId: string;
+    attemptId: string;
+    status: Exclude<ProviderAttempt["status"], "started">;
+    errorKind?: string;
+  }): Promise<void> {
+    await this.store.update((state) => {
+      const run = state.runs.find((item) => item.id === input.runId);
+      const attempt = state.providerAttempts.find(
+        (item) => item.id === input.attemptId
+      );
+      if (!run || !attempt) return;
+      const timestamp = now();
+      attempt.status = input.status;
+      attempt.errorKind = input.errorKind;
+      attempt.completedAt = timestamp;
+      const payload = {
+        attemptId: attempt.id,
+        status: attempt.status,
+        errorKind: attempt.errorKind,
+        usage: attempt.usage
+      };
+      appendEvent(state, run, "provider_attempt_completed", payload);
+      const discussion = run.discussionId
+        ? state.discussions.find((item) => item.id === run.discussionId)
+        : undefined;
+      if (discussion) {
+        appendDiscussionEvent(
+          discussion,
+          "provider_attempt_completed",
+          payload
+        );
+      }
+      state.workspace.updatedAt = timestamp;
+    });
+  }
+
   private async processEmployeeTurn(
     runId: string,
     employeeId: string,
@@ -1106,23 +1212,34 @@ export class ConversationRunService {
     let finalText = "";
     let completed = false;
     let validatedPayload: DiscussionTurnPayload | undefined;
+    const purpose =
+      context.phaseContext?.phase === "synthesis"
+        ? "discussion_synthesis"
+        : context.phaseContext
+          ? "discussion_turn"
+          : "conversation";
     let attempt = 0;
     while (attempt < 2 && !completed) {
       attempt += 1;
+      let currentProviderAttemptId = await this.startProviderAttempt({
+        runId,
+        purpose,
+        provider: context.provider,
+        modelId: context.employee.modelId,
+        roundId: context.phaseContext?.roundId,
+        turnId: context.phaseContext?.turnId
+      });
+      let providerCallCount = 0;
       let producedOutput = false;
-      let retryableError = false;
+      let failureKind = "model_error";
+      let finalized = false;
       try {
         for await (const event of this.gateway.run({
           provider: context.provider,
           credential: this.cipher.decrypt(context.encryptedCredential),
           modelId: context.employee.modelId,
           requestId: context.run.requestId,
-          purpose:
-            context.phaseContext?.phase === "synthesis"
-              ? "discussion_synthesis"
-              : context.phaseContext
-                ? "discussion_turn"
-                : "conversation",
+          purpose,
           maxOutputTokens: context.phaseContext?.plan.maxOutputTokens,
           systemPrompt,
           prompt,
@@ -1130,18 +1247,46 @@ export class ConversationRunService {
           tools: modelTools,
           signal
         })) {
-          await this.recordModelEvent(runId, message.id, employeeId, event);
+          if (event.type === "provider_attempt_started") {
+            if (providerCallCount > 0) {
+              await this.finalizeProviderAttempt({
+                runId,
+                attemptId: currentProviderAttemptId,
+                status: "succeeded"
+              });
+              currentProviderAttemptId = await this.startProviderAttempt({
+                runId,
+                purpose,
+                provider: context.provider,
+                modelId: context.employee.modelId,
+                roundId: context.phaseContext?.roundId,
+                turnId: context.phaseContext?.turnId
+              });
+            }
+            providerCallCount += 1;
+            continue;
+          }
+          await this.recordModelEvent(
+            runId,
+            message.id,
+            employeeId,
+            currentProviderAttemptId,
+            event
+          );
           if (event.type === "text_delta" || event.type === "tool_started") {
             producedOutput = true;
           }
           if (event.type === "text_delta") finalText += event.delta;
           if (event.type === "text_completed" && event.text) finalText = event.text;
           if (event.type === "error") {
-            retryableError = event.kind === "retryable";
+            failureKind = event.kind ?? "model_error";
             throw new Error(event.message);
           }
         }
-        if (signal.aborted) throw new Error("Run cancelled");
+        if (signal.aborted) {
+          failureKind = "cancelled";
+          throw new Error("Run cancelled");
+        }
         if (context.phaseContext) {
           try {
             if (context.phaseContext.phase === "synthesis") {
@@ -1163,6 +1308,14 @@ export class ConversationRunService {
               );
             }
           } catch (error) {
+            failureKind = "malformed_output";
+            await this.finalizeProviderAttempt({
+              runId,
+              attemptId: currentProviderAttemptId,
+              status: "failed",
+              errorKind: failureKind
+            });
+            finalized = true;
             if (attempt >= 2) throw error;
             await this.store.update((state) => {
               const current = state.messages.find(
@@ -1177,9 +1330,29 @@ export class ConversationRunService {
             continue;
           }
         }
+        await this.finalizeProviderAttempt({
+          runId,
+          attemptId: currentProviderAttemptId,
+          status: "succeeded"
+        });
+        finalized = true;
         completed = true;
       } catch (error) {
-        if (signal.aborted || !retryableError || attempt >= 2 || producedOutput) {
+        if (!finalized) {
+          const status = signal.aborted ? "cancelled" : "failed";
+          await this.finalizeProviderAttempt({
+            runId,
+            attemptId: currentProviderAttemptId,
+            status,
+            errorKind: signal.aborted ? "cancelled" : failureKind
+          });
+        }
+        if (
+          signal.aborted ||
+          failureKind !== "retryable" ||
+          attempt >= 2 ||
+          producedOutput
+        ) {
           throw error;
         }
         await new Promise((resolve) => setTimeout(resolve, 250));
@@ -1236,6 +1409,7 @@ export class ConversationRunService {
     runId: string,
     messageId: string,
     employeeId: string,
+    providerAttemptId: string,
     event: ModelEvent
   ): Promise<void> {
     await this.store.update((state) => {
@@ -1281,6 +1455,38 @@ export class ConversationRunService {
           message: event.message,
           kind: event.kind ?? "terminal"
         });
+      }
+      if (event.type === "usage") {
+        const attempt = state.providerAttempts.find(
+          (item) => item.id === providerAttemptId
+        );
+        if (!attempt) {
+          throw new Error("Provider attempt is missing");
+        }
+        attempt.usage = mergeModelUsage(attempt.usage, event.usage);
+        attempt.providerRequestId =
+          event.providerRequestId ?? attempt.providerRequestId;
+        attempt.responseModel =
+          event.responseModel ?? attempt.responseModel;
+        const payload = {
+          attemptId: attempt.id,
+          usage: attempt.usage,
+          providerRequestId: attempt.providerRequestId,
+          responseModel: attempt.responseModel
+        };
+        appendEvent(state, run, "usage_recorded", payload);
+        const discussion = run.discussionId
+          ? state.discussions.find(
+              (item) => item.id === run.discussionId
+            )
+          : undefined;
+        if (discussion) {
+          appendDiscussionEvent(
+            discussion,
+            "usage_recorded",
+            payload
+          );
+        }
       }
     });
   }

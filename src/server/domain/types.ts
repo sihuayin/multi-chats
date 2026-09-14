@@ -47,6 +47,8 @@ export type ModelUsage = {
   inputTokens?: number;
   outputTokens?: number;
   cachedInputTokens?: number;
+  cacheWriteTokens?: number;
+  cacheWrite1hTokens?: number;
   reasoningTokens?: number;
   totalTokens?: number;
   source: "provider" | "estimated" | "unknown";
@@ -82,6 +84,7 @@ export type ProviderAttempt = {
   status: ProviderAttemptStatus;
   requestId?: string;
   providerRequestId?: string;
+  responseModel?: string;
   fallbackFromAttemptId?: string;
   errorKind?: string;
   usage: ModelUsage;
@@ -482,6 +485,9 @@ export const DISCUSSION_EVENT_TYPES = [
   "intervention_queued",
   "intervention_applied",
   "context_budget_rejected",
+  "provider_attempt_started",
+  "provider_attempt_completed",
+  "usage_recorded",
   "provider_fallback_started"
 ] as const;
 

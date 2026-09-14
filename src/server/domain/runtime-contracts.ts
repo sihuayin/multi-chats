@@ -17,6 +17,8 @@ export const modelUsageSchema = z
     inputTokens: tokenCount.optional(),
     outputTokens: tokenCount.optional(),
     cachedInputTokens: tokenCount.optional(),
+    cacheWriteTokens: tokenCount.optional(),
+    cacheWrite1hTokens: tokenCount.optional(),
     reasoningTokens: tokenCount.optional(),
     totalTokens: tokenCount.optional(),
     source: z.enum(["provider", "estimated", "unknown"])
@@ -52,6 +54,7 @@ export const providerAttemptSchema = z
     ]),
     requestId: identifier.optional(),
     providerRequestId: identifier.optional(),
+    responseModel: identifier.optional(),
     fallbackFromAttemptId: identifier.optional(),
     errorKind: identifier.optional(),
     usage: modelUsageSchema,

@@ -98,9 +98,10 @@ describe("Conversation HTTP and SSE contract", () => {
     expect(eventTypes[0]).toBe("run_started");
     expect(eventTypes[1]).toBe("employee_turn_started");
     expect(eventTypes[2]).toBe("skill_loaded");
-    expect(eventTypes.slice(3, -3).every((type) => type === "message_delta")).toBe(
-      true
-    );
+    expect(eventTypes).toContain("provider_attempt_started");
+    expect(eventTypes).toContain("provider_attempt_completed");
+    expect(eventTypes.filter((type) => type === "message_delta").length).toBeGreaterThan(0);
+    expect(eventTypes.at(-4)).toBe("provider_attempt_completed");
     expect(eventTypes.at(-3)).toBe("message_completed");
     expect(eventTypes.at(-2)).toBe("employee_turn_completed");
     expect(eventTypes.at(-1)).toBe("run_completed");
