@@ -4,7 +4,7 @@ import {
   type AgentMessage,
   type AgentTool
 } from "@earendil-works/pi-agent-core";
-import { Type } from "@earendil-works/pi-ai";
+import { Type, type AssistantMessage } from "@earendil-works/pi-ai";
 import { createProviderModels } from "@/server/adapters/model/provider-registry";
 import type {
   ModelEvent,
@@ -13,6 +13,10 @@ import type {
   ModelRequest
 } from "@/server/application/model-gateway";
 import { isToolExecutionErrorKind } from "@/server/application/tool-gateway";
+import {
+  classifyProviderFailure,
+  retryAfterMsFromHeaders
+} from "@/server/application/provider-reliability";
 
 export class FakeModelGateway implements ModelGateway {
   constructor(
@@ -204,6 +208,16 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 export class PiModelGateway implements ModelGateway {
   async *run(request: ModelRequest): AsyncIterable<ModelEvent> {
+    if (request.signal?.aborted) {
+      yield {
+        type: "error",
+        message: "Request cancelled",
+        kind: "cancelled",
+        code: "provider_cancelled"
+      };
+      return;
+    }
+
     const models = createProviderModels(request.provider, request.credential);
     const model = models.getModel(request.provider, request.modelId);
     if (!model) {
@@ -220,6 +234,9 @@ export class PiModelGateway implements ModelGateway {
     let finished = false;
     let finalText = "";
     let providerAttempt = 0;
+    let finalAssistantMessage: AssistantMessage | undefined;
+    let providerStatus: number | undefined;
+    let providerRetryAfterMs: number | undefined;
 
     const push = (event: ModelEvent) => {
       queue.push(event);
@@ -297,6 +314,12 @@ export class PiModelGateway implements ModelGateway {
         });
         return undefined;
       },
+      onResponse: (response) => {
+        providerStatus = response.status;
+        providerRetryAfterMs = retryAfterMsFromHeaders(
+          response.headers
+        );
+      },
       toolExecution: "sequential",
       afterToolCall: async ({ result, isError }) => ({
         isError:
@@ -314,7 +337,19 @@ export class PiModelGateway implements ModelGateway {
         }
         if (update.type === "error") {
           const message = update.error.errorMessage ?? "Model request failed";
-          push({ type: "error", message, kind: "terminal" });
+          const failure = classifyProviderFailure({
+            message,
+            status: providerStatus,
+            retryAfterMs: providerRetryAfterMs
+          });
+          push({
+            type: "error",
+            message,
+            kind: failure.kind,
+            code: failure.code,
+            retryAfterMs: failure.retryAfterMs,
+            status: failure.status
+          });
         }
       }
 
@@ -354,6 +389,7 @@ export class PiModelGateway implements ModelGateway {
         event.type === "message_end" &&
         event.message.role === "assistant"
       ) {
+        finalAssistantMessage = event.message;
         const usage = event.message.usage;
         push({
           type: "usage",
@@ -375,7 +411,32 @@ export class PiModelGateway implements ModelGateway {
 
       if (event.type === "agent_end") {
         finished = true;
-        push({ type: "text_completed", text: finalText });
+        if (
+          finalAssistantMessage?.stopReason === "error" ||
+          finalAssistantMessage?.stopReason === "aborted"
+        ) {
+          const message =
+            finalAssistantMessage.errorMessage ?? "Model request failed";
+          const failure = classifyProviderFailure({
+            message,
+            kind:
+              finalAssistantMessage.stopReason === "aborted"
+                ? "cancelled"
+                : undefined,
+            status: providerStatus,
+            retryAfterMs: providerRetryAfterMs
+          });
+          push({
+            type: "error",
+            message,
+            kind: failure.kind,
+            code: failure.code,
+            retryAfterMs: failure.retryAfterMs,
+            status: failure.status
+          });
+        } else {
+          push({ type: "text_completed", text: finalText });
+        }
         wake?.();
         wake = undefined;
       }
@@ -390,10 +451,19 @@ export class PiModelGateway implements ModelGateway {
         : agent.prompt(request.prompt)
     )
       .catch((error: unknown) => {
+        const failure = classifyProviderFailure({
+          message: error instanceof Error ? error.message : String(error),
+          kind: request.signal?.aborted ? "cancelled" : undefined,
+          status: providerStatus,
+          retryAfterMs: providerRetryAfterMs
+        });
         push({
           type: "error",
-          message: error instanceof Error ? error.message : String(error),
-          kind: "terminal"
+          message: failure.message,
+          kind: failure.kind,
+          code: failure.code,
+          retryAfterMs: failure.retryAfterMs,
+          status: failure.status
         });
         finished = true;
         wake?.();

@@ -26,7 +26,8 @@ export type RunSettlementCommand =
       reason:
         | "model_error"
         | "context_budget_exceeded"
-        | "evidence_validation_failed";
+        | "evidence_validation_failed"
+        | "provider_reliability";
       error: string;
       errorCode?: string;
     })

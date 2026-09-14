@@ -418,7 +418,9 @@ describe("ConversationRun", () => {
         modelContext: () => ({
           contextWindow: 5_500,
           maxOutputTokens: 200
-        })
+        }),
+        sleep: async () => undefined,
+        retryRandom: () => 0
       }
     );
     const started = await runs.startPhaseRun(
@@ -525,7 +527,9 @@ describe("ConversationRun", () => {
         modelContext: () => ({
           contextWindow: 5_500,
           maxOutputTokens: 200
-        })
+        }),
+        sleep: async () => undefined,
+        retryRandom: () => 0
       }
     );
     const started = await runs.startPhaseRun(
@@ -551,6 +555,119 @@ describe("ConversationRun", () => {
     expect(compression.content).not.toContain(
       "Invented unsupported claim"
     );
+    expect(
+      await store.read((current) =>
+        current.providerAttempts.filter(
+          (attempt) =>
+            attempt.purpose === "discussion_compression" &&
+            attempt.discussionId === discussion.id
+        )
+      )
+    ).toMatchObject([
+      {
+        status: "failed",
+        errorKind: "malformed_output",
+        errorCode: "discussion_compression_invalid"
+      },
+      {
+        status: "failed",
+        errorKind: "malformed_output",
+        errorCode: "discussion_compression_invalid"
+      }
+    ]);
+  });
+
+  it("does not start a Turn after compression is cancelled", async () => {
+    const state = createFixtureState();
+    const { discussion, round } = addFixturePhase(state);
+    discussion.rounds.unshift({
+      id: `${discussion.id}-old-round`,
+      roundNumber: 0,
+      phase: "positions",
+      status: "completed",
+      participantSnapshot: structuredClone(discussion.participants),
+      turns: [
+        {
+          id: `${discussion.id}-old-turn`,
+          employeeId: discussion.participants[0].employeeId,
+          role: "analyst",
+          order: 1,
+          status: "completed",
+          content: `Old context ${"x".repeat(30_000)}`,
+          createdAt: state.workspace.createdAt,
+          completedAt: state.workspace.updatedAt
+        }
+      ],
+      createdAt: state.workspace.createdAt,
+      completedAt: state.workspace.updatedAt
+    });
+    const store = new MemoryStore(state);
+    let compressionStartedResolve: (() => void) | undefined;
+    const compressionStarted = new Promise<void>((resolve) => {
+      compressionStartedResolve = resolve;
+    });
+    const engine: ModelGateway = {
+      async *run(request) {
+        if (request.purpose !== "discussion_compression") {
+          yield {
+            type: "text_completed",
+            text: JSON.stringify(
+              createFixtureTurnPayload("cross_response")
+            )
+          };
+          return;
+        }
+        compressionStartedResolve?.();
+        await new Promise<void>((_, reject) => {
+          if (request.signal?.aborted) {
+            reject(new Error("aborted"));
+            return;
+          }
+          request.signal?.addEventListener(
+            "abort",
+            () => reject(new Error("aborted")),
+            { once: true }
+          );
+        });
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      engine,
+      {
+        modelContext: () => ({
+          contextWindow: 5_500,
+          maxOutputTokens: 200
+        })
+      }
+    );
+    const started = await runs.startPhaseRun(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        discussionId: discussion.id,
+        roundId: round.id,
+        participantSnapshot: round.participantSnapshot,
+        context: "Exercise compression cancellation.",
+        purpose: "Cancel before the Turn starts."
+      }
+    );
+
+    const processing = runs.processRun(started.run.id);
+    await compressionStarted;
+    await runs.cancelRun(started.run.id);
+    const cancelled = await processing;
+
+    expect(cancelled.status).toBe("cancelled");
+    expect(
+      await store.read((current) =>
+        current.messages.filter(
+          (message) =>
+            message.runId === started.run.id &&
+            message.status === "streaming"
+        )
+      )
+    ).toEqual([]);
   });
 
   it("includes applied interventions in structured Discussion context", async () => {
@@ -794,7 +911,8 @@ describe("ConversationRun", () => {
       {
         attempt: 1,
         status: "failed",
-        errorKind: "malformed_output"
+        errorKind: "malformed_output",
+        errorCode: "provider_malformed_output"
       },
       {
         attempt: 2,
@@ -883,7 +1001,12 @@ describe("ConversationRun", () => {
       )!
     }));
     expect(persisted.attempts.slice(0, 2)).toMatchObject([
-      { attempt: 1, status: "failed", errorKind: "evidence_invalid" },
+      {
+        attempt: 1,
+        status: "failed",
+        errorKind: "malformed_output",
+        errorCode: "discussion_evidence_invalid"
+      },
       { attempt: 2, status: "succeeded" }
     ]);
     expect(persisted.references).toContainEqual(
@@ -944,8 +1067,16 @@ describe("ConversationRun", () => {
       )
     );
     expect(attempts).toMatchObject([
-      { status: "failed", errorKind: "evidence_invalid" },
-      { status: "failed", errorKind: "evidence_invalid" }
+      {
+        status: "failed",
+        errorKind: "malformed_output",
+        errorCode: "discussion_evidence_invalid"
+      },
+      {
+        status: "failed",
+        errorKind: "malformed_output",
+        errorCode: "discussion_evidence_invalid"
+      }
     ]);
     expect(
       await store.read((current) =>
@@ -954,6 +1085,20 @@ describe("ConversationRun", () => {
           .map((event) => event.type)
       )
     ).toContain("evidence_validation_failed");
+    expect(
+      await store.read((current) =>
+        current.runEvents.find(
+          (event) =>
+            event.runId === started.run.id &&
+            event.type === "run_error"
+        )
+      )
+    ).toMatchObject({
+      payload: {
+        reason: "evidence_validation_failed",
+        errorCode: "discussion_evidence_invalid"
+      }
+    });
   });
 
   it("aggregates attempt usage in the Discussion view", async () => {
@@ -1531,7 +1676,11 @@ describe("ConversationRun", () => {
     const runService = new ConversationRunService(
       store,
       new AesCredentialCipher(TEST_KEY),
-      gateway
+      gateway,
+      {
+        sleep: async () => undefined,
+        retryRandom: () => 0
+      }
     );
     const started = await runService.startTurn(
       "30000000-0000-4000-8000-000000000001",
@@ -1544,8 +1693,121 @@ describe("ConversationRun", () => {
     expect(attempts).toBe(2);
     expect(
       (await runService.listRunEvents(started.run!.id)).map((event) => event.type)
-    ).toContain("model_error");
+    ).toEqual(
+      expect.arrayContaining([
+        "model_error",
+        "provider_retry_scheduled"
+      ])
+    );
+    expect(
+      (await store.read((state) =>
+        state.runEvents.find(
+          (event) =>
+            event.runId === started.run!.id &&
+            event.type === "provider_retry_scheduled"
+        )
+      ))?.payload
+    ).toMatchObject({
+      nextAttempt: 2,
+      delayMs: 500,
+      failureKind: "retryable"
+    });
   });
+
+  it("cancels a Run while it is waiting to retry", async () => {
+    const store = new MemoryStoreFixture();
+    let calls = 0;
+    let retrySleepStarted: (() => void) | undefined;
+    const retrySleep = new Promise<void>((resolve) => {
+      retrySleepStarted = resolve;
+    });
+    const gateway: ModelGateway = {
+      async *run() {
+        calls += 1;
+        yield {
+          type: "error",
+          message: "temporary model failure",
+          kind: "retryable"
+        };
+      }
+    };
+    const runService = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway,
+      {
+        sleep: async () => {
+          retrySleepStarted?.();
+          await new Promise(() => undefined);
+        },
+        retryRandom: () => 0
+      }
+    );
+    const started = await runService.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice cancel during retry" }
+    );
+
+    const processing = runService.processRun(started.run!.id);
+    await retrySleep;
+    await runService.cancelRun(started.run!.id);
+    const cancelled = await processing;
+
+    expect(cancelled.status).toBe("cancelled");
+    expect(calls).toBe(1);
+    expect(
+      await store.read((state) =>
+        state.runEvents.some(
+          (event) =>
+            event.runId === started.run!.id &&
+            event.type === "provider_retry_scheduled"
+        )
+      )
+    ).toBe(true);
+  });
+
+  it.each([
+    { kind: "terminal" as const, expectedCode: "provider_terminal" },
+    { kind: "unknown" as const, expectedCode: "provider_unknown" }
+  ])(
+    "does not retry a $kind Provider failure",
+    async ({ kind, expectedCode }) => {
+      const store = new MemoryStoreFixture();
+      let calls = 0;
+      const gateway: ModelGateway = {
+        async *run() {
+          calls += 1;
+          yield {
+            type: "error",
+            message: `${kind} provider failure`,
+            kind
+          };
+        }
+      };
+      const runService = new ConversationRunService(
+        store,
+        new AesCredentialCipher(TEST_KEY),
+        gateway
+      );
+      const started = await runService.startTurn(
+        "30000000-0000-4000-8000-000000000001",
+        { content: "@alice fail without retry" }
+      );
+
+      const failed = await runService.processRun(started.run!.id);
+
+      expect(failed).toMatchObject({
+        status: "failed",
+        errorCode: expectedCode
+      });
+      expect(calls).toBe(1);
+      expect(
+        (await runService.listRunEvents(started.run!.id)).map(
+          (event) => event.type
+        )
+      ).not.toContain("provider_retry_scheduled");
+    }
+  );
 
   it("keeps partial output when a model fails after streaming starts", async () => {
     const store = new MemoryStoreFixture();
@@ -1586,6 +1848,162 @@ describe("ConversationRun", () => {
         "run_error"
       ])
     );
+    expect(
+      await store.read((state) =>
+        state.providerAttempts.filter(
+          (attempt) => attempt.runId === started.run!.id
+        )
+      )
+    ).toMatchObject([
+      {
+        status: "failed",
+        errorKind: "terminal",
+        errorCode: "provider_terminal"
+      }
+    ]);
+  });
+
+  it("retries rate-limited calls after the requested delay", async () => {
+    const store = new MemoryStoreFixture();
+    let calls = 0;
+    const gateway: ModelGateway = {
+      async *run() {
+        calls += 1;
+        if (calls === 1) {
+          yield {
+            type: "error",
+            message: "rate limited",
+            kind: "rate_limited",
+            code: "provider_rate_limited",
+            retryAfterMs: 750
+          };
+          return;
+        }
+        yield { type: "text_completed", text: "recovered" };
+      }
+    };
+    const runService = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway,
+      {
+        sleep: async () => undefined,
+        retryRandom: () => 0
+      }
+    );
+    const started = await runService.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice rate limit" }
+    );
+
+    const completed = await runService.processRun(started.run!.id);
+
+    expect(completed.status).toBe("completed");
+    expect(calls).toBe(2);
+    expect(
+      (await store.read((state) =>
+        state.runEvents.find(
+          (event) =>
+            event.runId === started.run!.id &&
+            event.type === "provider_retry_scheduled"
+        )
+      ))?.payload
+    ).toMatchObject({
+      failureKind: "rate_limited",
+      retryAfterMs: 750,
+      delayMs: 750
+    });
+  });
+
+  it("times out a Provider call without exceeding the attempt limit", async () => {
+    const store = new MemoryStoreFixture();
+    const gateway: ModelGateway = {
+      async *run() {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        yield { type: "text_completed", text: "late" };
+      }
+    };
+    const runService = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway,
+      {
+        maxProviderAttempts: 1,
+        providerTimeoutMs: 10
+      }
+    );
+    const started = await runService.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice timeout" }
+    );
+
+    const failed = await runService.processRun(started.run!.id);
+
+    expect(failed).toMatchObject({
+      status: "failed",
+      errorCode: "provider_timeout"
+    });
+    expect(
+      await store.read((state) =>
+        state.providerAttempts.filter(
+          (attempt) => attempt.runId === started.run!.id
+        )
+      )
+    ).toMatchObject([
+      {
+        status: "failed",
+        errorKind: "timeout",
+        errorCode: "provider_timeout"
+      }
+    ]);
+  });
+
+  it("does not retry after a Tool side effect has started", async () => {
+    const store = new MemoryStoreFixture();
+    const gateway: ModelGateway = {
+      async *run() {
+        yield {
+          type: "tool_started",
+          toolCallId: "unsafe-tool",
+          toolName: "current_time",
+          args: {}
+        };
+        yield {
+          type: "error",
+          message: "retryable after side effect",
+          kind: "retryable"
+        };
+      }
+    };
+    const runService = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway,
+      {
+        sleep: async () => undefined,
+        retryRandom: () => 0
+      }
+    );
+    const started = await runService.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice tool then fail" }
+    );
+
+    const failed = await runService.processRun(started.run!.id);
+
+    expect(failed.status).toBe("failed");
+    expect(
+      await store.read((state) =>
+        state.providerAttempts.filter(
+          (attempt) => attempt.runId === started.run!.id
+        )
+      )
+    ).toHaveLength(1);
+    expect(
+      (await runService.listRunEvents(started.run!.id)).map(
+        (event) => event.type
+      )
+    ).not.toContain("provider_retry_scheduled");
   });
 
   it("executes @all members sequentially and gives later members earlier responses", async () => {
@@ -2386,6 +2804,19 @@ describe("ConversationRun", () => {
       status: "running",
       createdAt: state.workspace.createdAt
     });
+    state.providerAttempts.push({
+      id: "attempt-interrupted",
+      workspaceId: state.workspace.id,
+      runId: "50000000-0000-4000-8000-000000000001",
+      purpose: "conversation",
+      provider: "openai",
+      modelId: "test-model",
+      targetOrder: 0,
+      attempt: 1,
+      status: "started",
+      usage: { source: "unknown" },
+      startedAt: state.workspace.createdAt
+    });
     const store = new MemoryStore(state);
     const gateway = new RecordingModelGateway();
     const runService = new ConversationRunService(
@@ -2412,6 +2843,37 @@ describe("ConversationRun", () => {
     );
     expect(events.map((event) => event.type)).toContain(
       "employee_turn_interrupted"
+    );
+    expect(
+      await store.read((current) =>
+        current.providerAttempts.find(
+          (attempt) => attempt.id === "attempt-interrupted"
+        )
+      )
+    ).toMatchObject({
+      status: "interrupted",
+      errorKind: "cancelled",
+      errorCode: "worker_interrupted"
+    });
+    expect(
+      events.find(
+        (event) =>
+          event.type === "provider_attempt_completed" &&
+          event.payload.attemptId === "attempt-interrupted"
+      )?.payload
+    ).toMatchObject({
+      status: "interrupted",
+      errorKind: "cancelled",
+      errorCode: "worker_interrupted"
+    });
+    expect(
+      events.findIndex(
+        (event) =>
+          event.type === "provider_attempt_completed" &&
+          event.payload.attemptId === "attempt-interrupted"
+      )
+    ).toBeLessThan(
+      events.findIndex((event) => event.type === "run_error")
     );
     expect(
       events.find((event) => event.type === "approval_resolved")?.payload
@@ -2492,7 +2954,8 @@ describe("ConversationRun", () => {
       )
     ).toMatchObject({
       status: "cancelled",
-      errorKind: "cancelled"
+      errorKind: "cancelled",
+      errorCode: "provider_cancelled"
     });
   });
 

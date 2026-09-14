@@ -69,6 +69,19 @@ export type ProviderAttemptStatus =
   | "interrupted"
   | "ambiguous";
 
+export const PROVIDER_FAILURE_KINDS = [
+  "terminal",
+  "retryable",
+  "rate_limited",
+  "timeout",
+  "cancelled",
+  "malformed_output",
+  "unknown"
+] as const;
+
+export type ProviderFailureKind =
+  (typeof PROVIDER_FAILURE_KINDS)[number];
+
 export type ProviderAttempt = {
   id: string;
   workspaceId: string;
@@ -86,7 +99,10 @@ export type ProviderAttempt = {
   providerRequestId?: string;
   responseModel?: string;
   fallbackFromAttemptId?: string;
-  errorKind?: string;
+  errorKind?: ProviderFailureKind;
+  errorCode?: string;
+  httpStatus?: number;
+  retryAfterMs?: number;
   usage: ModelUsage;
   pricingId?: string;
   estimatedCostMicros?: number | null;
@@ -314,6 +330,7 @@ export type RunEvent = {
     | "artifact_created"
     | "provider_attempt_started"
     | "provider_attempt_completed"
+    | "provider_retry_scheduled"
     | "usage_recorded"
     | "evidence_validated"
     | "evidence_validation_failed"
@@ -493,6 +510,7 @@ export const DISCUSSION_EVENT_TYPES = [
   "context_budget_rejected",
   "provider_attempt_started",
   "provider_attempt_completed",
+  "provider_retry_scheduled",
   "usage_recorded",
   "evidence_validated",
   "evidence_validation_failed",

@@ -2,13 +2,13 @@ import type {
   DiscussionRoundPhase,
   ModelUsage,
   ProviderAttemptPurpose,
+  ProviderFailureKind,
   ProviderId
 } from "@/server/domain/types";
 import type {
   ToolExecutionErrorKind,
   ToolExecutionResult
 } from "@/server/application/tool-gateway";
-
 export type ModelTool = {
   name: string;
   label: string;
@@ -86,7 +86,10 @@ export type ModelEvent =
   | {
       type: "error";
       message: string;
-      kind?: "retryable" | "terminal" | "cancelled";
+      kind?: ProviderFailureKind;
+      code?: string;
+      retryAfterMs?: number;
+      status?: number;
     };
 
 export interface ModelGateway {

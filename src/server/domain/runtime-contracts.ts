@@ -1,9 +1,14 @@
 import { z } from "zod";
 import { PROVIDER_IDS } from "@/lib/provider-catalog";
+import { PROVIDER_FAILURE_KINDS } from "@/server/domain/types";
 
 const identifier = z.string().trim().min(1);
 const timestamp = z.string().trim().min(1);
 const tokenCount = z.number().int().nonnegative();
+const legacyProviderErrorKind = z.enum([
+  "evidence_invalid",
+  "model_error"
+]);
 
 export const modelTargetConfigSchema = z
   .object({
@@ -56,7 +61,12 @@ export const providerAttemptSchema = z
     providerRequestId: identifier.optional(),
     responseModel: identifier.optional(),
     fallbackFromAttemptId: identifier.optional(),
-    errorKind: identifier.optional(),
+    errorKind: z
+      .union([z.enum(PROVIDER_FAILURE_KINDS), legacyProviderErrorKind])
+      .optional(),
+    errorCode: identifier.optional(),
+    httpStatus: z.number().int().positive().optional(),
+    retryAfterMs: tokenCount.optional(),
     usage: modelUsageSchema,
     pricingId: identifier.optional(),
     estimatedCostMicros: z.number().int().nullable().optional(),
