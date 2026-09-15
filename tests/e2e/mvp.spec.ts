@@ -54,12 +54,19 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   await modelSelect.selectOption({ index: 0 });
   const selectedModel = await modelSelect.inputValue();
   await expect(modelSelect.locator("option").first()).toContainText("context");
+  await page.getByRole("button", { name: "Add fallback" }).click();
+  const fallbackModelSelect = page.getByLabel("Model").nth(1);
+  await expect(fallbackModelSelect.locator("option")).not.toHaveCount(1);
+  await fallbackModelSelect.selectOption({ index: 2 });
   await page.getByRole("button", { name: "Create Employee" }).click();
   await expect(page.getByText("Employee created.")).toBeVisible();
   await expect(page.getByText(employeeName)).toBeVisible();
   await expect(
     page.locator(".list-card").filter({ hasText: employeeName })
   ).toContainText(selectedModel);
+  await expect(
+    page.locator(".list-card").filter({ hasText: employeeName })
+  ).toContainText("Fallback targets: 1");
 
   await page.getByLabel("Name").fill(secondEmployeeName);
   await page.getByLabel("Writer").check();

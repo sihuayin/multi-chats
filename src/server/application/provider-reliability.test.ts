@@ -3,6 +3,7 @@ import {
   classifyProviderFailure,
   retryDelayMs,
   retryAfterMsFromHeaders,
+  shouldFailoverProviderCall,
   shouldRetryProviderCall
 } from "@/server/application/provider-reliability";
 
@@ -28,8 +29,19 @@ describe("Provider reliability policy", () => {
     expect(
       classifyProviderFailure({
         message: "socket closed"
-      }).kind
-    ).toBe("retryable");
+      })
+    ).toMatchObject({
+      kind: "retryable",
+      ambiguous: true
+    });
+    expect(
+      classifyProviderFailure({
+        message: "connection refused"
+      })
+    ).toMatchObject({
+      kind: "retryable",
+      ambiguous: undefined
+    });
     expect(
       classifyProviderFailure({
         message: "temporarily unavailable",
@@ -134,6 +146,18 @@ describe("Provider reliability policy", () => {
     ).toBe(false);
     expect(
       shouldRetryProviderCall({
+        kind: "unknown",
+        attempt: 1,
+        maxAttempts: 3,
+        deadlineAt: 10_000,
+        now: 0,
+        producedOutput: false,
+        sideEffectStarted: false,
+        ambiguous: true
+      })
+    ).toMatchObject({ retry: false, reason: "ambiguous" });
+    expect(
+      shouldRetryProviderCall({
         kind: "retryable",
         attempt: 1,
         maxAttempts: 3,
@@ -208,5 +232,89 @@ describe("Provider reliability policy", () => {
       retry: false,
       reason: "deadline_exceeded"
     });
+  });
+
+  it("fails over only while another target is safe to try", () => {
+    expect(
+      shouldFailoverProviderCall({
+        kind: "retryable",
+        hasNextTarget: true,
+        producedOutput: false,
+        sideEffectStarted: false,
+        cancelled: false,
+        deadlineExceeded: false
+      })
+    ).toMatchObject({ failover: true, reason: "failover" });
+    expect(
+      shouldFailoverProviderCall({
+        kind: "terminal",
+        hasNextTarget: true,
+        producedOutput: false,
+        sideEffectStarted: false,
+        cancelled: false,
+        deadlineExceeded: false
+      }).failover
+    ).toBe(true);
+    expect(
+      shouldFailoverProviderCall({
+        kind: "retryable",
+        hasNextTarget: true,
+        producedOutput: true,
+        sideEffectStarted: false,
+        cancelled: false,
+        deadlineExceeded: false
+      })
+    ).toMatchObject({ failover: false, reason: "visible_output" });
+    expect(
+      shouldFailoverProviderCall({
+        kind: "retryable",
+        hasNextTarget: true,
+        producedOutput: false,
+        sideEffectStarted: true,
+        cancelled: false,
+        deadlineExceeded: false
+      })
+    ).toMatchObject({ failover: false, reason: "side_effect" });
+    expect(
+      shouldFailoverProviderCall({
+        kind: "cancelled",
+        hasNextTarget: true,
+        producedOutput: false,
+        sideEffectStarted: false,
+        cancelled: true,
+        deadlineExceeded: false
+      }).failover
+    ).toBe(false);
+    expect(
+      shouldFailoverProviderCall({
+        kind: "timeout",
+        hasNextTarget: true,
+        producedOutput: false,
+        sideEffectStarted: false,
+        cancelled: false,
+        deadlineExceeded: true
+      }).failover
+    ).toBe(false);
+    expect(
+      shouldFailoverProviderCall({
+        kind: "unknown",
+        hasNextTarget: true,
+        producedOutput: false,
+        sideEffectStarted: false,
+        cancelled: false,
+        ambiguous: true,
+        deadlineExceeded: false
+      })
+    ).toMatchObject({ failover: false, reason: "ambiguous" });
+    expect(
+      shouldFailoverProviderCall({
+        kind: "retryable",
+        hasNextTarget: false,
+        producedOutput: false,
+        sideEffectStarted: false,
+        cancelled: false,
+        deadlineExceeded: false
+      })
+    ).toMatchObject({ failover: false, reason: "targets_exhausted" });
   });
 });

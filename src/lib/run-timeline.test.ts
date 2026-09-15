@@ -68,6 +68,15 @@ describe("Run timeline", () => {
     expect(
       eventSummary(event(1, "skill_loaded", { skillName: "Researcher" }))
     ).toBe("Researcher");
+    expect(
+      eventSummary(
+        event(2, "provider_fallback_started", {
+          provider: "anthropic",
+          modelId: "fallback-model",
+          reason: "provider_retryable"
+        })
+      )
+    ).toBe("anthropic/fallback-model · provider_retryable");
 
     expect(
       eventAssociations(

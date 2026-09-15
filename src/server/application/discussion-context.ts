@@ -33,6 +33,8 @@ export const DISCUSSION_CONTEXT_BUDGET_ERROR_CODE =
 export type ModelContext = {
   contextWindow: number;
   maxOutputTokens?: number;
+  available?: boolean;
+  supportsStructuredOutput?: boolean;
 };
 
 export type DiscussionContextPlan = {

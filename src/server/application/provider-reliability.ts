@@ -4,6 +4,7 @@ export type ProviderFailure = {
   kind: ProviderFailureKind;
   message: string;
   code?: string;
+  ambiguous?: boolean;
   retryAfterMs?: number;
   status?: number;
 };
@@ -27,6 +28,7 @@ export class ProviderReliabilityError extends Error {
   readonly kind: ProviderFailureKind;
   readonly retryAfterMs?: number;
   readonly status?: number;
+  readonly ambiguous?: boolean;
 
   constructor(failure: ProviderFailure) {
     super(failure.message);
@@ -35,6 +37,7 @@ export class ProviderReliabilityError extends Error {
     this.code = failure.code ?? `provider_${failure.kind}`;
     this.retryAfterMs = normalizeRetryAfterMs(failure.retryAfterMs);
     this.status = normalizeStatus(failure.status);
+    this.ambiguous = failure.ambiguous ?? failure.kind === "unknown";
   }
 }
 
@@ -99,10 +102,17 @@ function classifyProviderFailureKind(
   return "unknown";
 }
 
+function isAmbiguousTransportFailure(message: string): boolean {
+  return /(socket|connection (?:lost|reset)|stream ended|ended without|other side closed|terminated|websocket)/.test(
+    message.toLowerCase()
+  );
+}
+
 export function classifyProviderFailure(input: {
   message: string;
   kind?: ProviderFailureKind;
   code?: string;
+  ambiguous?: boolean;
   retryAfterMs?: number;
   status?: number;
 }): ProviderFailure {
@@ -111,18 +121,31 @@ export function classifyProviderFailure(input: {
       kind: input.kind,
       message: input.message,
       code: input.code,
+      ambiguous:
+        input.ambiguous ??
+        (input.kind === "unknown" ||
+        isAmbiguousTransportFailure(input.message)
+          ? true
+          : undefined),
       retryAfterMs: normalizeRetryAfterMs(input.retryAfterMs),
       status: normalizeStatus(input.status)
     };
   }
+  const kind = classifyProviderFailureKind(
+    input.message,
+    input.status,
+    input.code
+  );
   return {
-    kind: classifyProviderFailureKind(
-      input.message,
-      input.status,
-      input.code
-    ),
+    kind,
     message: input.message,
     code: input.code,
+    ambiguous:
+      input.ambiguous ??
+      (kind === "unknown" ||
+      isAmbiguousTransportFailure(input.message)
+        ? true
+        : undefined),
     retryAfterMs: normalizeRetryAfterMs(input.retryAfterMs),
     status: normalizeStatus(input.status)
   };
@@ -183,6 +206,7 @@ export function shouldRetryProviderCall(input: {
   now: number;
   producedOutput: boolean;
   sideEffectStarted: boolean;
+  ambiguous?: boolean;
   retryAfterMs?: number;
   random?: () => number;
 }): {
@@ -193,6 +217,7 @@ export function shouldRetryProviderCall(input: {
     | "terminal"
     | "visible_output"
     | "side_effect"
+    | "ambiguous"
     | "attempts_exhausted"
     | "deadline_exceeded";
 } {
@@ -201,6 +226,9 @@ export function shouldRetryProviderCall(input: {
   }
   if (input.sideEffectStarted) {
     return { retry: false, delayMs: 0, reason: "side_effect" };
+  }
+  if (input.ambiguous || input.kind === "unknown") {
+    return { retry: false, delayMs: 0, reason: "ambiguous" };
   }
   if (
     ![
@@ -229,4 +257,44 @@ export function shouldRetryProviderCall(input: {
     };
   }
   return { retry: true, delayMs, reason: "retry" };
+}
+
+export function shouldFailoverProviderCall(input: {
+  kind: ProviderFailureKind;
+  hasNextTarget: boolean;
+  producedOutput: boolean;
+  sideEffectStarted: boolean;
+  cancelled: boolean;
+  ambiguous?: boolean;
+  deadlineExceeded: boolean;
+}): {
+  failover: boolean;
+  reason?:
+    | "failover"
+    | "terminal"
+    | "visible_output"
+    | "side_effect"
+    | "ambiguous"
+    | "targets_exhausted"
+    | "deadline_exceeded";
+} {
+  if (input.cancelled || input.kind === "cancelled") {
+    return { failover: false, reason: "terminal" };
+  }
+  if (input.producedOutput) {
+    return { failover: false, reason: "visible_output" };
+  }
+  if (input.sideEffectStarted) {
+    return { failover: false, reason: "side_effect" };
+  }
+  if (input.ambiguous || input.kind === "unknown") {
+    return { failover: false, reason: "ambiguous" };
+  }
+  if (input.deadlineExceeded) {
+    return { failover: false, reason: "deadline_exceeded" };
+  }
+  if (!input.hasNextTarget) {
+    return { failover: false, reason: "targets_exhausted" };
+  }
+  return { failover: true, reason: "failover" };
 }

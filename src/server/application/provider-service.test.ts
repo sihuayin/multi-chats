@@ -25,7 +25,8 @@ class FakeProviderRegistry implements ProviderRegistry {
         name: "GPT Test",
         contextWindow: 128_000,
         maxTokens: 8_000,
-        reasoning: true
+        reasoning: true,
+        supportsStructuredOutput: true
       }
     ];
   }
@@ -123,7 +124,8 @@ describe("provider configuration", () => {
         name: "GPT Test",
         contextWindow: 128_000,
         maxTokens: 8_000,
-        reasoning: true
+        reasoning: true,
+        supportsStructuredOutput: true
       }
     ]);
     expect(registry.validations).toEqual(["secret-key"]);

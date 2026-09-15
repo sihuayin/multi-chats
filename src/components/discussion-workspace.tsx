@@ -190,6 +190,14 @@ type DiscussionView = {
     cancelledAttemptCount: number;
     unknownUsageAttemptCount: number;
   };
+  fallbacks: Array<{
+    fromTargetOrder?: number;
+    toTargetOrder?: number;
+    provider?: string;
+    modelId?: string;
+    reason?: string;
+    createdAt: string;
+  }>;
   evidence: {
     factCount: number;
     factsWithEvidence: number;
@@ -838,6 +846,27 @@ export function DiscussionWorkspace() {
                         })}
                       </span>
                     ) : null}
+                  </div>
+                ) : null}
+                {view.fallbacks.length > 0 ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[var(--muted-foreground)]">
+                    {view.fallbacks.map((fallback) => (
+                      <Badge
+                        key={`${fallback.createdAt}-${fallback.toTargetOrder ?? "next"}`}
+                        variant="outline"
+                        title={fallback.reason}
+                      >
+                        {t("chat.providerFallback")}:{" "}
+                        {fallback.fromTargetOrder !== undefined
+                          ? `${fallback.fromTargetOrder} -> `
+                          : ""}
+                        {fallback.toTargetOrder !== undefined
+                          ? `${fallback.toTargetOrder} `
+                          : ""}
+                        {fallback.provider ?? t("common.unknownProvider")}
+                        {fallback.modelId ? `/${fallback.modelId}` : ""}
+                      </Badge>
+                    ))}
                   </div>
                 ) : null}
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[var(--muted-foreground)]">

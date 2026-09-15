@@ -1197,6 +1197,33 @@ label textarea {
   gap: 14px;
 }
 
+.fallback-targets {
+  display: grid;
+  gap: 10px;
+}
+
+.fallback-targets .panel-title {
+  justify-content: space-between;
+  align-items: center;
+}
+
+.fallback-target-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 10px;
+  align-items: end;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.field-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .choice-fieldset {
   display: grid;
   gap: 6px;
@@ -1487,7 +1514,8 @@ label textarea {
 
   .two-column,
   .two-column.wide-form,
-  .field-grid {
+  .field-grid,
+  .fallback-target-row {
     grid-template-columns: 1fr;
   }
 

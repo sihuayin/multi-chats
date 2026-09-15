@@ -42,8 +42,10 @@ type RunEventMetadata = {
   artifactId?: string;
   error?: string;
   messageId?: string;
+  reason?: string;
   skillName?: string;
   status?: string;
+  target?: string;
   taskId?: string;
   toolName?: string;
   triggerMessageId?: string;
@@ -55,12 +57,17 @@ function payloadString(event: RunEvent, key: string): string | undefined {
 }
 
 function eventMetadata(event: RunEvent): RunEventMetadata {
+  const provider = payloadString(event, "provider");
+  const modelId = payloadString(event, "modelId");
   return {
     artifactId: payloadString(event, "artifactId"),
     error: payloadString(event, "message"),
     messageId: payloadString(event, "messageId"),
+    reason: payloadString(event, "reason"),
     skillName: payloadString(event, "skillName"),
     status: payloadString(event, "status"),
+    target:
+      provider && modelId ? `${provider}/${modelId}` : undefined,
     taskId: payloadString(event, "taskId"),
     toolName: payloadString(event, "toolName"),
     triggerMessageId: payloadString(event, "triggerMessageId")
@@ -97,6 +104,8 @@ export function eventSummary(event: RunEvent): string | undefined {
   const values = [
     metadata.skillName,
     metadata.toolName,
+    metadata.target,
+    metadata.reason,
     metadata.status,
     metadata.artifactId,
     metadata.error

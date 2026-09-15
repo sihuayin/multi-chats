@@ -12,7 +12,8 @@ const registry: ProviderRegistry = {
       {
         id: "test-model",
         name: "Test Model",
-        reasoning: true
+        reasoning: true,
+        supportsStructuredOutput: true
       }
     ];
   }

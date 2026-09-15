@@ -280,6 +280,18 @@ export function validateRuntimeContracts(
     if (!Array.isArray(employee.fallbackTargets)) {
       throw new Error("Workspace Employee fallback targets are invalid");
     }
+    if (employee.fallbackTargets.length > 4) {
+      throw new Error("Workspace Employee fallback targets are invalid");
+    }
+    const targetKeys = new Set<string>();
+    const primaryProviderId = employee.providerCredentialId;
+    const primaryModelId = employee.modelId;
+    if (
+      typeof primaryProviderId === "string" &&
+      typeof primaryModelId === "string"
+    ) {
+      targetKeys.add(`${primaryProviderId}\0${primaryModelId}`);
+    }
     for (const target of employee.fallbackTargets) {
       const parsed = modelTargetConfigSchema.safeParse(target);
       if (
@@ -288,6 +300,11 @@ export function validateRuntimeContracts(
       ) {
         throw new Error("Workspace Employee fallback targets are invalid");
       }
+      const key = `${parsed.data.providerCredentialId}\0${parsed.data.modelId}`;
+      if (targetKeys.has(key)) {
+        throw new Error("Workspace Employee fallback targets are invalid");
+      }
+      targetKeys.add(key);
     }
   }
 
@@ -301,6 +318,12 @@ export function validateRuntimeContracts(
   const artifactIds = ids(state.artifacts);
   const runIds = ids(state.runs);
   const attemptIds = ids(parsedValues.get("providerAttempts"));
+  const attemptsById = new Map(
+    (parsedValues.get("providerAttempts") ?? []).map((attempt) => [
+      (attempt as { id: string }).id,
+      attempt as { runId?: string; targetOrder?: number }
+    ])
+  );
   const evidenceIds = ids(parsedValues.get("evidenceReferences"));
   const compressionIds = ids(parsedValues.get("discussionCompressions"));
   const pricingIds = ids(parsedValues.get("modelPricing"));
@@ -333,6 +356,18 @@ export function validateRuntimeContracts(
       attemptIds,
       "providerAttempts"
     );
+    const fallbackFromAttempt = record.fallbackFromAttemptId
+      ? attemptsById.get(String(record.fallbackFromAttemptId))
+      : undefined;
+    if (
+      fallbackFromAttempt &&
+      (fallbackFromAttempt.runId !== record.runId ||
+        fallbackFromAttempt.targetOrder === undefined ||
+        typeof record.targetOrder !== "number" ||
+        fallbackFromAttempt.targetOrder >= record.targetOrder)
+    ) {
+      throw new Error("Workspace providerAttempts are invalid");
+    }
   }
 
   for (const evidence of parsedValues.get("evidenceReferences") ?? []) {

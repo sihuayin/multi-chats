@@ -88,6 +88,7 @@ export type ModelEvent =
       message: string;
       kind?: ProviderFailureKind;
       code?: string;
+      ambiguous?: boolean;
       retryAfterMs?: number;
       status?: number;
     };

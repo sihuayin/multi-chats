@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   ConversationRunService,
-  parseMentions
+  parseMentions,
+  providerTargetCompatibility
 } from "@/server/application/conversation-run-service";
 import { DiscussionOrchestrator } from "@/server/application/discussion-orchestrator";
+import { buildDiscussionView } from "@/server/application/discussion-view";
 import { evidenceReferenceId } from "@/server/application/discussion-evidence";
 import { AesCredentialCipher } from "@/server/security/credential-cipher";
 import {
@@ -1714,6 +1716,580 @@ describe("ConversationRun", () => {
     });
   });
 
+  it("fails over to an ordered fallback target after retries", async () => {
+    const state = createFixtureState();
+    const fallbackProvider = addFallbackProvider(state);
+    state.employees[0].fallbackTargets = [
+      {
+        providerCredentialId: fallbackProvider.id,
+        modelId: "fallback-model"
+      }
+    ];
+    const store = new MemoryStore(state);
+    const requests: Array<{ provider: string; modelId: string }> = [];
+    const gateway: ModelGateway = {
+      async *run(request) {
+        requests.push({
+          provider: request.provider,
+          modelId: request.modelId
+        });
+        if (request.provider === "openai") {
+          yield {
+            type: "error",
+            message: "temporary model failure",
+            kind: "retryable"
+          };
+          return;
+        }
+        yield { type: "text_completed", text: "fallback response" };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway,
+      {
+        maxProviderAttempts: 2,
+        modelContext: fallbackModelContext,
+        sleep: async () => undefined,
+        retryRandom: () => 0
+      }
+    );
+    const started = await runs.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice survive the outage" }
+    );
+
+    const completed = await runs.processRun(started.run!.id);
+
+    expect(completed.status).toBe("completed");
+    expect(requests).toEqual([
+      { provider: "openai", modelId: "test-model" },
+      { provider: "openai", modelId: "test-model" },
+      { provider: "anthropic", modelId: "fallback-model" }
+    ]);
+    const persisted = await store.read((current) => ({
+      attempts: current.providerAttempts.filter(
+        (attempt) => attempt.runId === started.run!.id
+      ),
+      events: current.runEvents.filter(
+        (event) => event.runId === started.run!.id
+      ),
+      messages: current.messages.filter(
+        (message) => message.runId === started.run!.id
+      )
+    }));
+    expect(persisted.attempts).toMatchObject([
+      { targetOrder: 0, attempt: 1, status: "failed" },
+      { targetOrder: 0, attempt: 2, status: "failed" },
+      {
+        targetOrder: 1,
+        attempt: 3,
+        status: "succeeded",
+        provider: "anthropic",
+        modelId: "fallback-model",
+        fallbackFromAttemptId: persisted.attempts[1].id
+      }
+    ]);
+    expect(persisted.messages.at(-1)).toMatchObject({
+      content: "fallback response",
+      status: "complete"
+    });
+    expect(
+      persisted.events.find(
+        (event) => event.type === "provider_fallback_started"
+      )?.payload
+    ).toMatchObject({
+      fromAttemptId: persisted.attempts[1].id,
+      fromTargetOrder: 0,
+      toTargetOrder: 1,
+      provider: "anthropic",
+      modelId: "fallback-model",
+      reason: "provider_retryable"
+    });
+    expect(JSON.stringify(persisted)).not.toContain("test-api-key");
+    expect(JSON.stringify(persisted)).not.toContain("fallback-api-key");
+  });
+
+  it("does not fail over after visible output has started", async () => {
+    const state = createFixtureState();
+    const fallbackProvider = addFallbackProvider(state);
+    state.employees[0].fallbackTargets = [
+      {
+        providerCredentialId: fallbackProvider.id,
+        modelId: "fallback-model"
+      }
+    ];
+    const store = new MemoryStore(state);
+    let calls = 0;
+    const gateway: ModelGateway = {
+      async *run() {
+        calls += 1;
+        yield { type: "text_delta", delta: "partial" };
+        yield {
+          type: "error",
+          message: "retryable after visible output",
+          kind: "retryable"
+        };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway,
+      {
+        modelContext: fallbackModelContext,
+        sleep: async () => undefined,
+        retryRandom: () => 0
+      }
+    );
+    const started = await runs.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice do not duplicate this" }
+    );
+
+    const failed = await runs.processRun(started.run!.id);
+
+    expect(failed.status).toBe("failed");
+    expect(calls).toBe(1);
+    expect(
+      (await runs.listRunEvents(started.run!.id)).map((event) => event.type)
+    ).not.toContain("provider_fallback_started");
+  });
+
+  it("records fallback use in Discussion history", async () => {
+    const state = createFixtureState();
+    const fallbackProvider = addFallbackProvider(state);
+    const fallback = {
+      providerCredentialId: fallbackProvider.id,
+      modelId: "fallback-model"
+    };
+    for (const employee of state.employees) {
+      employee.fallbackTargets = [fallback];
+    }
+    const { discussion, round } = addFixturePhase(state);
+    const store = new MemoryStore(state);
+    const gateway: ModelGateway = {
+      async *run(request) {
+        if (request.provider === "openai") {
+          yield {
+            type: "error",
+            message: "primary provider unavailable",
+            kind: "retryable"
+          };
+          return;
+        }
+        yield {
+          type: "text_completed",
+          text: JSON.stringify(
+            createFixtureTurnPayload("cross_response")
+          )
+        };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway,
+      {
+        maxProviderAttempts: 1,
+        modelContext: fallbackModelContext
+      }
+    );
+    const started = await runs.startPhaseRun(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        discussionId: discussion.id,
+        roundId: round.id,
+        participantSnapshot: round.participantSnapshot,
+        context: "Fail over safely.",
+        purpose: "Exercise fallback visibility."
+      }
+    );
+
+    const completed = await runs.processRun(started.run.id);
+
+    expect(completed.status).toBe("completed");
+    expect(
+      await store.read(
+        (current) =>
+          current.discussions
+            .find((item) => item.id === discussion.id)
+            ?.events?.map((event) => event.type) ?? []
+      )
+    ).toContain("provider_fallback_started");
+    expect(
+      await store.read((current) =>
+        current.providerAttempts
+          .filter((attempt) => attempt.runId === started.run.id)
+          .map((attempt) => attempt.targetOrder)
+      )
+    ).toEqual([0, 1, 0, 1]);
+  });
+
+  it("plans Discussion context for a larger fallback when the primary cannot fit", async () => {
+    const state = createFixtureState();
+    const fallbackProvider = addFallbackProvider(state);
+    const fallback = {
+      providerCredentialId: fallbackProvider.id,
+      modelId: "fallback-model"
+    };
+    for (const employee of state.employees) {
+      employee.fallbackTargets = [fallback];
+    }
+    const { discussion, round } = addFixturePhase(state);
+    const store = new MemoryStore(state);
+    const requests: string[] = [];
+    const gateway: ModelGateway = {
+      async *run(request) {
+        requests.push(request.modelId);
+        yield {
+          type: "text_completed",
+          text: JSON.stringify(
+            createFixtureTurnPayload("cross_response")
+          )
+        };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway,
+      {
+        modelContext: ({ provider }) =>
+          provider === "openai"
+            ? {
+                contextWindow: 1_000,
+                maxOutputTokens: 256,
+                available: true,
+                supportsStructuredOutput: true
+              }
+            : fallbackModelContext()
+      }
+    );
+    const started = await runs.startPhaseRun(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        discussionId: discussion.id,
+        roundId: round.id,
+        participantSnapshot: round.participantSnapshot,
+        context: "Use the larger fallback model.",
+        purpose: "Exercise context-aware target selection."
+      }
+    );
+
+    const completed = await runs.processRun(started.run.id);
+
+    expect(completed.status).toBe("completed");
+    expect(requests).toEqual(["fallback-model", "fallback-model"]);
+    expect(
+      await store.read((current) =>
+        current.providerAttempts
+          .filter((attempt) => attempt.runId === started.run.id)
+          .map((attempt) => attempt.targetOrder)
+      )
+    ).toEqual([1, 1]);
+    expect(
+      await store.read(
+        (current) =>
+          current.discussions
+            .find((item) => item.id === discussion.id)
+            ?.events?.some(
+              (event) => event.type === "provider_target_skipped"
+            ) ?? false
+      )
+    ).toBe(true);
+    const view = await store.read((current) =>
+      buildDiscussionView(current, discussion.id)
+    );
+    expect(view.fallbacks).toContainEqual(
+      expect.objectContaining({
+        provider: "anthropic",
+        modelId: "fallback-model",
+        toTargetOrder: 1
+      })
+    );
+  });
+
+  it("fails with target exhaustion when no Discussion target is compatible", async () => {
+    const state = createFixtureState();
+    const fallbackProvider = addFallbackProvider(state);
+    for (const employee of state.employees) {
+      employee.fallbackTargets = [
+        {
+          providerCredentialId: fallbackProvider.id,
+          modelId: "fallback-model"
+        }
+      ];
+    }
+    const { discussion, round } = addFixturePhase(state);
+    const store = new MemoryStore(state);
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      new RecordingModelGateway(),
+      {
+        modelContext: () => ({
+          contextWindow: 32_000,
+          maxOutputTokens: 4_000,
+          available: false,
+          supportsStructuredOutput: false
+        })
+      }
+    );
+    const started = await runs.startPhaseRun(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        discussionId: discussion.id,
+        roundId: round.id,
+        participantSnapshot: round.participantSnapshot,
+        context: "No compatible target exists.",
+        purpose: "Exercise target exhaustion."
+      }
+    );
+
+    const failed = await runs.processRun(started.run.id);
+
+    expect(failed).toMatchObject({
+      status: "failed",
+      errorCode: "provider_targets_exhausted"
+    });
+  });
+
+  it("reports target exhaustion after all safe targets fail", async () => {
+    const state = createFixtureState();
+    const fallbackProvider = addFallbackProvider(state);
+    state.employees[0].fallbackTargets = [
+      {
+        providerCredentialId: fallbackProvider.id,
+        modelId: "fallback-model"
+      }
+    ];
+    const store = new MemoryStore(state);
+    let calls = 0;
+    const gateway: ModelGateway = {
+      async *run() {
+        calls += 1;
+        yield {
+          type: "error",
+          message: "target terminal failure",
+          kind: "terminal"
+        };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway,
+      {
+        maxProviderAttempts: 1,
+        modelContext: fallbackModelContext
+      }
+    );
+    const started = await runs.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice exhaust every target" }
+    );
+
+    const failed = await runs.processRun(started.run!.id);
+
+    expect(failed).toMatchObject({
+      status: "failed",
+      errorCode: "provider_targets_exhausted"
+    });
+    expect(calls).toBe(2);
+    expect(
+      await store.read((current) =>
+        current.providerAttempts
+          .filter((attempt) => attempt.runId === started.run!.id)
+          .map((attempt) => attempt.targetOrder)
+      )
+    ).toEqual([0, 1]);
+  });
+
+  it("does not replay an ambiguous Provider failure", async () => {
+    const state = createFixtureState();
+    const fallbackProvider = addFallbackProvider(state);
+    state.employees[0].fallbackTargets = [
+      {
+        providerCredentialId: fallbackProvider.id,
+        modelId: "fallback-model"
+      }
+    ];
+    const store = new MemoryStore(state);
+    let calls = 0;
+    const gateway: ModelGateway = {
+      async *run() {
+        calls += 1;
+        yield {
+          type: "error",
+          message: "opaque transport failure",
+          kind: "unknown"
+        };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway,
+      {
+        modelContext: fallbackModelContext,
+        sleep: async () => undefined,
+        retryRandom: () => 0
+      }
+    );
+    const started = await runs.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice do not replay an ambiguous call" }
+    );
+
+    const failed = await runs.processRun(started.run!.id);
+
+    expect(failed).toMatchObject({
+      status: "failed",
+      errorCode: "provider_ambiguous"
+    });
+    expect(calls).toBe(1);
+    expect(
+      await store.read((current) =>
+        current.providerAttempts.find(
+          (attempt) => attempt.runId === started.run!.id
+        )
+      )
+    ).toMatchObject({
+      status: "ambiguous",
+      errorKind: "unknown",
+      errorCode: "provider_ambiguous"
+    });
+  });
+
+  it("skips an unavailable fallback before making a Provider call", async () => {
+    const state = createFixtureState();
+    const fallbackProvider = addFallbackProvider(state);
+    state.employees[0].fallbackTargets = [
+      {
+        providerCredentialId: fallbackProvider.id,
+        modelId: "missing-fallback-model"
+      }
+    ];
+    const store = new MemoryStore(state);
+    const requests: string[] = [];
+    const gateway: ModelGateway = {
+      async *run(request) {
+        requests.push(request.modelId);
+        yield {
+          type: "error",
+          message: "primary unavailable",
+          kind: "retryable"
+        };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway,
+      {
+        maxProviderAttempts: 1,
+        modelContext: ({ modelId }) =>
+          modelId === "missing-fallback-model"
+            ? {
+                contextWindow: 32_000,
+                maxOutputTokens: 4_000,
+                available: false
+              }
+            : {
+                contextWindow: 128_000,
+                maxOutputTokens: 8_000,
+                available: true,
+                supportsStructuredOutput: true
+              }
+      }
+    );
+    const started = await runs.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice skip missing target" }
+    );
+
+    const failed = await runs.processRun(started.run!.id);
+
+    expect(failed.errorCode).toBe("provider_targets_exhausted");
+    expect(requests).toEqual(["test-model"]);
+    expect(
+      await store.read((current) =>
+        current.runEvents.filter(
+          (event) =>
+            event.runId === started.run!.id &&
+            event.type === "provider_target_skipped"
+        )
+      )
+    ).toContainEqual(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          targetOrder: 1,
+          reason: "model_unavailable"
+        })
+      })
+    );
+  });
+
+  it("rejects fallback targets that cannot satisfy structured output or context", () => {
+    const plan = {
+      contextWindow: 32_768,
+      maxOutputTokens: 4_096,
+      toolOverheadTokens: 500,
+      inputTokens: 12_000
+    } as Parameters<typeof providerTargetCompatibility>[1];
+
+    expect(
+      providerTargetCompatibility(
+        {
+          contextWindow: 128_000,
+          maxOutputTokens: 8_000,
+          available: true,
+          supportsStructuredOutput: false
+        },
+        plan,
+        { requireCapabilities: true }
+      )
+    ).toMatchObject({
+      compatible: false,
+      reason: "structured_output_unsupported"
+    });
+    expect(
+      providerTargetCompatibility(
+        {
+          contextWindow: 16_000,
+          maxOutputTokens: 4_000,
+          available: true,
+          supportsStructuredOutput: true
+        },
+        plan
+      )
+    ).toMatchObject({
+      compatible: false,
+      reason: "context_incompatible"
+    });
+    expect(
+      providerTargetCompatibility(
+        {
+          contextWindow: 4_000,
+          maxOutputTokens: 1_000,
+          available: true,
+          supportsStructuredOutput: true
+        },
+        undefined,
+        {
+          requireCapabilities: true,
+          inputTokens: 3_500,
+          toolOverheadTokens: 200
+        }
+      )
+    ).toMatchObject({
+      compatible: false,
+      reason: "context_incompatible"
+    });
+  });
+
   it("cancels a Run while it is waiting to retry", async () => {
     const store = new MemoryStoreFixture();
     let calls = 0;
@@ -1768,7 +2344,7 @@ describe("ConversationRun", () => {
 
   it.each([
     { kind: "terminal" as const, expectedCode: "provider_terminal" },
-    { kind: "unknown" as const, expectedCode: "provider_unknown" }
+    { kind: "unknown" as const, expectedCode: "provider_ambiguous" }
   ])(
     "does not retry a $kind Provider failure",
     async ({ kind, expectedCode }) => {
@@ -1959,9 +2535,19 @@ describe("ConversationRun", () => {
   });
 
   it("does not retry after a Tool side effect has started", async () => {
-    const store = new MemoryStoreFixture();
+    const state = createFixtureState();
+    const fallbackProvider = addFallbackProvider(state);
+    state.employees[0].fallbackTargets = [
+      {
+        providerCredentialId: fallbackProvider.id,
+        modelId: "fallback-model"
+      }
+    ];
+    const store = new MemoryStore(state);
+    let calls = 0;
     const gateway: ModelGateway = {
       async *run() {
+        calls += 1;
         yield {
           type: "tool_started",
           toolCallId: "unsafe-tool",
@@ -1980,6 +2566,7 @@ describe("ConversationRun", () => {
       new AesCredentialCipher(TEST_KEY),
       gateway,
       {
+        modelContext: fallbackModelContext,
         sleep: async () => undefined,
         retryRandom: () => 0
       }
@@ -1992,6 +2579,7 @@ describe("ConversationRun", () => {
     const failed = await runService.processRun(started.run!.id);
 
     expect(failed.status).toBe("failed");
+    expect(calls).toBe(1);
     expect(
       await store.read((state) =>
         state.providerAttempts.filter(
@@ -2004,6 +2592,11 @@ describe("ConversationRun", () => {
         (event) => event.type
       )
     ).not.toContain("provider_retry_scheduled");
+    expect(
+      (await runService.listRunEvents(started.run!.id)).map(
+        (event) => event.type
+      )
+    ).not.toContain("provider_fallback_started");
   });
 
   it("executes @all members sequentially and gives later members earlier responses", async () => {
@@ -2851,9 +3444,9 @@ describe("ConversationRun", () => {
         )
       )
     ).toMatchObject({
-      status: "interrupted",
-      errorKind: "cancelled",
-      errorCode: "worker_interrupted"
+      status: "ambiguous",
+      errorKind: "unknown",
+      errorCode: "provider_ambiguous"
     });
     expect(
       events.find(
@@ -2862,9 +3455,9 @@ describe("ConversationRun", () => {
           event.payload.attemptId === "attempt-interrupted"
       )?.payload
     ).toMatchObject({
-      status: "interrupted",
-      errorKind: "cancelled",
-      errorCode: "worker_interrupted"
+      status: "ambiguous",
+      errorKind: "unknown",
+      errorCode: "provider_ambiguous"
     });
     expect(
       events.findIndex(
@@ -2893,9 +3486,19 @@ describe("ConversationRun", () => {
   });
 
   it("cancels an active Model Gateway and marks partial Messages as cancelled", async () => {
-    const store = new MemoryStoreFixture();
+    const state = createFixtureState();
+    const fallbackProvider = addFallbackProvider(state);
+    state.employees[0].fallbackTargets = [
+      {
+        providerCredentialId: fallbackProvider.id,
+        modelId: "fallback-model"
+      }
+    ];
+    const store = new MemoryStore(state);
+    let calls = 0;
     const engine: ModelGateway = {
       async *run(request) {
+        calls += 1;
         if (request.signal?.aborted) throw new Error("aborted");
         await new Promise<void>((resolve, reject) => {
           const timer = setTimeout(resolve, 500);
@@ -2914,7 +3517,8 @@ describe("ConversationRun", () => {
     const runService = new ConversationRunService(
       store,
       new AesCredentialCipher(TEST_KEY),
-      engine
+      engine,
+      { modelContext: fallbackModelContext }
     );
     const started = await runService.startTurn(
       "30000000-0000-4000-8000-000000000001",
@@ -2934,11 +3538,15 @@ describe("ConversationRun", () => {
     await processing;
 
     expect((await runService.getRunById(started.run!.id))?.status).toBe("cancelled");
+    expect(calls).toBe(1);
     const messages = await runService.listMessages(started.message.conversationId);
     expect(messages.at(-1)?.status).toBe("cancelled");
     const events = await runService.listRunEvents(started.run!.id);
     expect(events.map((event) => event.type)).toContain(
       "employee_turn_cancelled"
+    );
+    expect(events.map((event) => event.type)).not.toContain(
+      "provider_fallback_started"
     );
     expect(
       events.find((event) => event.type === "run_cancelled")?.payload
@@ -3032,12 +3640,146 @@ describe("ConversationRun", () => {
     expect(engine.requests).toHaveLength(1);
     expect((await runService.getRunById(started.run!.id))?.status).toBe("completed");
   });
+
+  it("does not resume after a Tool side effect has started", async () => {
+    const store = new MemoryStoreFixture();
+    const runService = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      new RecordingModelGateway()
+    );
+    const started = await runService.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice do not replay the Tool" }
+    );
+    await store.update((state) => {
+      const run = state.runs.find((item) => item.id === started.run!.id);
+      if (run) run.status = "interrupted";
+      state.runEvents.push({
+        id: "tool-started-before-restart",
+        workspaceId: state.workspace.id,
+        runId: started.run!.id,
+        sequence:
+          Math.max(
+            0,
+            ...state.runEvents
+              .filter((event) => event.runId === started.run!.id)
+              .map((event) => event.sequence)
+          ) + 1,
+        type: "tool_started",
+        payload: {
+          messageId: started.message.id,
+          toolCallId: "unsafe-tool",
+          toolName: "post_webhook"
+        },
+        createdAt: state.workspace.updatedAt
+      });
+    });
+
+    await expect(runService.resumeRun(started.run!.id)).rejects.toMatchObject({
+      code: "run_resume_tool_side_effect"
+    });
+  });
+
+  it("does not resume after an ambiguous Provider execution", async () => {
+    const store = new MemoryStoreFixture();
+    const runService = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      new RecordingModelGateway()
+    );
+    const started = await runService.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice do not replay an ambiguous call" }
+    );
+    await store.update((state) => {
+      const run = state.runs.find((item) => item.id === started.run!.id);
+      if (run) run.status = "interrupted";
+      state.providerAttempts.push({
+        id: "ambiguous-before-restart",
+        workspaceId: state.workspace.id,
+        runId: started.run!.id,
+        purpose: "conversation",
+        provider: "openai",
+        modelId: "test-model",
+        targetOrder: 0,
+        attempt: 1,
+        status: "ambiguous",
+        errorKind: "unknown",
+        errorCode: "provider_ambiguous",
+        usage: { source: "unknown" },
+        startedAt: state.workspace.updatedAt,
+        completedAt: state.workspace.updatedAt
+      });
+    });
+
+    await expect(runService.resumeRun(started.run!.id)).rejects.toMatchObject({
+      code: "run_resume_ambiguous_execution"
+    });
+  });
+
+  it("does not resume after visible output was persisted", async () => {
+    const store = new MemoryStoreFixture();
+    const runService = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      new RecordingModelGateway()
+    );
+    const started = await runService.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice do not replay visible output" }
+    );
+    await store.update((state) => {
+      const run = state.runs.find((item) => item.id === started.run!.id);
+      if (run) run.status = "interrupted";
+      state.messages.push({
+        id: "visible-before-restart",
+        workspaceId: state.workspace.id,
+        conversationId: started.message.conversationId,
+        authorType: "employee",
+        authorId: state.employees[0].id,
+        content: "already visible",
+        runId: started.run!.id,
+        status: "interrupted",
+        createdAt: state.workspace.updatedAt,
+        updatedAt: state.workspace.updatedAt
+      });
+    });
+
+    await expect(runService.resumeRun(started.run!.id)).rejects.toMatchObject({
+      code: "run_resume_visible_output"
+    });
+  });
 });
 
 class MemoryStoreFixture extends MemoryStore {
   constructor() {
     super(createFixtureState());
   }
+}
+
+function addFallbackProvider(state: AppState) {
+  const cipher = new AesCredentialCipher(TEST_KEY);
+  const provider = {
+    id: "10000000-0000-4000-8000-000000000002",
+    workspaceId: state.workspace.id,
+    provider: "anthropic" as const,
+    label: "Fallback provider",
+    encryptedCredential: cipher.encrypt("fallback-api-key"),
+    createdAt: state.workspace.createdAt,
+    updatedAt: state.workspace.updatedAt
+  };
+  state.providers.push(provider);
+  return provider;
+}
+
+function fallbackModelContext() {
+  return {
+    contextWindow: 128_000,
+    maxOutputTokens: 8_000,
+    available: true,
+    supportsStructuredOutput: true
+  };
 }
 
 function addApprovalSkill(state: AppState, skillId: string): void {

@@ -347,6 +347,7 @@ export class PiModelGateway implements ModelGateway {
             message,
             kind: failure.kind,
             code: failure.code,
+            ambiguous: failure.ambiguous,
             retryAfterMs: failure.retryAfterMs,
             status: failure.status
           });
@@ -431,6 +432,7 @@ export class PiModelGateway implements ModelGateway {
             message,
             kind: failure.kind,
             code: failure.code,
+            ambiguous: failure.ambiguous,
             retryAfterMs: failure.retryAfterMs,
             status: failure.status
           });
@@ -462,6 +464,7 @@ export class PiModelGateway implements ModelGateway {
           message: failure.message,
           kind: failure.kind,
           code: failure.code,
+          ambiguous: failure.ambiguous,
           retryAfterMs: failure.retryAfterMs,
           status: failure.status
         });

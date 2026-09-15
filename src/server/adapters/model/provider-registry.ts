@@ -81,7 +81,8 @@ export function listProviderModels(
       name: model.name,
       contextWindow: model.contextWindow,
       maxTokens: model.maxTokens,
-      reasoning: Boolean(model.reasoning)
+      reasoning: Boolean(model.reasoning),
+      supportsStructuredOutput: true
     }));
 }
 
@@ -94,7 +95,9 @@ export function resolveModelContext(
   );
   return {
     contextWindow: model?.contextWindow ?? DEFAULT_MODEL_CONTEXT_WINDOW,
-    maxOutputTokens: model?.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS
+    maxOutputTokens: model?.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+    available: Boolean(model),
+    supportsStructuredOutput: Boolean(model)
   };
 }
 

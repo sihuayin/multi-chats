@@ -331,6 +331,8 @@ export type RunEvent = {
     | "provider_attempt_started"
     | "provider_attempt_completed"
     | "provider_retry_scheduled"
+    | "provider_fallback_started"
+    | "provider_target_skipped"
     | "usage_recorded"
     | "evidence_validated"
     | "evidence_validation_failed"
@@ -514,7 +516,8 @@ export const DISCUSSION_EVENT_TYPES = [
   "usage_recorded",
   "evidence_validated",
   "evidence_validation_failed",
-  "provider_fallback_started"
+  "provider_fallback_started",
+  "provider_target_skipped"
 ] as const;
 
 export type DiscussionEventType = (typeof DISCUSSION_EVENT_TYPES)[number];

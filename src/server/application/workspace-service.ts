@@ -127,7 +127,15 @@ export class WorkspaceService {
     await this.store.update((state) => {
       const provider = state.providers.find((item) => item.id === id);
       if (!provider) notFound("Provider");
-      if (state.employees.some((employee) => employee.providerCredentialId === id)) {
+      if (
+        state.employees.some(
+          (employee) =>
+            employee.providerCredentialId === id ||
+            employee.fallbackTargets?.some(
+              (target) => target.providerCredentialId === id
+            )
+        )
+      ) {
         throw new ApiError(
           409,
           "Provider is assigned to an Employee and cannot be deleted",
@@ -154,10 +162,17 @@ export class WorkspaceService {
 
   async createEmployee(input: unknown): Promise<Employee> {
     const parsed = employeeInputSchema.parse(input);
+    this.assertUniqueEmployeeTargets(parsed);
     await this.assertEmployeeModel(
       parsed.providerCredentialId,
       parsed.modelId
     );
+    for (const target of parsed.fallbackTargets) {
+      await this.assertEmployeeModel(
+        target.providerCredentialId,
+        target.modelId
+      );
+    }
     return this.store.update((state) => {
       const provider = state.providers.find(
         (item) => item.id === parsed.providerCredentialId
@@ -183,6 +198,7 @@ export class WorkspaceService {
 
   async updateEmployee(id: string, input: unknown): Promise<Employee> {
     const parsed = employeeInputSchema.parse(input);
+    this.assertUniqueEmployeeTargets(parsed);
     const current = await this.store.read((state) => {
       const employee = state.employees.find((item) => item.id === id);
       if (!employee) notFound("Employee");
@@ -196,6 +212,18 @@ export class WorkspaceService {
         parsed.providerCredentialId,
         parsed.modelId
       );
+    }
+    const currentFallbackTargets = current.fallbackTargets ?? [];
+    if (
+      JSON.stringify(currentFallbackTargets) !==
+      JSON.stringify(parsed.fallbackTargets)
+    ) {
+      for (const target of parsed.fallbackTargets) {
+        await this.assertEmployeeModel(
+          target.providerCredentialId,
+          target.modelId
+        );
+      }
     }
     return this.store.update((state) => {
       const employee = state.employees.find((item) => item.id === id);
@@ -572,10 +600,40 @@ export class WorkspaceService {
       };
     });
     const models = await this.providers.listModels(access);
-    if (!models.some((model) => model.id === modelId)) {
+    const model = models.find((item) => item.id === modelId);
+    if (!model || model.supportsStructuredOutput !== true) {
       throw new ApiError(
         400,
-        "Employee model is not available from the selected provider",
+        model
+          ? "Employee model does not support the required structured output"
+          : "Employee model is not available from the selected provider",
+        "invalid_model"
+      );
+    }
+  }
+
+  private assertUniqueEmployeeTargets(input: {
+    providerCredentialId: string;
+    modelId: string;
+    fallbackTargets: Array<{
+      providerCredentialId: string;
+      modelId: string;
+    }>;
+  }): void {
+    const targets = [
+      {
+        providerCredentialId: input.providerCredentialId,
+        modelId: input.modelId
+      },
+      ...input.fallbackTargets
+    ];
+    const keys = targets.map(
+      (target) => `${target.providerCredentialId}\0${target.modelId}`
+    );
+    if (new Set(keys).size !== keys.length) {
+      throw new ApiError(
+        400,
+        "Employee fallback targets must be unique",
         "invalid_model"
       );
     }

@@ -11,6 +11,7 @@ export type ProviderModelSummary = {
   contextWindow?: number;
   maxTokens?: number;
   reasoning: boolean;
+  supportsStructuredOutput?: boolean;
 };
 
 export interface ProviderRegistry {

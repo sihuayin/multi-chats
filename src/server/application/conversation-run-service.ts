@@ -45,6 +45,7 @@ import {
 import {
   classifyProviderFailure,
   ProviderReliabilityError,
+  shouldFailoverProviderCall,
   shouldRetryProviderCall,
   type ProviderFailure
 } from "@/server/application/provider-reliability";
@@ -52,6 +53,9 @@ import {
   DEFAULT_MAX_OUTPUT_TOKENS,
   DEFAULT_MODEL_CONTEXT_WINDOW,
   DiscussionContextBudgetError,
+  MIN_SAFETY_MARGIN_TOKENS,
+  TOKEN_SAFETY_MARGIN_RATIO,
+  type DiscussionContextPlan,
   type ModelContext,
   planDiscussionContext
 } from "@/server/application/discussion-context";
@@ -100,6 +104,18 @@ type ToolCallContext = {
   args: Record<string, unknown>;
   signal?: AbortSignal;
 };
+
+type ProviderTarget = {
+  order: number;
+  providerCredentialId: string;
+  provider: ProviderId;
+  modelId: string;
+  encryptedCredential: string;
+};
+
+function estimateTokenCount(value: string): number {
+  return Math.ceil(new TextEncoder().encode(value).length / 3);
+}
 
 function now(): string {
   return new Date().toISOString();
@@ -164,6 +180,110 @@ async function waitForRetry(input: {
       input.signal.removeEventListener("abort", onAbort);
     }
   }
+}
+
+export function providerTargetCompatibility(
+  modelContext: ModelContext | undefined,
+  plan?: DiscussionContextPlan,
+  options: {
+    requireCapabilities?: boolean;
+    inputTokens?: number;
+    maxOutputTokens?: number;
+    toolOverheadTokens?: number;
+  } = {}
+): {
+  compatible: boolean;
+  maxOutputTokens: number;
+  reason?: "model_unavailable" | "structured_output_unsupported" | "context_incompatible";
+} {
+  if (
+    modelContext?.available === false ||
+    (options.requireCapabilities && modelContext?.available !== true)
+  ) {
+    return {
+      compatible: false,
+      maxOutputTokens: 1,
+      reason: "model_unavailable"
+    };
+  }
+  if (
+    options.requireCapabilities &&
+    modelContext?.supportsStructuredOutput !== true
+  ) {
+    return {
+      compatible: false,
+      maxOutputTokens: 1,
+      reason: "structured_output_unsupported"
+    };
+  }
+  if (!plan) {
+    if (options.inputTokens !== undefined) {
+      const contextWindow = Math.max(
+        1,
+        Math.floor(
+          modelContext?.contextWindow ?? DEFAULT_MODEL_CONTEXT_WINDOW
+        )
+      );
+      const maxOutputTokens = Math.max(
+        1,
+        Math.min(
+          options.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+          modelContext?.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS
+        )
+      );
+      const safetyMarginTokens = Math.max(
+        MIN_SAFETY_MARGIN_TOKENS,
+        Math.ceil(contextWindow * TOKEN_SAFETY_MARGIN_RATIO)
+      );
+      const inputBudget =
+        contextWindow -
+        maxOutputTokens -
+        safetyMarginTokens -
+        (options.toolOverheadTokens ?? 0);
+      if (inputBudget < options.inputTokens) {
+        return {
+          compatible: false,
+          maxOutputTokens,
+          reason: "context_incompatible"
+        };
+      }
+      return { compatible: true, maxOutputTokens };
+    }
+    return {
+      compatible: true,
+      maxOutputTokens:
+        modelContext?.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS
+    };
+  }
+
+  const contextWindow = Math.max(
+    1,
+    Math.floor(modelContext?.contextWindow ?? plan.contextWindow)
+  );
+  const maxOutputTokens = Math.max(
+    1,
+    Math.min(
+      plan.maxOutputTokens,
+      modelContext?.maxOutputTokens ?? plan.maxOutputTokens
+    )
+  );
+  const safetyMarginTokens = Math.max(
+    MIN_SAFETY_MARGIN_TOKENS,
+    Math.ceil(contextWindow * TOKEN_SAFETY_MARGIN_RATIO)
+  );
+  const inputBudget =
+    contextWindow -
+    maxOutputTokens -
+    safetyMarginTokens -
+    plan.toolOverheadTokens;
+  if (inputBudget < plan.inputTokens) {
+    return {
+      compatible: false,
+      maxOutputTokens,
+      reason: "context_incompatible"
+    };
+  }
+  return { compatible: true, maxOutputTokens };
 }
 
 export function parseMentions(
@@ -433,9 +553,9 @@ export class ConversationRunService {
         ) {
           continue;
         }
-        attempt.status = "interrupted";
-        attempt.errorKind = "cancelled";
-        attempt.errorCode = "worker_interrupted";
+        attempt.status = "ambiguous";
+        attempt.errorKind = "unknown";
+        attempt.errorCode = "provider_ambiguous";
         attempt.completedAt = interruptedAt;
         const run = state.runs.find((item) => item.id === attempt.runId);
         if (!run) continue;
@@ -834,6 +954,56 @@ export class ConversationRunService {
           "run_resume"
         );
       }
+      const completedMessageIds = new Set(
+        state.runEvents
+          .filter(
+            (event) =>
+              event.runId === runId &&
+              event.type === "message_completed"
+          )
+          .map((event) => String(event.payload.messageId ?? ""))
+      );
+      const visibleUnfinishedMessage = state.messages.some(
+        (message) =>
+          message.runId === runId &&
+          message.authorType !== "user" &&
+          message.content.trim().length > 0 &&
+          !completedMessageIds.has(message.id)
+      );
+      if (visibleUnfinishedMessage) {
+        throw new ApiError(
+          409,
+          "Run cannot be resumed after visible output was produced",
+          "run_resume_visible_output"
+        );
+      }
+      const unsafeToolStart = state.runEvents.some(
+        (event) =>
+          event.runId === runId &&
+          event.type === "tool_started" &&
+          !completedMessageIds.has(
+            String(event.payload.messageId ?? "")
+          )
+      );
+      if (unsafeToolStart) {
+        throw new ApiError(
+          409,
+          "Run cannot be resumed after a Tool call has started",
+          "run_resume_tool_side_effect"
+        );
+      }
+      const ambiguousAttempt = state.providerAttempts.some(
+        (attempt) =>
+          attempt.runId === runId &&
+          attempt.status === "ambiguous"
+      );
+      if (ambiguousAttempt) {
+        throw new ApiError(
+          409,
+          "Run cannot be resumed after an ambiguous Provider execution",
+          "run_resume_ambiguous_execution"
+        );
+      }
       for (const message of state.messages) {
         if (message.runId === runId && message.status === "streaming") {
           message.status = "cancelled";
@@ -1034,6 +1204,7 @@ export class ConversationRunService {
     modelId: string;
     attempt?: number;
     targetOrder?: number;
+    fallbackFromAttemptId?: string;
     roundId?: string;
     turnId?: string;
   }): Promise<string> {
@@ -1062,6 +1233,7 @@ export class ConversationRunService {
         provider: input.provider,
         modelId: input.modelId,
         targetOrder: input.targetOrder ?? 0,
+        fallbackFromAttemptId: input.fallbackFromAttemptId,
         attempt,
         status: "started",
         requestId: run.requestId,
@@ -1074,6 +1246,7 @@ export class ConversationRunService {
         modelId: input.modelId,
         purpose: input.purpose,
         targetOrder: input.targetOrder ?? 0,
+        fallbackFromAttemptId: input.fallbackFromAttemptId,
         attempt
       };
       appendEvent(state, run, "provider_attempt_started", payload);
@@ -1117,6 +1290,10 @@ export class ConversationRunService {
       const payload = {
         attemptId: attempt.id,
         status: attempt.status,
+        targetOrder: attempt.targetOrder,
+        provider: attempt.provider,
+        modelId: attempt.modelId,
+        fallbackFromAttemptId: attempt.fallbackFromAttemptId,
         errorKind: attempt.errorKind,
         errorCode: attempt.errorCode,
         httpStatus: attempt.httpStatus,
@@ -1135,6 +1312,68 @@ export class ConversationRunService {
         );
       }
       state.workspace.updatedAt = timestamp;
+    });
+  }
+
+  private async recordProviderFallback(input: {
+    runId: string;
+    fromAttemptId?: string;
+    fromTargetOrder: number;
+    reason: string;
+    target: ProviderTarget;
+  }): Promise<void> {
+    await this.store.update((state) => {
+      const run = state.runs.find((item) => item.id === input.runId);
+      if (!run) return;
+      const payload = {
+        fromAttemptId: input.fromAttemptId,
+        fromTargetOrder: input.fromTargetOrder,
+        toTargetOrder: input.target.order,
+        provider: input.target.provider,
+        modelId: input.target.modelId,
+        reason: input.reason
+      };
+      appendEvent(state, run, "provider_fallback_started", payload);
+      const discussion = run.discussionId
+        ? state.discussions.find((item) => item.id === run.discussionId)
+        : undefined;
+      if (discussion) {
+        appendDiscussionEvent(
+          discussion,
+          "provider_fallback_started",
+          payload
+        );
+      }
+    });
+  }
+
+  private async recordProviderTargetSkipped(input: {
+    runId: string;
+    target: ProviderTarget;
+    reason: string;
+    fromAttemptId?: string;
+  }): Promise<void> {
+    await this.store.update((state) => {
+      const run = state.runs.find((item) => item.id === input.runId);
+      if (!run) return;
+      const payload = {
+        fromAttemptId: input.fromAttemptId,
+        targetOrder: input.target.order,
+        provider: input.target.provider,
+        modelId: input.target.modelId,
+        reason: input.reason
+      };
+      appendEvent(state, run, "provider_target_skipped", payload);
+      const discussion = run.discussionId
+        ? state.discussions.find((item) => item.id === run.discussionId)
+        : undefined;
+      if (discussion) {
+        appendDiscussionEvent(
+          discussion,
+          "provider_target_skipped",
+          payload
+        );
+      }
     });
   }
 
@@ -1388,6 +1627,7 @@ export class ConversationRunService {
               message: event.message,
               kind: event.kind,
               code: event.code,
+              ambiguous: event.ambiguous,
               retryAfterMs: event.retryAfterMs,
               status: event.status
             });
@@ -1496,6 +1736,7 @@ export class ConversationRunService {
                   kind: error.kind,
                   code: error.code,
                   message: error.message,
+                  ambiguous: error.ambiguous,
                   retryAfterMs: error.retryAfterMs,
                   status: error.status
                 }
@@ -1505,11 +1746,17 @@ export class ConversationRunService {
                       ? error.message
                       : String(error)
                 });
-        const failureCode = failure.code ?? `provider_${failure.kind}`;
+        const failureCode = failure.ambiguous
+          ? "provider_ambiguous"
+          : failure.code ?? `provider_${failure.kind}`;
         await this.finalizeProviderAttempt({
           runId: input.runId,
           attemptId,
-          status: input.signal.aborted ? "cancelled" : "failed",
+          status: input.signal.aborted
+            ? "cancelled"
+            : failure.ambiguous
+              ? "ambiguous"
+              : "failed",
           errorKind: failure.kind,
           errorCode: failureCode,
           httpStatus: failure.status,
@@ -1530,6 +1777,7 @@ export class ConversationRunService {
           now: Date.now(),
           producedOutput: false,
           sideEffectStarted: false,
+          ambiguous: failure.ambiguous,
           retryAfterMs: failure.retryAfterMs,
           random: this.options.retryRandom
         });
@@ -1603,6 +1851,33 @@ export class ConversationRunService {
         (provider) => provider.id === employee.providerCredentialId
       );
       if (!credential) throw new Error("Employee provider is missing");
+      const fallbackTargets = (employee.fallbackTargets ?? []).map(
+        (target, index): ProviderTarget => {
+          const provider = state.providers.find(
+            (item) => item.id === target.providerCredentialId
+          );
+          if (!provider) {
+            throw new Error("Employee fallback provider is missing");
+          }
+          return {
+            order: index + 1,
+            providerCredentialId: provider.id,
+            provider: provider.provider,
+            modelId: target.modelId,
+            encryptedCredential: provider.encryptedCredential
+          };
+        }
+      );
+      const providerTargets: ProviderTarget[] = [
+        {
+          order: 0,
+          providerCredentialId: credential.id,
+          provider: credential.provider,
+          modelId: employee.modelId,
+          encryptedCredential: credential.encryptedCredential
+        },
+        ...fallbackTargets
+      ];
       const skills = employee.skillIds
         .map((id) => state.skills.find((skill) => skill.id === id))
         .filter((skill): skill is NonNullable<typeof skill> => Boolean(skill));
@@ -1623,25 +1898,130 @@ export class ConversationRunService {
             (item) => item.id === facilitator.providerCredentialId
           )
         : undefined;
-      const modelContext = this.options.modelContext?.({
-        provider: credential.provider,
-        modelId: employee.modelId
-      }) ?? {
-        contextWindow: DEFAULT_MODEL_CONTEXT_WINDOW,
-        maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS
-      };
+      let discussionPlan:
+        | ReturnType<typeof planDiscussionContext>
+        | undefined;
+      let lastBudgetError: DiscussionContextBudgetError | undefined;
+      if (discussion && round && participant && turn) {
+        for (const [index, target] of providerTargets.entries()) {
+          const modelContext = this.options.modelContext?.({
+            provider: target.provider,
+            modelId: target.modelId
+          }) ?? {
+            contextWindow: DEFAULT_MODEL_CONTEXT_WINDOW,
+            maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS
+          };
+          const compatibility = providerTargetCompatibility(
+            modelContext,
+            undefined,
+            { requireCapabilities: index > 0 }
+          );
+          if (!compatibility.compatible) continue;
+          try {
+            discussionPlan = planDiscussionContext({
+              state,
+              discussion,
+              round,
+              participant,
+              currentTurn: turn,
+              employee,
+              skills,
+              tools,
+              triggerMessageId: trigger.id,
+              triggerContent: trigger.content,
+              contextWindow: modelContext.contextWindow,
+              maxOutputTokens: compatibility.maxOutputTokens,
+              tokenCounter: this.options.tokenCounter,
+              compressionTarget:
+                facilitator && facilitatorProvider
+                  ? {
+                      provider: facilitatorProvider.provider,
+                      modelId: facilitator.modelId
+                    }
+                  : undefined
+            });
+            break;
+          } catch (error) {
+            if (error instanceof DiscussionContextBudgetError) {
+              lastBudgetError = error;
+              continue;
+            }
+            throw error;
+          }
+        }
+        if (!discussionPlan) {
+          if (providerTargets.length === 1 && lastBudgetError) {
+            throw lastBudgetError;
+          }
+          throw new ProviderReliabilityError({
+            kind: "terminal",
+            code:
+              providerTargets.length > 1
+                ? "provider_targets_exhausted"
+                : "provider_target_incompatible",
+            message:
+              lastBudgetError?.message ??
+              "No compatible Discussion context target"
+          });
+        }
+      }
+      const transcript = transcriptFor(state, run.conversationId);
+      const activeTaskContext = taskContext(
+        state,
+        run.conversationId,
+        employeeId
+      );
+      const systemPrompt =
+        discussionPlan?.systemPrompt ??
+        [
+          `You are ${employee.name}.`,
+          employee.identity,
+          ...skills.map(
+            (skill) =>
+              `Skill: ${skill.name}\n${skill.instructions}\nInputs: ${skill.inputs.join(", ")}\nOutputs: ${skill.outputs.join(", ")}`
+          ),
+          "Respond in the active Conversation. Do not claim to have used a Tool unless its result appears in the run."
+        ].join("\n\n");
+      const prompt = discussionPlan
+        ? promptFromMessages(discussionPlan.messages)
+        : [
+            `Conversation transcript:\n${transcript}`,
+            `Active task context:\n${activeTaskContext}`,
+            `Current user request:\n${run.memberSnapshot.length > 1 ? "Respond as your assigned role and account for earlier responses in this Run." : ""}`,
+            "Return a concise, useful response."
+          ]
+            .filter(Boolean)
+            .join("\n\n");
+      const countTokens = this.options.tokenCounter ?? estimateTokenCount;
+      const toolOverheadTokens = tools.reduce(
+        (total, tool) =>
+          total +
+          countTokens(
+            JSON.stringify({
+              name: tool.name,
+              description: tool.description,
+              inputSchema: tool.inputSchema
+            })
+          ) +
+          8,
+        0
+      );
       return {
         run: structuredClone(run),
         employee: structuredClone(employee),
-        provider: credential.provider,
-        encryptedCredential: credential.encryptedCredential,
+        providerTargets,
         trigger: structuredClone(trigger),
-        transcript: transcriptFor(state, run.conversationId),
-        taskContext: taskContext(state, run.conversationId, employeeId),
+        transcript,
+        taskContext: activeTaskContext,
+        systemPrompt,
+        prompt,
+        promptInputTokens:
+          countTokens(systemPrompt) + countTokens(prompt),
+        toolOverheadTokens,
         tools,
         skills: structuredClone(skills),
         phaseContext:
-          discussion && round && participant && turn
+          discussionPlan && discussion && round && participant && turn
             ? {
                 discussionId: discussion.id,
                 title: discussion.title,
@@ -1651,28 +2031,7 @@ export class ConversationRunService {
                 objective: participant.objective,
                 turnId: turn.id,
                 roundId: round.id,
-                plan: planDiscussionContext({
-                  state,
-                  discussion,
-                  round,
-                  participant,
-                  currentTurn: turn,
-                  employee,
-                  skills,
-                  tools,
-                  triggerMessageId: trigger.id,
-                  triggerContent: trigger.content,
-                  contextWindow: modelContext.contextWindow,
-                  maxOutputTokens: modelContext.maxOutputTokens,
-                  tokenCounter: this.options.tokenCounter,
-                  compressionTarget:
-                    facilitator && facilitatorProvider
-                      ? {
-                          provider: facilitatorProvider.provider,
-                          modelId: facilitator.modelId
-                        }
-                      : undefined
-                })
+                plan: discussionPlan
               }
             : undefined
       };
@@ -1851,29 +2210,6 @@ export class ConversationRunService {
         })
     }));
 
-    const systemPrompt =
-      context.phaseContext?.plan.systemPrompt ??
-      [
-        `You are ${context.employee.name}.`,
-        context.employee.identity,
-        ...context.skills.map(
-          (skill) =>
-            `Skill: ${skill.name}\n${skill.instructions}\nInputs: ${skill.inputs.join(", ")}\nOutputs: ${skill.outputs.join(", ")}`
-        ),
-        "Respond in the active Conversation. Do not claim to have used a Tool unless its result appears in the run."
-      ].join("\n\n");
-
-    const prompt = context.phaseContext
-      ? promptFromMessages(context.phaseContext.plan.messages)
-      : [
-          `Conversation transcript:\n${context.transcript}`,
-          `Active task context:\n${context.taskContext}`,
-          `Current user request:\n${context.run.memberSnapshot.length > 1 ? "Respond as your assigned role and account for earlier responses in this Run." : ""}`,
-          "Return a concise, useful response."
-        ]
-          .filter(Boolean)
-          .join("\n\n");
-
     let finalText = "";
     let completed = false;
     let validatedPayload: DiscussionTurnPayload | undefined;
@@ -1884,424 +2220,580 @@ export class ConversationRunService {
           ? "discussion_turn"
           : "conversation";
     let attempt = 0;
-    const maxProviderAttempts = this.options.maxProviderAttempts ?? 3;
+    let targetIndex = 0;
+    let targetAttempt = 0;
+    let previousFailedAttemptId: string | undefined;
+    const maxProviderAttempts = Math.max(
+      1,
+      this.options.maxProviderAttempts ?? 3
+    );
     const deadlineAt =
       Date.now() + (this.options.providerTimeoutMs ?? 120_000);
     const sleep = this.options.sleep;
-    while (attempt < maxProviderAttempts && !completed) {
-      attempt += 1;
-      let attemptLimit = maxProviderAttempts;
-      if (attempt > 1) {
-        finalText = "";
-      }
-      if (Date.now() >= deadlineAt) {
+    providerTargetLoop: while (
+      targetIndex < context.providerTargets.length &&
+      !completed
+    ) {
+      const target = context.providerTargets[targetIndex]!;
+      const targetModelContext = this.options.modelContext?.({
+        provider: target.provider,
+        modelId: target.modelId
+      });
+      const compatibility = providerTargetCompatibility(
+        targetModelContext,
+        context.phaseContext?.plan,
+        {
+          requireCapabilities: targetIndex > 0,
+          inputTokens: context.promptInputTokens,
+          toolOverheadTokens: context.toolOverheadTokens
+        }
+      );
+      if (!compatibility.compatible) {
+        await this.recordProviderTargetSkipped({
+          runId,
+          target,
+          reason: compatibility.reason ?? "incompatible_target"
+        });
+        const nextTarget = context.providerTargets[targetIndex + 1];
+        if (nextTarget) {
+          await this.recordProviderFallback({
+            runId,
+            fromAttemptId: previousFailedAttemptId,
+            fromTargetOrder: target.order,
+            reason: compatibility.reason ?? "incompatible_target",
+            target: nextTarget
+          });
+          targetIndex += 1;
+          targetAttempt = 0;
+          continue providerTargetLoop;
+        }
         throw new ProviderReliabilityError({
-          kind: "timeout",
-          code: "provider_deadline_exceeded",
-          message: "Provider request deadline was exceeded"
+          kind: "terminal",
+          code:
+            context.providerTargets.length > 1
+              ? "provider_targets_exhausted"
+              : "provider_target_incompatible",
+          message:
+            compatibility.reason === "model_unavailable"
+              ? `Model ${target.modelId} is not available`
+              : compatibility.reason === "structured_output_unsupported"
+                ? `Model ${target.modelId} does not support structured output`
+                : `Model ${target.modelId} cannot fit the Discussion context`
         });
       }
-      let currentProviderAttemptId = await this.startProviderAttempt({
-        runId,
-        purpose,
-        provider: context.provider,
-        modelId: context.employee.modelId,
-        roundId: context.phaseContext?.roundId,
-        turnId: context.phaseContext?.turnId
-      });
-      let providerCallCount = 0;
-      let producedOutput = false;
-      let sideEffectStarted = false;
-      let timedOut = false;
-      let gatewayFailure:
-        | {
-            kind: ProviderFailureKind;
-            message: string;
-            code?: string;
-            retryAfterMs?: number;
-            status?: number;
-          }
-        | undefined;
-      let timeout: ReturnType<typeof setTimeout> | undefined;
-      try {
-        const remaining = deadlineAt - Date.now();
-        if (remaining <= 0) {
+      targetAttempt = 0;
+      while (
+        targetAttempt < maxProviderAttempts &&
+        !completed
+      ) {
+        targetAttempt += 1;
+        attempt += 1;
+        let attemptLimit = maxProviderAttempts;
+        if (attempt > 1) {
+          finalText = "";
+        }
+        if (Date.now() >= deadlineAt) {
           throw new ProviderReliabilityError({
             kind: "timeout",
             code: "provider_deadline_exceeded",
             message: "Provider request deadline was exceeded"
           });
         }
-        const attemptController = new AbortController();
-        timeout = setTimeout(() => {
-          timedOut = true;
-          attemptController.abort();
-        }, remaining);
-        const attemptSignal = AbortSignal.any([
-          signal,
-          attemptController.signal
-        ]);
-        for await (const event of this.gateway.run({
-          provider: context.provider,
-          credential: this.cipher.decrypt(context.encryptedCredential),
-          modelId: context.employee.modelId,
-          requestId: context.run.requestId,
+        let currentProviderAttemptId = await this.startProviderAttempt({
+          runId,
           purpose,
-          maxOutputTokens: context.phaseContext?.plan.maxOutputTokens,
-          systemPrompt,
-          prompt,
-          messages: context.phaseContext?.plan.messages,
-          tools: modelTools,
-          signal: attemptSignal
-        })) {
-          if (event.type === "provider_attempt_started") {
-            if (providerCallCount > 0) {
-              await this.finalizeProviderAttempt({
-                runId,
-                attemptId: currentProviderAttemptId,
-                status: "succeeded"
-              });
-              currentProviderAttemptId = await this.startProviderAttempt({
-                runId,
-                purpose,
-                provider: context.provider,
-                modelId: context.employee.modelId,
-                roundId: context.phaseContext?.roundId,
-                turnId: context.phaseContext?.turnId
-              });
+          provider: target.provider,
+          modelId: target.modelId,
+          targetOrder: target.order,
+          fallbackFromAttemptId:
+            targetIndex > 0 ? previousFailedAttemptId : undefined,
+          roundId: context.phaseContext?.roundId,
+          turnId: context.phaseContext?.turnId
+        });
+        let providerCallCount = 0;
+        let producedOutput = false;
+        let sideEffectStarted = false;
+        let timedOut = false;
+        let gatewayFailure:
+          | {
+              kind: ProviderFailureKind;
+              message: string;
+              code?: string;
+              ambiguous?: boolean;
+              retryAfterMs?: number;
+              status?: number;
             }
-            providerCallCount += 1;
-            continue;
+          | undefined;
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        try {
+          const remaining = deadlineAt - Date.now();
+          if (remaining <= 0) {
+            throw new ProviderReliabilityError({
+              kind: "timeout",
+              code: "provider_deadline_exceeded",
+              message: "Provider request deadline was exceeded"
+            });
           }
-          const cancelledByAbort = signal.aborted;
-          if (event.type === "error" && (timedOut || cancelledByAbort)) {
-            if (timedOut) {
+          const attemptController = new AbortController();
+          timeout = setTimeout(() => {
+            timedOut = true;
+            attemptController.abort();
+          }, remaining);
+          const attemptSignal = AbortSignal.any([
+            signal,
+            attemptController.signal
+          ]);
+          for await (const event of this.gateway.run({
+            provider: target.provider,
+            credential: this.cipher.decrypt(target.encryptedCredential),
+            modelId: target.modelId,
+            requestId: context.run.requestId,
+            purpose,
+            maxOutputTokens: compatibility.maxOutputTokens,
+            systemPrompt: context.systemPrompt,
+            prompt: context.prompt,
+            messages: context.phaseContext?.plan.messages,
+            tools: modelTools,
+            signal: attemptSignal
+          })) {
+            if (event.type === "provider_attempt_started") {
+              if (providerCallCount > 0) {
+                await this.finalizeProviderAttempt({
+                  runId,
+                  attemptId: currentProviderAttemptId,
+                  status: "succeeded"
+                });
+                currentProviderAttemptId = await this.startProviderAttempt({
+                  runId,
+                  purpose,
+                  provider: target.provider,
+                  modelId: target.modelId,
+                  targetOrder: target.order,
+                  fallbackFromAttemptId:
+                    targetIndex > 0 ? previousFailedAttemptId : undefined,
+                  roundId: context.phaseContext?.roundId,
+                  turnId: context.phaseContext?.turnId
+                });
+              }
+              providerCallCount += 1;
+              continue;
+            }
+            const cancelledByAbort = signal.aborted;
+            if (event.type === "error" && (timedOut || cancelledByAbort)) {
+              if (timedOut) {
+                throw new ProviderReliabilityError({
+                  kind: "timeout",
+                  code: "provider_timeout",
+                  message: "Provider request timed out"
+                });
+              }
               throw new ProviderReliabilityError({
-                kind: "timeout",
-                code: "provider_timeout",
-                message: "Provider request timed out"
+                kind: "cancelled",
+                code: "provider_cancelled",
+                message: "Run cancelled"
               });
             }
+            const visibleDiscussionDelta =
+              context.phaseContext &&
+              (event.type === "text_delta" ||
+                event.type === "text_completed");
+            if (!visibleDiscussionDelta) {
+              await this.recordModelEvent(
+                runId,
+                message.id,
+                employeeId,
+                currentProviderAttemptId,
+                event
+              );
+            }
+            if (
+              (event.type === "text_delta" ||
+                event.type === "text_completed") &&
+              !context.phaseContext
+            ) {
+              producedOutput = true;
+            }
+            if (event.type === "tool_started") {
+              producedOutput = true;
+              sideEffectStarted = true;
+            }
+            if (event.type === "text_delta") finalText += event.delta;
+            if (event.type === "text_completed" && event.text) finalText = event.text;
+            if (event.type === "error") {
+              gatewayFailure = classifyProviderFailure({
+                message: event.message,
+                kind: event.kind,
+                code: event.code,
+                ambiguous: event.ambiguous,
+                retryAfterMs: event.retryAfterMs,
+                status: event.status
+              });
+              throw new ProviderReliabilityError(gatewayFailure);
+            }
+          }
+          if (signal.aborted) {
             throw new ProviderReliabilityError({
               kind: "cancelled",
               code: "provider_cancelled",
               message: "Run cancelled"
             });
           }
-          const visibleDiscussionDelta =
-            context.phaseContext &&
-            (event.type === "text_delta" ||
-              event.type === "text_completed");
-          if (!visibleDiscussionDelta) {
-            await this.recordModelEvent(
-              runId,
-              message.id,
-              employeeId,
-              currentProviderAttemptId,
-              event
-            );
-          }
-          if (
-            (event.type === "text_delta" ||
-              event.type === "text_completed") &&
-            !context.phaseContext
-          ) {
-            producedOutput = true;
-          }
-          if (event.type === "tool_started") {
-            producedOutput = true;
-            sideEffectStarted = true;
-          }
-          if (event.type === "text_delta") finalText += event.delta;
-          if (event.type === "text_completed" && event.text) finalText = event.text;
-          if (event.type === "error") {
-            gatewayFailure = classifyProviderFailure({
-              message: event.message,
-              kind: event.kind,
-              code: event.code,
-              retryAfterMs: event.retryAfterMs,
-              status: event.status
+          if (timedOut) {
+            throw new ProviderReliabilityError({
+              kind: "timeout",
+              code: "provider_timeout",
+              message: "Provider request timed out"
             });
-            throw new ProviderReliabilityError(gatewayFailure);
           }
-        }
-        if (signal.aborted) {
-          throw new ProviderReliabilityError({
-            kind: "cancelled",
-            code: "provider_cancelled",
-            message: "Run cancelled"
-          });
-        }
-        if (timedOut) {
-          throw new ProviderReliabilityError({
-            kind: "timeout",
-            code: "provider_timeout",
-            message: "Provider request timed out"
-          });
-        }
-        if (context.phaseContext) {
-          try {
-            if (context.phaseContext.phase === "synthesis") {
-              const brief = parseDiscussionBrief(finalText);
-              if (
-                brief.promptProfileVersion !==
-                  context.phaseContext.plan.promptProfileVersion ||
-                brief.discussionId !== context.phaseContext.discussionId ||
-                brief.mode !== context.phaseContext.mode
-              ) {
-                throw new Error(
-                  "Discussion Brief does not match the Discussion"
-                );
-              }
-              const snapshot = await this.store.read((state) => state);
-              const discussion = snapshot.discussions.find(
-                (item) =>
-                  item.id === context.phaseContext?.discussionId
-              );
-              if (!discussion) throw new Error("Discussion is missing");
-              const references =
-                brief.schemaVersion === 2
-                  ? validateDiscussionBriefEvidence(
-                      snapshot,
-                      discussion,
-                      brief
-                    )
-                  : [];
-              await this.store.update((state) => {
-                const run = state.runs.find((item) => item.id === runId);
-                if (!run) notFound("Run");
-                for (const reference of references) {
-                  if (
-                    !state.evidenceReferences.some(
-                      (item) => item.id === reference.id
-                    )
-                  ) {
-                    state.evidenceReferences.push(reference);
-                  }
+          if (context.phaseContext) {
+            try {
+              if (context.phaseContext.phase === "synthesis") {
+                const brief = parseDiscussionBrief(finalText);
+                if (
+                  brief.promptProfileVersion !==
+                    context.phaseContext.plan.promptProfileVersion ||
+                  brief.discussionId !== context.phaseContext.discussionId ||
+                  brief.mode !== context.phaseContext.mode
+                ) {
+                  throw new Error(
+                    "Discussion Brief does not match the Discussion"
+                  );
                 }
-                appendEvent(state, run, "evidence_validated", {
-                  discussionId:
-                    context.phaseContext?.discussionId,
-                  discussionTurnId: context.phaseContext?.turnId,
-                  evidenceIds: references.map((item) => item.id),
-                  schemaVersion: brief.schemaVersion
-                });
-                const currentDiscussion = state.discussions.find(
+                const snapshot = await this.store.read((state) => state);
+                const discussion = snapshot.discussions.find(
                   (item) =>
                     item.id === context.phaseContext?.discussionId
                 );
-                if (!currentDiscussion) {
-                  throw new Error("Discussion is missing");
-                }
-                appendDiscussionEvent(
-                  currentDiscussion,
-                  "evidence_validated",
-                  {
-                    runId,
+                if (!discussion) throw new Error("Discussion is missing");
+                const references =
+                  brief.schemaVersion === 2
+                    ? validateDiscussionBriefEvidence(
+                        snapshot,
+                        discussion,
+                        brief
+                      )
+                    : [];
+                await this.store.update((state) => {
+                  const run = state.runs.find((item) => item.id === runId);
+                  if (!run) notFound("Run");
+                  for (const reference of references) {
+                    if (
+                      !state.evidenceReferences.some(
+                        (item) => item.id === reference.id
+                      )
+                    ) {
+                      state.evidenceReferences.push(reference);
+                    }
+                  }
+                  appendEvent(state, run, "evidence_validated", {
+                    discussionId:
+                      context.phaseContext?.discussionId,
                     discussionTurnId: context.phaseContext?.turnId,
                     evidenceIds: references.map((item) => item.id),
                     schemaVersion: brief.schemaVersion
+                  });
+                  const currentDiscussion = state.discussions.find(
+                    (item) =>
+                      item.id === context.phaseContext?.discussionId
+                  );
+                  if (!currentDiscussion) {
+                    throw new Error("Discussion is missing");
                   }
-                );
-              });
-            } else {
-              const payload = parseDiscussionTurnPayload(
-                finalText,
-                context.phaseContext.phase
-              );
-              const validation = await this.store.read((state) => {
-                const discussion = state.discussions.find(
-                  (item) =>
-                    item.id === context.phaseContext?.discussionId
-                );
-                if (!discussion) throw new Error("Discussion is missing");
-                return validateDiscussionTurnEvidence(
-                  state,
-                  discussion,
-                  payload
-                );
-              });
-              validatedPayload = validation.payload;
-              await this.store.update((state) => {
-                const run = state.runs.find((item) => item.id === runId);
-                if (!run) notFound("Run");
-                for (const reference of validation.references) {
-                  if (
-                    !state.evidenceReferences.some(
-                      (item) => item.id === reference.id
-                    )
-                  ) {
-                    state.evidenceReferences.push(reference);
-                  }
-                }
-                const discussion = state.discussions.find(
-                  (item) =>
-                    item.id === context.phaseContext?.discussionId
-                );
-                if (!discussion) throw new Error("Discussion is missing");
-                appendEvent(state, run, "evidence_validated", {
-                  discussionId: discussion.id,
-                  discussionTurnId: context.phaseContext?.turnId,
-                  evidenceIds: validation.references.map(
-                    (item) => item.id
-                  ),
-                  coverage: validation.coverage
+                  appendDiscussionEvent(
+                    currentDiscussion,
+                    "evidence_validated",
+                    {
+                      runId,
+                      discussionTurnId: context.phaseContext?.turnId,
+                      evidenceIds: references.map((item) => item.id),
+                      schemaVersion: brief.schemaVersion
+                    }
+                  );
                 });
-                appendDiscussionEvent(
-                  discussion,
-                  "evidence_validated",
-                  {
-                    runId,
+              } else {
+                const payload = parseDiscussionTurnPayload(
+                  finalText,
+                  context.phaseContext.phase
+                );
+                const validation = await this.store.read((state) => {
+                  const discussion = state.discussions.find(
+                    (item) =>
+                      item.id === context.phaseContext?.discussionId
+                  );
+                  if (!discussion) throw new Error("Discussion is missing");
+                  return validateDiscussionTurnEvidence(
+                    state,
+                    discussion,
+                    payload
+                  );
+                });
+                validatedPayload = validation.payload;
+                await this.store.update((state) => {
+                  const run = state.runs.find((item) => item.id === runId);
+                  if (!run) notFound("Run");
+                  for (const reference of validation.references) {
+                    if (
+                      !state.evidenceReferences.some(
+                        (item) => item.id === reference.id
+                      )
+                    ) {
+                      state.evidenceReferences.push(reference);
+                    }
+                  }
+                  const discussion = state.discussions.find(
+                    (item) =>
+                      item.id === context.phaseContext?.discussionId
+                  );
+                  if (!discussion) throw new Error("Discussion is missing");
+                  appendEvent(state, run, "evidence_validated", {
+                    discussionId: discussion.id,
                     discussionTurnId: context.phaseContext?.turnId,
                     evidenceIds: validation.references.map(
                       (item) => item.id
                     ),
                     coverage: validation.coverage
-                  }
-                );
-              });
-            }
-          } catch (error) {
-            const evidenceError =
-              error instanceof DiscussionEvidenceError
-                ? error
-                : undefined;
-            await this.store.update((state) => {
-              const run = state.runs.find((item) => item.id === runId);
-              if (evidenceError && run) {
-                const details =
-                  evidenceError.details;
-                appendEvent(state, run, "evidence_validation_failed", {
-                  discussionId: context.phaseContext?.discussionId,
-                  discussionTurnId: context.phaseContext?.turnId,
-                  code: DISCUSSION_EVIDENCE_INVALID_CODE,
-                  ...details
-                });
-                const discussion = state.discussions.find(
-                  (item) =>
-                    item.id === context.phaseContext?.discussionId
-                );
-                if (discussion) {
+                  });
                   appendDiscussionEvent(
                     discussion,
-                    "evidence_validation_failed",
+                    "evidence_validated",
                     {
                       runId,
                       discussionTurnId: context.phaseContext?.turnId,
-                      code: DISCUSSION_EVIDENCE_INVALID_CODE,
-                      ...details
+                      evidenceIds: validation.references.map(
+                        (item) => item.id
+                      ),
+                      coverage: validation.coverage
                     }
                   );
-                }
-              }
-            });
-            attemptLimit = Math.min(attemptLimit, 2);
-            throw new ProviderReliabilityError({
-              kind: "malformed_output",
-              code: evidenceError
-                ? DISCUSSION_EVIDENCE_INVALID_CODE
-                : "provider_malformed_output",
-              message:
-                error instanceof Error
-                  ? error.message
-                  : "Provider output was invalid"
-            });
-          }
-        }
-        await this.finalizeProviderAttempt({
-          runId,
-          attemptId: currentProviderAttemptId,
-          status: "succeeded"
-        });
-        completed = true;
-      } catch (error) {
-        const failure = timedOut
-          ? {
-              kind: "timeout" as const,
-              code: "provider_timeout",
-              message: "Provider request timed out"
-            }
-          : signal.aborted
-            ? {
-                kind: "cancelled" as const,
-                code: "provider_cancelled",
-                message: "Run cancelled"
-              }
-            : error instanceof ProviderReliabilityError
-              ? {
-                  kind: error.kind,
-                  code: error.code,
-                  message: error.message,
-                  retryAfterMs: error.retryAfterMs,
-                  status: error.status
-                }
-              : gatewayFailure ??
-                classifyProviderFailure({
-                  message:
-                    error instanceof Error
-                      ? error.message
-                      : String(error)
                 });
-        const failureCode = failure.code ?? `provider_${failure.kind}`;
-        await this.finalizeProviderAttempt({
-          runId,
-          attemptId: currentProviderAttemptId,
-          status: signal.aborted ? "cancelled" : "failed",
-          errorKind: failure.kind,
-          errorCode: failureCode,
-          httpStatus: failure.status,
-          retryAfterMs: failure.retryAfterMs
-        });
-        const decision = shouldRetryProviderCall({
-          kind: failure.kind,
-          attempt,
-          maxAttempts: attemptLimit,
-          deadlineAt,
-          now: Date.now(),
-          producedOutput,
-          sideEffectStarted,
-          retryAfterMs: failure.retryAfterMs,
-          random: this.options.retryRandom
-        });
-        if (!decision.retry) {
-          if (context.phaseContext && finalText) {
-            await this.store.update((state) => {
-              const current = state.messages.find(
-                (item) => item.id === message.id
-              );
-              if (!current) return;
-              current.content = finalText;
-              current.updatedAt = now();
-            });
+              }
+            } catch (error) {
+              const evidenceError =
+                error instanceof DiscussionEvidenceError
+                  ? error
+                  : undefined;
+              await this.store.update((state) => {
+                const run = state.runs.find((item) => item.id === runId);
+                if (evidenceError && run) {
+                  const details =
+                    evidenceError.details;
+                  appendEvent(state, run, "evidence_validation_failed", {
+                    discussionId: context.phaseContext?.discussionId,
+                    discussionTurnId: context.phaseContext?.turnId,
+                    code: DISCUSSION_EVIDENCE_INVALID_CODE,
+                    ...details
+                  });
+                  const discussion = state.discussions.find(
+                    (item) =>
+                      item.id === context.phaseContext?.discussionId
+                  );
+                  if (discussion) {
+                    appendDiscussionEvent(
+                      discussion,
+                      "evidence_validation_failed",
+                      {
+                        runId,
+                        discussionTurnId: context.phaseContext?.turnId,
+                        code: DISCUSSION_EVIDENCE_INVALID_CODE,
+                        ...details
+                      }
+                    );
+                  }
+                }
+              });
+              attemptLimit = Math.min(attemptLimit, 2);
+              throw new ProviderReliabilityError({
+                kind: "malformed_output",
+                code: evidenceError
+                  ? DISCUSSION_EVIDENCE_INVALID_CODE
+                  : "provider_malformed_output",
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : "Provider output was invalid"
+              });
+            }
           }
-          throw new ProviderReliabilityError({
-            ...failure,
-            code: failureCode
-          });
-        }
-        await this.store.update((state) => {
-          const run = state.runs.find((item) => item.id === runId);
-          if (!run) return;
-          appendEvent(state, run, "provider_retry_scheduled", {
+          await this.finalizeProviderAttempt({
+            runId,
             attemptId: currentProviderAttemptId,
-            nextAttempt: attempt + 1,
-            delayMs: decision.delayMs,
-            failureKind: failure.kind,
+            status: "succeeded"
+          });
+          completed = true;
+        } catch (error) {
+          const failure = timedOut
+            ? {
+                kind: "timeout" as const,
+                code: "provider_timeout",
+                message: "Provider request timed out"
+              }
+            : signal.aborted
+              ? {
+                  kind: "cancelled" as const,
+                  code: "provider_cancelled",
+                  message: "Run cancelled"
+                }
+              : error instanceof ProviderReliabilityError
+                ? {
+                    kind: error.kind,
+                    code: error.code,
+                    message: error.message,
+                    ambiguous: error.ambiguous,
+                    retryAfterMs: error.retryAfterMs,
+                    status: error.status
+                  }
+                : gatewayFailure ??
+                  classifyProviderFailure({
+                    message:
+                      error instanceof Error
+                        ? error.message
+                        : String(error)
+                  });
+          const failureCode = failure.ambiguous
+            ? "provider_ambiguous"
+            : failure.code ?? `provider_${failure.kind}`;
+          await this.finalizeProviderAttempt({
+            runId,
+            attemptId: currentProviderAttemptId,
+          status: signal.aborted
+            ? "cancelled"
+            : failure.ambiguous
+              ? "ambiguous"
+              : "failed",
+            errorKind: failure.kind,
             errorCode: failureCode,
+            httpStatus: failure.status,
             retryAfterMs: failure.retryAfterMs
           });
-        });
-        await waitForRetry({
-          delayMs: decision.delayMs,
-          signal,
-          sleep
-        });
-      } finally {
-        if (timeout) clearTimeout(timeout);
+          const decision = shouldRetryProviderCall({
+            kind: failure.kind,
+            attempt: targetAttempt,
+            maxAttempts: attemptLimit,
+            deadlineAt,
+            now: Date.now(),
+            producedOutput,
+            sideEffectStarted,
+            ambiguous: failure.ambiguous,
+            retryAfterMs: failure.retryAfterMs,
+            random: this.options.retryRandom
+          });
+          if (!decision.retry) {
+            const failover = shouldFailoverProviderCall({
+              kind: failure.kind,
+              hasNextTarget:
+                targetIndex + 1 < context.providerTargets.length,
+              producedOutput,
+            sideEffectStarted,
+            cancelled: signal.aborted || failure.kind === "cancelled",
+            ambiguous: failure.ambiguous,
+            deadlineExceeded:
+                decision.reason === "deadline_exceeded" ||
+                failure.code === "provider_deadline_exceeded"
+            });
+            if (failover.failover) {
+              let nextTargetIndex = targetIndex + 1;
+              let nextTarget: ProviderTarget | undefined;
+              while (
+                nextTargetIndex < context.providerTargets.length
+              ) {
+                const candidate =
+                  context.providerTargets[nextTargetIndex]!;
+                const candidateContext = this.options.modelContext?.({
+                  provider: candidate.provider,
+                  modelId: candidate.modelId
+                });
+                const candidateCompatibility =
+                providerTargetCompatibility(
+                  candidateContext,
+                  context.phaseContext?.plan,
+                  {
+                    requireCapabilities: true,
+                    inputTokens: context.promptInputTokens,
+                    toolOverheadTokens: context.toolOverheadTokens
+                  }
+                );
+                if (candidateCompatibility.compatible) {
+                  nextTarget = candidate;
+                  break;
+                }
+              await this.recordProviderTargetSkipped({
+                runId,
+                target: candidate,
+                reason:
+                  candidateCompatibility.reason ??
+                  "incompatible_target",
+                fromAttemptId: currentProviderAttemptId
+              });
+                nextTargetIndex += 1;
+              }
+              if (!nextTarget) {
+                if (context.phaseContext && finalText) {
+                  await this.store.update((state) => {
+                    const current = state.messages.find(
+                      (item) => item.id === message.id
+                    );
+                    if (!current) return;
+                    current.content = finalText;
+                    current.updatedAt = now();
+                  });
+                }
+                throw new ProviderReliabilityError({
+                  ...failure,
+                  code: "provider_targets_exhausted"
+                });
+              }
+              previousFailedAttemptId = currentProviderAttemptId;
+              await this.recordProviderFallback({
+                runId,
+                fromAttemptId: currentProviderAttemptId,
+                fromTargetOrder: target.order,
+                reason: failureCode,
+                target: nextTarget
+              });
+              targetIndex = nextTargetIndex;
+              targetAttempt = 0;
+              continue providerTargetLoop;
+            }
+            if (context.phaseContext && finalText) {
+              await this.store.update((state) => {
+                const current = state.messages.find(
+                  (item) => item.id === message.id
+                );
+                if (!current) return;
+                current.content = finalText;
+                current.updatedAt = now();
+              });
+            }
+            throw new ProviderReliabilityError({
+              ...failure,
+              code:
+                context.providerTargets.length > 1 &&
+                failover.reason === "targets_exhausted"
+                  ? "provider_targets_exhausted"
+                  : failureCode
+            });
+          }
+          await this.store.update((state) => {
+            const run = state.runs.find((item) => item.id === runId);
+            if (!run) return;
+            appendEvent(state, run, "provider_retry_scheduled", {
+              attemptId: currentProviderAttemptId,
+              nextAttempt: attempt + 1,
+              delayMs: decision.delayMs,
+              failureKind: failure.kind,
+              errorCode: failureCode,
+              retryAfterMs: failure.retryAfterMs
+            });
+          });
+          await waitForRetry({
+            delayMs: decision.delayMs,
+            signal,
+            sleep
+          });
+        } finally {
+          if (timeout) clearTimeout(timeout);
+        }
       }
-    }
-    if (!completed) {
-      throw new Error("Employee Run did not complete after retry");
     }
 
     await this.store.update((state) => {
@@ -2402,6 +2894,7 @@ export class ConversationRunService {
           message: event.message,
           kind: event.kind ?? "unknown",
           code: event.code,
+          ambiguous: event.ambiguous,
           retryAfterMs: event.retryAfterMs,
           status: event.status
         });

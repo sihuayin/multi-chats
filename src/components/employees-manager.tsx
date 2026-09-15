@@ -1,6 +1,16 @@
 "use client";
 
-import { Bot, Check, LoaderCircle, Pencil, Power } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  Bot,
+  Check,
+  LoaderCircle,
+  Pencil,
+  Plus,
+  Power,
+  Trash2
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { apiRequest } from "@/lib/api";
@@ -12,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import type { ModelTargetConfig } from "@/server/domain/types";
 
 type ModelSummary = {
   id: string;
@@ -19,7 +30,127 @@ type ModelSummary = {
   contextWindow?: number;
   maxTokens?: number;
   reasoning: boolean;
+  supportsStructuredOutput?: boolean;
 };
+
+function FallbackTargetEditor(input: {
+  target: ModelTargetConfig;
+  providers: Array<{ id: string; label: string }>;
+  index: number;
+  count: number;
+  disabled: boolean;
+  labels: {
+    provider: string;
+    model: string;
+    remove: string;
+    moveUp: string;
+    moveDown: string;
+  };
+  onChange: (target: ModelTargetConfig) => void;
+  onMove: (offset: -1 | 1) => void;
+  onRemove: () => void;
+}) {
+  const [models, setModels] = useState<ModelSummary[]>([]);
+
+  useEffect(() => {
+    if (!input.target.providerCredentialId) return;
+    let cancelled = false;
+    apiRequest<ModelSummary[]>(
+      `/api/providers/${input.target.providerCredentialId}/models`
+    )
+      .then((items) => {
+        if (!cancelled) {
+          setModels(
+            items.filter(
+              (item) => item.supportsStructuredOutput !== false
+            )
+          );
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setModels([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [input.target.providerCredentialId]);
+
+  return (
+    <div className="fallback-target-row">
+      <label>
+        {input.labels.provider}
+        <select
+          value={input.target.providerCredentialId}
+          disabled={input.disabled}
+          onChange={(event) =>
+            input.onChange({
+              providerCredentialId: event.target.value,
+              modelId: ""
+            })
+          }
+        >
+          {input.providers.map((provider) => (
+            <option key={provider.id} value={provider.id}>
+              {provider.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        {input.labels.model}
+        <select
+          value={input.target.modelId}
+          disabled={input.disabled}
+          onChange={(event) =>
+            input.onChange({
+              ...input.target,
+              modelId: event.target.value
+            })
+          }
+        >
+          <option value="">-</option>
+          {models.map((model) => (
+            <option key={model.id} value={model.id}>
+              {model.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="button-row">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          title={input.labels.moveUp}
+          disabled={input.disabled || input.index === 0}
+          onClick={() => input.onMove(-1)}
+        >
+          <ArrowUp size={15} />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          title={input.labels.moveDown}
+          disabled={input.disabled || input.index === input.count - 1}
+          onClick={() => input.onMove(1)}
+        >
+          <ArrowDown size={15} />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          title={input.labels.remove}
+          disabled={input.disabled}
+          onClick={input.onRemove}
+        >
+          <Trash2 size={15} />
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 export function EmployeesManager() {
   const { data, refresh } = useWorkspace();
@@ -29,6 +160,9 @@ export function EmployeesManager() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [providerId, setProviderId] = useState("");
   const [modelId, setModelId] = useState("");
+  const [fallbackTargets, setFallbackTargets] = useState<
+    ModelTargetConfig[]
+  >([]);
   const [skillIds, setSkillIds] = useState<string[]>([]);
   const [models, setModels] = useState<ModelSummary[]>([]);
   const [busy, setBusy] = useState(false);
@@ -36,6 +170,10 @@ export function EmployeesManager() {
   const formRef = useRef<HTMLElement | null>(null);
 
   const effectiveProviderId = providerId || data?.providers[0]?.id || "";
+  const fallbackTargetsValid = fallbackTargets.every(
+    (target) =>
+      Boolean(target.providerCredentialId) && Boolean(target.modelId)
+  );
 
   useEffect(() => {
     if (!effectiveProviderId) return;
@@ -43,9 +181,14 @@ export function EmployeesManager() {
     apiRequest<ModelSummary[]>(`/api/providers/${effectiveProviderId}/models`)
       .then((items) => {
         if (cancelled) return;
-        setModels(items);
+        const availableModels = items.filter(
+          (item) => item.supportsStructuredOutput !== false
+        );
+        setModels(availableModels);
         setModelId((current) =>
-          items.some((item) => item.id === current) ? current : items[0]?.id ?? ""
+          availableModels.some((item) => item.id === current)
+            ? current
+            : availableModels[0]?.id ?? ""
         );
       })
       .catch((nextError) => {
@@ -60,6 +203,7 @@ export function EmployeesManager() {
     setEditingId(null);
     setName("");
     setIdentity("");
+    setFallbackTargets([]);
     setSkillIds([]);
   }
 
@@ -75,6 +219,7 @@ export function EmployeesManager() {
           identity: identity || t("employees.defaultIdentity"),
           providerCredentialId: effectiveProviderId,
           modelId,
+          fallbackTargets,
           skillIds,
           active:
             data?.employees.find((employee) => employee.id === editingId)
@@ -124,6 +269,7 @@ export function EmployeesManager() {
     setIdentity(employee.identity);
     setProviderId(employee.providerCredentialId);
     setModelId(employee.modelId);
+    setFallbackTargets(employee.fallbackTargets ?? []);
     setSkillIds(employee.skillIds);
     setError(null);
     requestAnimationFrame(() =>
@@ -208,6 +354,77 @@ export function EmployeesManager() {
               </select>
             </label>
           </div>
+          <div className="fallback-targets">
+            <div className="panel-title">
+              <span>{t("employees.fallbackTargets")}</span>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={busy || fallbackTargets.length >= 4}
+                onClick={() =>
+                  setFallbackTargets((current) => [
+                    ...current,
+                    {
+                      providerCredentialId: effectiveProviderId,
+                      modelId: ""
+                    }
+                  ])
+                }
+              >
+                <Plus size={15} />
+                {t("employees.addFallback")}
+              </Button>
+            </div>
+            <p className="field-hint">
+              {t("employees.fallbackHint")}
+            </p>
+            {fallbackTargets.map((target, index) => (
+              <FallbackTargetEditor
+                key={`${index}-${target.providerCredentialId}`}
+                target={target}
+                providers={data?.providers ?? []}
+                index={index}
+                count={fallbackTargets.length}
+                disabled={busy}
+                labels={{
+                  provider: t("employees.provider"),
+                  model: t("employees.model"),
+                  remove: t("employees.removeFallback"),
+                  moveUp: t("employees.moveFallbackUp"),
+                  moveDown: t("employees.moveFallbackDown")
+                }}
+                onChange={(nextTarget) =>
+                  setFallbackTargets((current) =>
+                    current.map((item, itemIndex) =>
+                      itemIndex === index ? nextTarget : item
+                    )
+                  )
+                }
+                onMove={(offset) =>
+                  setFallbackTargets((current) => {
+                    const next = [...current];
+                    const destination = index + offset;
+                    if (destination < 0 || destination >= next.length) {
+                      return current;
+                    }
+                    [next[index], next[destination]] = [
+                      next[destination],
+                      next[index]
+                    ];
+                    return next;
+                  })
+                }
+                onRemove={() =>
+                  setFallbackTargets((current) =>
+                    current.filter(
+                      (_, itemIndex) => itemIndex !== index
+                    )
+                  )
+                }
+              />
+            ))}
+          </div>
           <fieldset className="choice-fieldset">
             <legend>{t("employees.skills")}</legend>
             {(data?.skills ?? []).map((skill) => (
@@ -230,7 +447,13 @@ export function EmployeesManager() {
           <div className="button-row">
             <Button
               onClick={saveEmployee}
-              disabled={busy || !name.trim() || !effectiveProviderId || !modelId}
+              disabled={
+                busy ||
+                !name.trim() ||
+                !effectiveProviderId ||
+                !modelId ||
+                !fallbackTargetsValid
+              }
             >
               {busy ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}
               {editingId
@@ -264,6 +487,13 @@ export function EmployeesManager() {
                   <small>
                     {employee.skillIds.length} {t("employees.skills")}
                   </small>
+                  {employee.fallbackTargets?.length ? (
+                    <small>
+                      {t("employees.fallbackCount", {
+                        count: employee.fallbackTargets.length
+                      })}
+                    </small>
+                  ) : null}
                 </div>
                 <div className="button-row">
                   <Button

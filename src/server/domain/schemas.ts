@@ -15,6 +15,17 @@ export const employeeInputSchema = z.object({
   identity: z.string().trim().min(1).max(4000),
   providerCredentialId: z.string().min(1),
   modelId: z.string().trim().min(1),
+  fallbackTargets: z
+    .array(
+      z
+        .object({
+          providerCredentialId: z.string().min(1),
+          modelId: z.string().trim().min(1)
+        })
+        .strict()
+    )
+    .max(4)
+    .default([]),
   skillIds: z.array(z.string()).default([]),
   active: z.boolean().default(true)
 });

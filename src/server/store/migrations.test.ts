@@ -245,6 +245,69 @@ describe("AppState migrations", () => {
     );
   });
 
+  it("rejects duplicate Employee fallback targets", () => {
+    const state = createFixtureState();
+    state.employees[0].fallbackTargets = [
+      {
+        providerCredentialId: state.employees[0].providerCredentialId,
+        modelId: state.employees[0].modelId
+      }
+    ];
+
+    expect(() => migrateAppState(state)).toThrow(
+      "Workspace Employee fallback targets are invalid"
+    );
+  });
+
+  it("rejects fallback links that cross Run boundaries", () => {
+    const state = createFixtureState();
+    const baseRun = {
+      workspaceId: state.workspace.id,
+      conversationId: state.conversations[0].id,
+      triggerMessageId: "trigger",
+      memberSnapshot: [state.employees[0].id],
+      status: "failed" as const,
+      createdAt: state.workspace.createdAt
+    };
+    state.runs.push(
+      { ...baseRun, id: "run-source" },
+      { ...baseRun, id: "run-target" }
+    );
+    state.providerAttempts.push(
+      {
+        id: "attempt-source",
+        workspaceId: state.workspace.id,
+        runId: "run-source",
+        purpose: "conversation",
+        provider: "openai",
+        modelId: "test-model",
+        targetOrder: 0,
+        attempt: 1,
+        status: "failed",
+        usage: { source: "unknown" },
+        startedAt: state.workspace.createdAt
+      },
+      {
+        id: "attempt-target",
+        workspaceId: state.workspace.id,
+        runId: "run-target",
+        purpose: "conversation",
+        provider: "openai",
+        modelId: "test-model",
+        targetOrder: 1,
+        attempt: 1,
+        status: "failed",
+        fallbackFromAttemptId: "attempt-source",
+        usage: { source: "unknown" },
+        startedAt: state.workspace.createdAt
+      }
+    );
+
+    expect(() => migrateAppState(state)).toThrow(
+      "Workspace providerAttempts are invalid"
+    );
+  });
+
   it("rejects dangling context revision history references", () => {
     const state = createFixtureState();
     const discussion = createFixtureDiscussion({

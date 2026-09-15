@@ -193,6 +193,31 @@ export function buildDiscussionView(
       (event) => event.type === "evidence_validation_failed"
     ).length
   };
+  const fallbacks = (discussion.events ?? [])
+    .filter((event) => event.type === "provider_fallback_started")
+    .map((event) => ({
+      fromTargetOrder:
+        typeof event.payload.fromTargetOrder === "number"
+          ? event.payload.fromTargetOrder
+          : undefined,
+      toTargetOrder:
+        typeof event.payload.toTargetOrder === "number"
+          ? event.payload.toTargetOrder
+          : undefined,
+      provider:
+        typeof event.payload.provider === "string"
+          ? event.payload.provider
+          : undefined,
+      modelId:
+        typeof event.payload.modelId === "string"
+          ? event.payload.modelId
+          : undefined,
+      reason:
+        typeof event.payload.reason === "string"
+          ? event.payload.reason
+          : undefined,
+      createdAt: event.createdAt
+    }));
 
   return {
     discussion: {
@@ -245,6 +270,7 @@ export function buildDiscussionView(
     confirmedTask: confirmedTask ? taskView(confirmedTask) : undefined,
     activeRun: activeRun ? runView(activeRun) : undefined,
     usage,
+    fallbacks,
     evidence,
     budget: {
       usedRounds: discussion.rounds.filter(
