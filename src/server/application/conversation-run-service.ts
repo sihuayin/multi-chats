@@ -42,6 +42,7 @@ import {
 import {
   mergeModelUsage
 } from "@/server/application/model-usage";
+import { stampAttemptCost } from "@/server/application/model-pricing";
 import {
   classifyProviderFailure,
   ProviderReliabilityError,
@@ -2911,6 +2912,7 @@ export class ConversationRunService {
           event.providerRequestId ?? attempt.providerRequestId;
         attempt.responseModel =
           event.responseModel ?? attempt.responseModel;
+        stampAttemptCost(state, attempt);
         const payload = {
           attemptId: attempt.id,
           usage: attempt.usage,

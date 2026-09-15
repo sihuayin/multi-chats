@@ -69,6 +69,13 @@ function interventionStatusKey(status: string): TranslationKey {
   return "chat.interventionPending";
 }
 
+function formatCostMicros(costMicros: number): string {
+  return (costMicros / 1_000_000).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 6
+  });
+}
+
 function usageSourceKey(
   source: "provider" | "estimated" | "unknown" | "mixed"
 ): TranslationKey {
@@ -189,6 +196,22 @@ type DiscussionView = {
     failedAttemptCount: number;
     cancelledAttemptCount: number;
     unknownUsageAttemptCount: number;
+  };
+  cost: {
+    totals: Array<{ currency: string; costMicros: number }>;
+    byPurpose: Array<{
+      purpose: string;
+      currency: string;
+      costMicros: number;
+    }>;
+    byModel: Array<{
+      provider: string;
+      modelId: string;
+      currency: string;
+      costMicros: number;
+    }>;
+    pricedAttemptCount: number;
+    unknownCostAttemptCount: number;
   };
   fallbacks: Array<{
     fromTargetOrder?: number;
@@ -843,6 +866,21 @@ export function DiscussionWorkspace() {
                       <span>
                         {t("chat.usageMissing", {
                           count: view.usage.unknownUsageAttemptCount
+                        })}
+                      </span>
+                    ) : null}
+                    {view.cost.totals.map((total) => (
+                      <span key={total.currency}>
+                        {t("chat.costTotal", {
+                          amount: formatCostMicros(total.costMicros),
+                          currency: total.currency
+                        })}
+                      </span>
+                    ))}
+                    {view.cost.unknownCostAttemptCount > 0 ? (
+                      <span>
+                        {t("chat.costUnknown", {
+                          count: view.cost.unknownCostAttemptCount
                         })}
                       </span>
                     ) : null}

@@ -9,7 +9,9 @@ import type {
   Discussion,
   DiscussionRoundPhase,
   DiscussionTurnPayload,
-  Employee
+  Employee,
+  ModelPricing,
+  ProviderAttempt
 } from "@/server/domain/types";
 import type { DiscussionBrief } from "@/server/application/discussion-brief";
 import { AesCredentialCipher } from "@/server/security/credential-cipher";
@@ -166,6 +168,49 @@ export function createFixtureDiscussion(
     startedAt: now,
     updatedAt: now
   };
+}
+
+export function createFixtureModelPricing(
+  overrides: Partial<ModelPricing> = {}
+): ModelPricing {
+  return {
+    id: "pricing-openai-test",
+    workspaceId: "00000000-0000-4000-8000-000000000001",
+    provider: "openai",
+    modelId: "test-model",
+    currency: "USD",
+    inputMicrosPerMillionTokens: 3_000_000,
+    outputMicrosPerMillionTokens: 15_000_000,
+    effectiveAt: "2026-01-01T00:00:00.000Z",
+    source: "provider published rates",
+    version: "2026-01",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    ...overrides
+  };
+}
+
+export function createFixtureProviderAttempt(
+  overrides: Partial<ProviderAttempt> = {}
+): ProviderAttempt {
+  const base: ProviderAttempt = {
+    id: "attempt-1",
+    workspaceId: "00000000-0000-4000-8000-000000000001",
+    purpose: "conversation",
+    provider: "openai",
+    modelId: "test-model",
+    targetOrder: 0,
+    attempt: 1,
+    status: "succeeded",
+    usage: {
+      inputTokens: 1_000_000,
+      outputTokens: 100_000,
+      totalTokens: 1_100_000,
+      source: "provider"
+    },
+    startedAt: "2026-02-01T00:00:00.000Z",
+    completedAt: "2026-02-01T00:00:01.000Z"
+  };
+  return { ...base, ...overrides };
 }
 
 export function createFixtureTurnPayload(

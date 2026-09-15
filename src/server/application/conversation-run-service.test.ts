@@ -10,6 +10,7 @@ import { evidenceReferenceId } from "@/server/application/discussion-evidence";
 import { AesCredentialCipher } from "@/server/security/credential-cipher";
 import {
   createFixtureDiscussion,
+  createFixtureModelPricing,
   createFixtureState,
   createFixtureTurnPayload,
   noopProviderRegistry,
@@ -793,6 +794,88 @@ describe("ConversationRun", () => {
         "provider_attempt_completed"
       ])
     );
+  });
+
+  it("stamps the pricing snapshot and estimated cost when usage is recorded", async () => {
+    const state = createFixtureState();
+    state.modelPricing.push(
+      createFixtureModelPricing({
+        workspaceId: state.workspace.id,
+        cachedInputMicrosPerMillionTokens: 300_000
+      })
+    );
+    const store = new MemoryStore(state);
+    const gateway: ModelGateway = {
+      async *run() {
+        yield {
+          type: "usage",
+          usage: {
+            inputTokens: 1_000_000,
+            outputTokens: 100_000,
+            cachedInputTokens: 400_000,
+            totalTokens: 1_100_000,
+            source: "provider"
+          }
+        };
+        yield { type: "text_completed", text: "priced" };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway
+    );
+    const started = await runs.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice price this" }
+    );
+
+    await runs.processRun(started.run!.id);
+
+    const attempt = await store.read((current) =>
+      current.providerAttempts.at(-1)
+    );
+    // 600k uncached input * 3.0 + 400k cached * 0.3 + 100k output * 15.0
+    expect(attempt).toMatchObject({
+      pricingId: "pricing-openai-test",
+      estimatedCostMicros: 3_420_000
+    });
+  });
+
+  it("records unknown cost when no pricing snapshot matches the attempt", async () => {
+    const state = createFixtureState();
+    const store = new MemoryStore(state);
+    const gateway: ModelGateway = {
+      async *run() {
+        yield {
+          type: "usage",
+          usage: {
+            inputTokens: 100,
+            outputTokens: 10,
+            totalTokens: 110,
+            source: "provider"
+          }
+        };
+        yield { type: "text_completed", text: "unpriced" };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway
+    );
+    const started = await runs.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice run without pricing" }
+    );
+
+    await runs.processRun(started.run!.id);
+
+    const attempt = await store.read((current) =>
+      current.providerAttempts.at(-1)
+    );
+    expect(attempt?.pricingId).toBeUndefined();
+    expect(attempt?.estimatedCostMicros).toBeNull();
   });
 
   it("records each provider call in a tool-using Turn", async () => {

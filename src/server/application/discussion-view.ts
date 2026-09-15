@@ -8,6 +8,7 @@ import type {
 } from "@/server/domain/types";
 import { notFound } from "@/server/application/errors";
 import { aggregateModelUsage } from "@/server/application/model-usage";
+import { aggregateAttemptCosts } from "@/server/application/model-pricing";
 
 export type DiscussionAction =
   | "edit"
@@ -174,11 +175,11 @@ export function buildDiscussionView(
       left.createdAt.localeCompare(right.createdAt)
     )
     .at(-1);
-  const usage = aggregateModelUsage(
-    state.providerAttempts.filter(
-      (attempt) => attempt.discussionId === discussion.id
-    )
+  const discussionAttempts = state.providerAttempts.filter(
+    (attempt) => attempt.discussionId === discussion.id
   );
+  const usage = aggregateModelUsage(discussionAttempts);
+  const cost = aggregateAttemptCosts(state, discussionAttempts);
   const turns = discussion.rounds.flatMap((round) => round.turns);
   const factClaims = turns.flatMap(
     (turn) =>
@@ -270,6 +271,7 @@ export function buildDiscussionView(
     confirmedTask: confirmedTask ? taskView(confirmedTask) : undefined,
     activeRun: activeRun ? runView(activeRun) : undefined,
     usage,
+    cost,
     fallbacks,
     evidence,
     budget: {
