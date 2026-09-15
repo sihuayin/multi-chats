@@ -10,12 +10,18 @@ import { MemoryStore } from "@/server/store/memory-store";
 import {
   createFixtureDiscussion,
   createFixtureBrief,
+  createFixtureModelPricing,
+  createFixtureProviderAttempt,
   createFixtureState,
   discussionModelGateway,
   RecordingModelGateway,
   TEST_KEY
 } from "@/server/test-support/fixtures";
-import type { DiscussionTurnPayload } from "@/server/domain/types";
+import type {
+  AppState,
+  Discussion,
+  DiscussionTurnPayload
+} from "@/server/domain/types";
 import type { ModelGateway } from "@/server/application/model-gateway";
 
 describe("DiscussionOrchestrator", () => {
@@ -1195,6 +1201,409 @@ function failingGateway(message: string): ModelGateway {
     }
   };
 }
+
+describe("DiscussionOrchestrator budget enforcement", () => {
+  function harness(state: AppState) {
+    const store = new MemoryStore(state);
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      discussionModelGateway()
+    );
+    return { store, runs, orchestrator: new DiscussionOrchestrator(store, runs) };
+  }
+
+  function draftDiscussion(state: AppState): Discussion {
+    const discussion = createFixtureDiscussion({
+      workspaceId: state.workspace.id,
+      conversationId: state.conversations[0].id
+    });
+    discussion.status = "draft";
+    discussion.currentRound = 0;
+    discussion.rounds = [];
+    state.discussions.push(discussion);
+    return discussion;
+  }
+
+  async function stampUsage(
+    store: MemoryStore,
+    discussionId: string,
+    id: string,
+    totalTokens: number
+  ): Promise<void> {
+    await store.update((state) => {
+      state.providerAttempts.push(
+        createFixtureProviderAttempt({
+          id,
+          workspaceId: state.workspace.id,
+          discussionId,
+          purpose: "discussion_turn",
+          usage: {
+            inputTokens: totalTokens,
+            outputTokens: 0,
+            totalTokens,
+            source: "provider"
+          }
+        })
+      );
+    });
+  }
+
+  it("inherits Workspace budget defaults at creation and overrides field-wise", async () => {
+    const state = createFixtureState();
+    state.workspace.discussionBudgetDefaults = {
+      maxTotalTokens: 1_000,
+      maxTotalCostMicros: 5_000,
+      currency: "USD"
+    };
+    state.conversations.push({
+      id: "30000000-0000-4000-8000-000000000002",
+      workspaceId: state.workspace.id,
+      title: "Second conversation",
+      memberIds: state.conversations[0].memberIds,
+      createdAt: state.workspace.createdAt,
+      updatedAt: state.workspace.updatedAt
+    });
+    const { orchestrator } = harness(state);
+    const participants = [
+      { employeeId: "20000000-0000-4000-8000-000000000001", role: "analyst" as const },
+      { employeeId: "20000000-0000-4000-8000-000000000002", role: "facilitator" as const }
+    ];
+
+    const inherited = await orchestrator.createDiscussion(
+      "30000000-0000-4000-8000-000000000002",
+      {
+        title: "Inherited budget",
+        mode: "problem",
+        language: "en",
+        participants,
+        facilitatorId: "20000000-0000-4000-8000-000000000002",
+        maxRounds: 3
+      }
+    );
+    expect(inherited.discussion.budget).toEqual({
+      maxTotalTokens: 1_000,
+      maxTotalCostMicros: 5_000,
+      currency: "USD"
+    });
+
+    const overridden = await orchestrator.createDiscussion(
+      state.conversations[0].id,
+      {
+        title: "Overridden budget",
+        mode: "problem",
+        language: "en",
+        participants,
+        facilitatorId: "20000000-0000-4000-8000-000000000002",
+        maxRounds: 3,
+        budget: { maxTotalTokens: 400 }
+      }
+    );
+    expect(overridden.discussion.budget).toEqual({
+      maxTotalTokens: 400,
+      maxTotalCostMicros: 5_000,
+      currency: "USD"
+    });
+  });
+
+  it("patches the budget on a non-terminal Discussion", async () => {
+    const state = createFixtureState();
+    const discussion = createFixtureDiscussion({
+      workspaceId: state.workspace.id,
+      conversationId: state.conversations[0].id
+    });
+    state.discussions.push(discussion);
+    const { store, orchestrator } = harness(state);
+
+    await orchestrator.updateDiscussion(discussion.id, {
+      budget: { maxTotalTokens: 999, softTotalTokens: 900 }
+    });
+
+    const persisted = await store.read((current) =>
+      current.discussions.find((item) => item.id === discussion.id)!
+    );
+    expect(persisted.budget).toMatchObject({
+      maxTotalTokens: 999,
+      softTotalTokens: 900
+    });
+    expect(
+      state.discussionInterventions.some(
+        (intervention) =>
+          intervention.discussionId === discussion.id &&
+          intervention.kind === "budget_change"
+      ) ||
+      (await store.read((current) =>
+        current.discussionInterventions.some(
+          (intervention) =>
+            intervention.discussionId === discussion.id &&
+            intervention.kind === "budget_change"
+        )
+      ))
+    ).toBe(true);
+  });
+
+  it("stops scheduling content Rounds once the soft token budget is reached", async () => {
+    const state = createFixtureState();
+    const discussion = draftDiscussion(state);
+    discussion.maxRounds = 5;
+    discussion.budget = { maxTotalTokens: 100_000, softTotalTokens: 40 };
+    const { store, runs, orchestrator } = harness(state);
+
+    await orchestrator.startDiscussion(discussion.id);
+    await processLatestDiscussionRun(store, runs, discussion.id);
+    await setTurnPayloads(store, discussion.id, 1, ["Position A", "Position B"]);
+    await stampUsage(store, discussion.id, "budget-a1", 20);
+    await orchestrator.advanceDiscussion(discussion.id);
+
+    // Soft threshold not reached yet: a Cross-response Round starts.
+    let persisted = await store.read((current) =>
+      current.discussions.find((item) => item.id === discussion.id)!
+    );
+    expect(persisted.rounds.at(-1)).toMatchObject({
+      phase: "cross_response",
+      roundNumber: 2
+    });
+
+    await processLatestDiscussionRun(store, runs, discussion.id);
+    await setTurnPayloads(store, discussion.id, 2, ["Cross A", "Cross B"]);
+    await stampUsage(store, discussion.id, "budget-a2", 30);
+    await orchestrator.advanceDiscussion(discussion.id);
+
+    persisted = await store.read((current) =>
+      current.discussions.find((item) => item.id === discussion.id)!
+    );
+    // used = 50 >= soft 40: no third content Round; Synthesis is queued instead.
+    expect(persisted.rounds.at(-1)).toMatchObject({ phase: "synthesis" });
+    expect(
+      persisted.rounds.filter((round) => round.phase === "cross_response")
+    ).toHaveLength(1);
+    const exhausted = (persisted.events ?? []).filter(
+      (event) => event.type === "discussion_budget_exhausted"
+    );
+    expect(exhausted).toHaveLength(1);
+    expect(exhausted[0].payload).toMatchObject({
+      dimension: "tokens",
+      decision: "soft"
+    });
+  });
+
+  it("transitions to Synthesis on hard cost exhaustion with minimum content", async () => {
+    const state = createFixtureState();
+    const discussion = draftDiscussion(state);
+    discussion.maxRounds = 5;
+    discussion.budget = {
+      maxTotalCostMicros: 100_000,
+      currency: "USD"
+    };
+    state.modelPricing.push(
+      createFixtureModelPricing({ workspaceId: state.workspace.id })
+    );
+    const { store, runs, orchestrator } = harness(state);
+
+    await orchestrator.startDiscussion(discussion.id);
+    await processLatestDiscussionRun(store, runs, discussion.id);
+    await setTurnPayloads(store, discussion.id, 1, ["Position A", "Position B"]);
+    await orchestrator.advanceDiscussion(discussion.id);
+    await processLatestDiscussionRun(store, runs, discussion.id);
+    await setTurnPayloads(store, discussion.id, 2, ["Cross A", "Cross B"]);
+    await store.update((current) => {
+      current.providerAttempts.push(
+        createFixtureProviderAttempt({
+          id: "cost-a1",
+          workspaceId: current.workspace.id,
+          discussionId: discussion.id,
+          purpose: "discussion_turn",
+          usage: {
+            inputTokens: 100_000,
+            outputTokens: 0,
+            totalTokens: 100_000,
+            source: "provider"
+          },
+          pricingId: "pricing-openai-test",
+          estimatedCostMicros: 150_000
+        })
+      );
+    });
+
+    await orchestrator.advanceDiscussion(discussion.id);
+
+    const persisted = await store.read((current) =>
+      current.discussions.find((item) => item.id === discussion.id)!
+    );
+    expect(persisted.rounds.at(-1)).toMatchObject({ phase: "synthesis" });
+    const exhausted = (persisted.events ?? []).filter(
+      (event) => event.type === "discussion_budget_exhausted"
+    );
+    expect(exhausted[0].payload).toMatchObject({
+      dimension: "cost",
+      decision: "hard"
+    });
+  });
+
+  it("transitions to Synthesis after a Run is interrupted by the hard budget mid-round", async () => {
+    const state = createFixtureState();
+    const discussion = draftDiscussion(state);
+    discussion.maxRounds = 5;
+    const { store, runs, orchestrator } = harness(state);
+
+    await orchestrator.startDiscussion(discussion.id);
+    await processLatestDiscussionRun(store, runs, discussion.id);
+    await setTurnPayloads(store, discussion.id, 1, ["Position A", "Position B"]);
+    await orchestrator.advanceDiscussion(discussion.id);
+    await processLatestDiscussionRun(store, runs, discussion.id);
+    await setTurnPayloads(store, discussion.id, 2, ["Cross A", "Cross B"]);
+    await orchestrator.advanceDiscussion(discussion.id);
+
+    // Round 3 is queued; now the budget becomes hard-exhausted.
+    await store.update((current) => {
+      const currentDiscussion = current.discussions.find(
+        (item) => item.id === discussion.id
+      )!;
+      currentDiscussion.budget = { maxTotalTokens: 10 };
+      current.providerAttempts.push(
+        createFixtureProviderAttempt({
+          id: "budget-hard-1",
+          workspaceId: current.workspace.id,
+          discussionId: discussion.id,
+          purpose: "discussion_turn",
+          usage: {
+            inputTokens: 5,
+            outputTokens: 0,
+            totalTokens: 5,
+            source: "provider"
+          }
+        })
+      );
+    });
+    await processLatestDiscussionRun(store, runs, discussion.id);
+
+    const interruptedRun = await store.read((current) =>
+      current.runs
+        .filter((run) => run.discussionId === discussion.id)
+        .at(-1)
+    );
+    expect(interruptedRun).toMatchObject({
+      status: "interrupted",
+      errorCode: "discussion_budget_exhausted"
+    });
+
+    await orchestrator.advanceDiscussion(discussion.id);
+
+    const persisted = await store.read((current) =>
+      current.discussions.find((item) => item.id === discussion.id)!
+    );
+    expect(persisted.status).toBe("running");
+    expect(persisted.rounds.at(-1)).toMatchObject({ phase: "synthesis" });
+    expect(
+      (persisted.events ?? []).some(
+        (event) =>
+          event.type === "discussion_budget_exhausted" &&
+          event.payload.decision === "hard"
+      )
+    ).toBe(true);
+  });
+
+  it("interrupts with a stable reason when the budget dies before minimum content", async () => {
+    const state = createFixtureState();
+    const discussion = draftDiscussion(state);
+    discussion.maxRounds = 5;
+    discussion.budget = { maxTotalTokens: 10, softTotalTokens: 5 };
+    const { store, runs, orchestrator } = harness(state);
+
+    await orchestrator.startDiscussion(discussion.id);
+    await processLatestDiscussionRun(store, runs, discussion.id);
+    await setTurnPayloads(store, discussion.id, 1, ["Position A", "Position B"]);
+    await stampUsage(store, discussion.id, "budget-a1", 50);
+
+    await orchestrator.advanceDiscussion(discussion.id);
+
+    const persisted = await store.read((current) =>
+      current.discussions.find((item) => item.id === discussion.id)!
+    );
+    expect(persisted.status).toBe("interrupted");
+    expect(
+      (persisted.events ?? []).some(
+        (event) => event.type === "discussion_budget_exhausted"
+      )
+    ).toBe(true);
+    expect(
+      (persisted.events ?? []).some(
+        (event) =>
+          event.type === "discussion_interrupted" &&
+          event.payload.code === "discussion_insufficient_turns"
+      )
+    ).toBe(true);
+  });
+
+  it("cancels a budgeted Discussion without recording budget exhaustion", async () => {
+    const { store, runs, orchestrator, discussion } =
+      await createRunningDiscussion();
+    await store.update((current) => {
+      const persisted = current.discussions.find(
+        (item) => item.id === discussion.id
+      )!;
+      persisted.budget = { maxTotalTokens: 100_000, softTotalTokens: 5 };
+    });
+
+    const cancelled = await orchestrator.cancelDiscussion(discussion.id, {
+      reason: "No longer needed"
+    });
+
+    expect(cancelled.status).toBe("cancelled");
+    const persisted = await store.read((current) => ({
+      discussion: current.discussions.find(
+        (item) => item.id === discussion.id
+      )!,
+      runs: current.runs.filter((run) => run.discussionId === discussion.id)
+    }));
+    expect(persisted.runs.every((run) => run.status === "cancelled")).toBe(
+      true
+    );
+    expect(
+      (persisted.discussion.events ?? []).some(
+        (event) => event.type === "discussion_budget_exhausted"
+      )
+    ).toBe(false);
+    expect(runs).toBeDefined();
+  });
+
+  it("extends a reviewed Discussion and raises its budget", async () => {
+    const state = createFixtureState();
+    const discussion = createFixtureDiscussion({
+      workspaceId: state.workspace.id,
+      conversationId: state.conversations[0].id
+    });
+    discussion.budget = { maxTotalTokens: 100 };
+    state.discussions.push(discussion);
+    const { store, orchestrator } = harness(state);
+
+    await orchestrator.extendDiscussion(discussion.id, {
+      budget: { maxTotalTokens: 100_000 }
+    });
+
+    const persisted = await store.read((current) => ({
+      discussion: current.discussions.find(
+        (item) => item.id === discussion.id
+      )!,
+      interventions: current.discussionInterventions.filter(
+        (item) => item.discussionId === discussion.id
+      )
+    }));
+    expect(persisted.discussion.status).toBe("running");
+    expect(persisted.discussion.budget).toMatchObject({
+      maxTotalTokens: 100_000
+    });
+    expect(persisted.discussion.rounds.at(-1)).toMatchObject({
+      phase: "cross_response",
+      status: "running"
+    });
+    expect(
+      persisted.interventions.some(
+        (item) => item.kind === "budget_change" && item.status === "applied"
+      )
+    ).toBe(true);
+  });
+});
 
 async function processLatestDiscussionRun(
   store: MemoryStore,

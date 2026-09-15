@@ -3,6 +3,7 @@ import "server-only";
 import {
   approvalDecisionSchema,
   discussionConfirmSchema,
+  discussionExtendSchema,
   discussionRetrySchema,
   discussionSkipSchema,
   discussionStopSchema,
@@ -270,6 +271,10 @@ async function handleApiRoute(
     return json(await workspace.getWorkspaceView());
   }
 
+  if (request.method === "PATCH" && resource === "workspace") {
+    return json(await workspace.updateWorkspace(await body(request)));
+  }
+
   if (resource === "providers") {
       if (request.method === "GET" && !id) {
         return json(await workspace.listProviders());
@@ -473,8 +478,8 @@ async function handleApiRoute(
               discussionStopSchema.parse(rawInput)
             );
           } else if (child === "extend") {
-            emptyCommandSchema.parse(rawInput);
-            await discussions.extendDiscussion(id);
+            const extendInput = discussionExtendSchema.parse(rawInput);
+            await discussions.extendDiscussion(id, extendInput);
           } else {
             return json(
               { error: "Route not found", code: "not_found" },

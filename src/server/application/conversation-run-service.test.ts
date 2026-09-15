@@ -11,8 +11,10 @@ import { AesCredentialCipher } from "@/server/security/credential-cipher";
 import {
   createFixtureDiscussion,
   createFixtureModelPricing,
+  createFixtureProviderAttempt,
   createFixtureState,
   createFixtureTurnPayload,
+  discussionModelGateway,
   noopProviderRegistry,
   RecordingModelGateway,
   TEST_KEY,
@@ -876,6 +878,173 @@ describe("ConversationRun", () => {
     );
     expect(attempt?.pricingId).toBeUndefined();
     expect(attempt?.estimatedCostMicros).toBeNull();
+  });
+
+  it("rejects the next Provider call without invoking it when the hard token budget would be exceeded", async () => {
+    const state = createFixtureState();
+    const { discussion, round } = addFixturePhase(state);
+    discussion.budget = { maxTotalTokens: 10 };
+    state.providerAttempts.push(
+      createFixtureProviderAttempt({
+        id: "budget-used",
+        workspaceId: state.workspace.id,
+        discussionId: discussion.id,
+        purpose: "discussion_turn",
+        usage: {
+          inputTokens: 5,
+          outputTokens: 0,
+          totalTokens: 5,
+          source: "provider"
+        }
+      })
+    );
+    const store = new MemoryStore(state);
+    const gateway = discussionModelGateway();
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway
+    );
+    const started = await runs.startPhaseRun(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        discussionId: discussion.id,
+        roundId: round.id,
+        participantSnapshot: round.participantSnapshot,
+        context: "Prior phase context.",
+        purpose: "Challenge the earlier phase."
+      }
+    );
+
+    await runs.processRun(started.run.id);
+
+    expect(gateway.requests).toHaveLength(0);
+    const persisted = await store.read((current) => ({
+      run: current.runs.find((item) => item.id === started.run.id)!,
+      round: current.discussions
+        .find((item) => item.id === discussion.id)!
+        .rounds.find((item) => item.id === round.id)!
+    }));
+    expect(persisted.run).toMatchObject({
+      status: "interrupted",
+      errorCode: "discussion_budget_exhausted"
+    });
+    expect(
+      persisted.round.turns.every((turn) => turn.status !== "completed")
+    ).toBe(true);
+  });
+
+  it("lets the current Turn finish but cancels the next one at the soft token threshold", async () => {
+    const state = createFixtureState();
+    const { discussion, round } = addFixturePhase(state);
+    discussion.budget = { maxTotalTokens: 100_000, softTotalTokens: 30 };
+    const store = new MemoryStore(state);
+    const gateway: ModelGateway = {
+      async *run() {
+        yield {
+          type: "usage",
+          usage: {
+            inputTokens: 40,
+            outputTokens: 0,
+            totalTokens: 40,
+            source: "provider"
+          }
+        };
+        yield {
+          type: "text_completed",
+          text: JSON.stringify(createFixtureTurnPayload("cross_response"))
+        };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway
+    );
+    const started = await runs.startPhaseRun(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        discussionId: discussion.id,
+        roundId: round.id,
+        participantSnapshot: round.participantSnapshot,
+        context: "Prior phase context.",
+        purpose: "Challenge the earlier phase."
+      }
+    );
+
+    await runs.processRun(started.run.id);
+
+    const persisted = await store.read((current) => ({
+      run: current.runs.find((item) => item.id === started.run.id)!,
+      round: current.discussions
+        .find((item) => item.id === discussion.id)!
+        .rounds.find((item) => item.id === round.id)!
+    }));
+    expect(persisted.run.status).toBe("completed");
+    const statuses = persisted.round.turns.map((turn) => turn.status);
+    expect(statuses).toContain("completed");
+    expect(statuses).toContain("cancelled");
+    const cancelled = persisted.round.turns.find(
+      (turn) => turn.status === "cancelled"
+    );
+    expect(cancelled?.cancelReason).toBe("budget_exhausted");
+  });
+
+  it("interrupts the Run at the Turn boundary when the hard token budget is already met", async () => {
+    const state = createFixtureState();
+    const { discussion, round } = addFixturePhase(state);
+    discussion.budget = { maxTotalTokens: 30 };
+    const store = new MemoryStore(state);
+    const gateway: ModelGateway = {
+      async *run() {
+        yield {
+          type: "usage",
+          usage: {
+            inputTokens: 40,
+            outputTokens: 0,
+            totalTokens: 40,
+            source: "provider"
+          }
+        };
+        yield {
+          type: "text_completed",
+          text: JSON.stringify(createFixtureTurnPayload("cross_response"))
+        };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway
+    );
+    const started = await runs.startPhaseRun(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        discussionId: discussion.id,
+        roundId: round.id,
+        participantSnapshot: round.participantSnapshot,
+        context: "Prior phase context.",
+        purpose: "Challenge the earlier phase."
+      }
+    );
+
+    await runs.processRun(started.run.id);
+
+    const persisted = await store.read((current) => ({
+      run: current.runs.find((item) => item.id === started.run.id)!,
+      round: current.discussions
+        .find((item) => item.id === discussion.id)!
+        .rounds.find((item) => item.id === round.id)!
+    }));
+    expect(persisted.run).toMatchObject({
+      status: "interrupted",
+      errorCode: "discussion_budget_exhausted"
+    });
+    const interrupted = persisted.round.turns.filter(
+      (turn) => turn.status === "interrupted"
+    );
+    expect(interrupted.length).toBeGreaterThan(0);
+    expect(interrupted[0].cancelReason).toBe("budget_exhausted");
   });
 
   it("records each provider call in a tool-using Turn", async () => {

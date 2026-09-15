@@ -79,6 +79,49 @@ export const phaseRunInputSchema = z.object({
   purpose: z.string().trim().min(1).max(4000)
 }).strict();
 
+export const discussionBudgetSchema = z
+  .object({
+    maxTotalTokens: z.number().int().positive().optional(),
+    softTotalTokens: z.number().int().positive().optional(),
+    maxTotalCostMicros: z.number().int().positive().optional(),
+    softTotalCostMicros: z.number().int().positive().optional(),
+    currency: z.string().trim().min(1).max(8).optional()
+  })
+  .strict()
+  .refine(
+    (budget) =>
+      budget.softTotalTokens === undefined ||
+      budget.maxTotalTokens === undefined ||
+      budget.softTotalTokens <= budget.maxTotalTokens,
+    "Soft token threshold cannot exceed the hard token limit"
+  )
+  .refine(
+    (budget) =>
+      budget.softTotalCostMicros === undefined ||
+      budget.maxTotalCostMicros === undefined ||
+      budget.softTotalCostMicros <= budget.maxTotalCostMicros,
+    "Soft cost threshold cannot exceed the hard cost limit"
+  )
+  .refine(
+    (budget) =>
+      (budget.maxTotalCostMicros === undefined &&
+        budget.softTotalCostMicros === undefined) ||
+      budget.currency !== undefined,
+    "Cost budgets require a currency"
+  );
+
+export const discussionExtendSchema = z
+  .object({
+    budget: discussionBudgetSchema.optional()
+  })
+  .strict();
+
+export const workspacePatchSchema = z
+  .object({
+    discussionBudgetDefaults: discussionBudgetSchema.nullable()
+  })
+  .strict();
+
 export const discussionCreateSchema = z.object({
   title: z.string().trim().min(1).max(120),
   mode: z.enum(["requirements", "problem", "solution", "review"]),
@@ -101,6 +144,7 @@ export const discussionCreateSchema = z.object({
     .max(8),
   facilitatorId: z.string().trim().min(1),
   maxRounds: z.number().int().min(1).max(5).default(3),
+  budget: discussionBudgetSchema.optional(),
   sourceTaskId: z.string().trim().min(1).optional()
 }).strict();
 
@@ -110,7 +154,8 @@ export const discussionPatchSchema = z.object({
   language: z.enum(["en", "zh"]).optional(),
   participants: discussionCreateSchema.shape.participants.optional(),
   facilitatorId: z.string().trim().min(1).optional(),
-  maxRounds: z.number().int().min(1).max(5).optional()
+  maxRounds: z.number().int().min(1).max(5).optional(),
+  budget: discussionBudgetSchema.optional()
 }).strict().refine(
   (value) => Object.keys(value).length > 0,
   "At least one Discussion field is required"

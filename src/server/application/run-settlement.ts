@@ -42,6 +42,13 @@ export type RunSettlementCommand =
       reason: "worker_restart";
       error: string;
       interrupted: true;
+    })
+  | (SettlementBase & {
+      outcome: "interrupted";
+      reason: "discussion_budget_exhausted";
+      error: string;
+      errorCode?: string;
+      interrupted: true;
     });
 
 export type RunSettlementResult = {

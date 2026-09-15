@@ -96,6 +96,10 @@ _Avoid_: Citation, source text
 A user-authored constraint, question, correction, material addition, or lifecycle change applied to a Discussion between Rounds.
 _Avoid_: Steering message, prompt
 
+**Discussion Budget**:
+The bounded total token and optional total cost limits of a Discussion, inherited from Workspace defaults at creation, with soft and hard thresholds enforced before each Provider call.
+_Avoid_: Quota, allowance, spending limit
+
 **Compression record**:
 An immutable, source-linked representation of completed Discussion history that replaces older Turns in a model request when the token budget requires it.
 _Avoid_: Summary, truncation

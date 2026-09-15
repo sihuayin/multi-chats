@@ -1,3 +1,4 @@
+import type { DiscussionBudget } from "@/server/domain/types";
 import type {
   Approval,
   Artifact,
@@ -25,6 +26,7 @@ export type WorkspaceView = {
   workspace: {
     id: string;
     name: string;
+    discussionBudgetDefaults?: DiscussionBudget;
   };
   providers: PublicProvider[];
   employees: Employee[];

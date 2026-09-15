@@ -69,6 +69,83 @@ function interventionStatusKey(status: string): TranslationKey {
   return "chat.interventionPending";
 }
 
+type BudgetViewSlice = {
+  source: "discussion" | "workspace_defaults" | "none";
+  tokens: {
+    used: number;
+    soft?: number;
+    hard?: number;
+    remaining?: number;
+    unknownUsageAttemptCount: number;
+    state: "unbounded" | "ok" | "soft" | "hard" | "unknown";
+  };
+  cost: {
+    usedMicros: number;
+    currency?: string;
+    softMicros?: number;
+    hardMicros?: number;
+    remainingMicros?: number;
+    unknownCostAttemptCount: number;
+    state: "unbounded" | "ok" | "soft" | "hard" | "unknown";
+  };
+};
+
+function BudgetStatusLine({ budget }: { budget: BudgetViewSlice }) {
+  const { t } = useI18n();
+  const unknownCount =
+    budget.tokens.unknownUsageAttemptCount +
+    budget.cost.unknownCostAttemptCount;
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[var(--muted-foreground)]">
+      <Badge variant="outline">{t("chat.budgetBadge")}</Badge>
+      <span>
+        {budget.tokens.hard !== undefined
+          ? t("chat.tokenBudgetUsed", {
+              used: budget.tokens.used.toLocaleString(),
+              limit: budget.tokens.hard.toLocaleString()
+            })
+          : t("chat.tokenBudgetUsedOnly", {
+              used: budget.tokens.used.toLocaleString()
+            })}
+      </span>
+      {budget.tokens.remaining !== undefined ? (
+        <span>
+          {t("chat.tokenBudgetRemaining", {
+            count: budget.tokens.remaining.toLocaleString()
+          })}
+        </span>
+      ) : null}
+      {budget.cost.hardMicros !== undefined ? (
+        <span>
+          {t("chat.costBudgetUsed", {
+            used: formatCostMicros(budget.cost.usedMicros),
+            limit: formatCostMicros(budget.cost.hardMicros),
+            currency: budget.cost.currency ?? ""
+          })}
+        </span>
+      ) : null}
+      {budget.cost.remainingMicros !== undefined ? (
+        <span>
+          {t("chat.costBudgetRemaining", {
+            amount: formatCostMicros(budget.cost.remainingMicros),
+            currency: budget.cost.currency ?? ""
+          })}
+        </span>
+      ) : null}
+      {budget.tokens.state === "soft" || budget.cost.state === "soft" ? (
+        <Badge variant="outline">{t("chat.budgetSoftReached")}</Badge>
+      ) : null}
+      {budget.tokens.state === "hard" || budget.cost.state === "hard" ? (
+        <Badge variant="outline">{t("chat.budgetHardReached")}</Badge>
+      ) : null}
+      {budget.tokens.state === "unknown" ||
+      budget.cost.state === "unknown" ? (
+        <span>{t("chat.budgetUnknownCoverage", { count: unknownCount })}</span>
+      ) : null}
+    </div>
+  );
+}
+
 function formatCostMicros(costMicros: number): string {
   return (costMicros / 1_000_000).toLocaleString(undefined, {
     minimumFractionDigits: 2,
@@ -117,6 +194,13 @@ type DiscussionView = {
     participantCount: number;
     currentRound: number;
     maxRounds: number;
+    budget?: {
+      maxTotalTokens?: number;
+      softTotalTokens?: number;
+      maxTotalCostMicros?: number;
+      softTotalCostMicros?: number;
+      currency?: string;
+    };
     latestBriefRevision?: number;
     confirmedTaskId?: string;
   };
@@ -164,6 +248,24 @@ type DiscussionView = {
     usedRounds: number;
     maxRounds: number;
     usedParticipants: number;
+    source: "discussion" | "workspace_defaults" | "none";
+    tokens: {
+      used: number;
+      soft?: number;
+      hard?: number;
+      remaining?: number;
+      unknownUsageAttemptCount: number;
+      state: "unbounded" | "ok" | "soft" | "hard" | "unknown";
+    };
+    cost: {
+      usedMicros: number;
+      currency?: string;
+      softMicros?: number;
+      hardMicros?: number;
+      remainingMicros?: number;
+      unknownCostAttemptCount: number;
+      state: "unbounded" | "ok" | "soft" | "hard" | "unknown";
+    };
     context?: {
       countSource: "exact" | "estimated" | "unknown";
       inputTokens: number;
@@ -289,6 +391,7 @@ export function DiscussionWorkspace() {
   const [mode, setMode] = useState<DiscussionMode>("problem");
   const [language, setLanguage] = useState<"en" | "zh">("en");
   const [maxRounds, setMaxRounds] = useState(3);
+  const [maxTotalTokens, setMaxTotalTokens] = useState("");
   const [roleByEmployee, setRoleByEmployee] = useState<
     Record<string, DiscussionRole>
   >({});
@@ -469,6 +572,14 @@ export function DiscussionWorkspace() {
             mode,
             language,
             maxRounds,
+            ...(maxTotalTokens.trim() !== "" &&
+            Number.isFinite(Number(maxTotalTokens))
+              ? {
+                  budget: {
+                    maxTotalTokens: Math.max(1, Math.floor(Number(maxTotalTokens)))
+                  }
+                }
+              : {}),
             participants: Object.keys(effectiveRoleByEmployee).map(
               (employeeId) => ({
                 employeeId,
@@ -684,6 +795,19 @@ export function DiscussionWorkspace() {
                     }
                   />
                 </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="discussion-token-budget">
+                    {t("chat.maxTotalTokens")}
+                  </Label>
+                  <Input
+                    id="discussion-token-budget"
+                    type="number"
+                    min={1}
+                    value={maxTotalTokens}
+                    placeholder={t("chat.budgetInheritedHint")}
+                    onChange={(event) => setMaxTotalTokens(event.target.value)}
+                  />
+                </div>
               </div>
               <Separator />
               <div className="grid gap-3">
@@ -808,6 +932,9 @@ export function DiscussionWorkspace() {
                   {view.discussion.maxRounds} ·{" "}
                   {view.discussion.participantCount} participants
                 </p>
+                {view.budget.source !== "none" ? (
+                  <BudgetStatusLine budget={view.budget} />
+                ) : null}
                 {view.budget.context ? (
                   <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[var(--muted-foreground)]">
                     <Badge variant="outline">

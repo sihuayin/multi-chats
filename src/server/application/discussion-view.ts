@@ -9,6 +9,7 @@ import type {
 import { notFound } from "@/server/application/errors";
 import { aggregateModelUsage } from "@/server/application/model-usage";
 import { aggregateAttemptCosts } from "@/server/application/model-pricing";
+import { evaluateDiscussionBudget } from "@/server/application/discussion-budget";
 
 export type DiscussionAction =
   | "edit"
@@ -180,6 +181,7 @@ export function buildDiscussionView(
   );
   const usage = aggregateModelUsage(discussionAttempts);
   const cost = aggregateAttemptCosts(state, discussionAttempts);
+  const budgetEvaluation = evaluateDiscussionBudget(state, discussion);
   const turns = discussion.rounds.flatMap((round) => round.turns);
   const factClaims = turns.flatMap(
     (turn) =>
@@ -240,6 +242,7 @@ export function buildDiscussionView(
       confirmedBriefArtifactId: discussion.confirmedBriefArtifactId,
       confirmedTaskId: discussion.confirmedTaskId,
       promptProfileVersion: discussion.promptProfileVersion,
+      budget: discussion.budget,
       createdAt: discussion.createdAt,
       updatedAt: discussion.updatedAt
     },
@@ -280,6 +283,9 @@ export function buildDiscussionView(
       ).length,
       maxRounds: discussion.maxRounds,
       usedParticipants: discussion.participants.length,
+      source: budgetEvaluation.source,
+      tokens: budgetEvaluation.tokens,
+      cost: budgetEvaluation.cost,
       context: latestContextRevision
         ? {
             id: latestContextRevision.id,

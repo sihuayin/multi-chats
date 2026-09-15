@@ -44,6 +44,14 @@ import {
 } from "@/server/application/model-usage";
 import { stampAttemptCost } from "@/server/application/model-pricing";
 import {
+  assertDiscussionBudgetForNextCall,
+  budgetDimension,
+  budgetExhaustedPayload,
+  DiscussionTotalBudgetError,
+  evaluateDiscussionBudget,
+  type BudgetStopKind
+} from "@/server/application/discussion-budget";
+import {
   classifyProviderFailure,
   ProviderReliabilityError,
   shouldFailoverProviderCall,
@@ -510,6 +518,26 @@ function settleDiscussionTurns(
       turn.status = "interrupted";
       turn.completedAt = message.updatedAt;
     }
+  }
+}
+
+function markBudgetStoppedTurns(
+  state: AppState,
+  run: Run,
+  stop: BudgetStopKind,
+  at: string
+): void {
+  if (!run.discussionId) return;
+  const discussion = state.discussions.find(
+    (item) => item.id === run.discussionId
+  );
+  const round = discussion?.rounds.find((item) => item.runId === run.id);
+  if (!round) return;
+  for (const turn of round.turns) {
+    if (turn.status !== "pending") continue;
+    turn.status = stop === "soft" ? "cancelled" : "interrupted";
+    turn.cancelReason = "budget_exhausted";
+    turn.completedAt = at;
   }
 }
 
@@ -1079,9 +1107,29 @@ export class ConversationRunService {
           )
       );
 
+      let budgetStop: BudgetStopKind | undefined;
+      let budgetGate: ReturnType<typeof evaluateDiscussionBudget> | undefined;
       for (const employeeId of initial.memberSnapshot) {
         if (completedEmployeeIds.has(employeeId)) continue;
         if (controller.signal.aborted) break;
+        if (initial.discussionId) {
+          const gate = await this.store.read((state) => {
+            const discussion = state.discussions.find(
+              (item) => item.id === initial.discussionId
+            );
+            if (!discussion) return null;
+            const round = discussion.rounds.find(
+              (item) => item.runId === runId
+            );
+            if (!round || round.phase === "synthesis") return null;
+            return evaluateDiscussionBudget(state, discussion);
+          });
+          if (gate && gate.decision !== "proceed") {
+            budgetStop = gate.decision === "hard_stop" ? "hard" : "soft";
+            budgetGate = gate;
+            break;
+          }
+        }
         await this.processEmployeeTurn(
           runId,
           employeeId,
@@ -1096,11 +1144,46 @@ export class ConversationRunService {
         if (controller.signal.aborted || run.status === "cancelled") {
           return { run: structuredClone(run), settlement: null };
         }
-        const settlement = settleRun(state, {
-          runId,
-          outcome: "completed",
-          reason: "run_completed"
-        });
+        if (budgetStop) {
+          markBudgetStoppedTurns(state, run, budgetStop, now());
+          if (budgetStop === "hard" && budgetGate && run.discussionId) {
+            const discussion = state.discussions.find(
+              (item) => item.id === run.discussionId
+            );
+            if (discussion) {
+              const round = discussion.rounds.find(
+                (item) => item.runId === run.id
+              );
+              appendDiscussionEvent(
+                discussion,
+                "discussion_budget_exhausted",
+                budgetExhaustedPayload({
+                  roundId: round?.id,
+                  runId: run.id,
+                  dimension: budgetDimension(budgetGate),
+                  decision: "hard",
+                  evaluation: budgetGate
+                })
+              );
+            }
+          }
+        }
+        const settlement =
+          budgetStop === "hard"
+            ? settleRun(state, {
+                runId,
+                outcome: "interrupted",
+                reason: "discussion_budget_exhausted",
+                error:
+                  "Discussion budget was exhausted before the next Turn.",
+                errorCode: "discussion_budget_exhausted",
+                interrupted: true
+              })
+            : settleRun(state, {
+                runId,
+                outcome: "completed",
+                reason: "run_completed"
+              });
         settleDiscussionTurns(state, runId);
         return { run: structuredClone(run), settlement };
       });
@@ -1136,6 +1219,56 @@ export class ConversationRunService {
         return cancellation.run;
       }
       const message = error instanceof Error ? error.message : String(error);
+      if (error instanceof DiscussionTotalBudgetError) {
+        const violated = error;
+        const interrupted = await this.store.update((state) => {
+          const run = state.runs.find((item) => item.id === runId);
+          if (!run) notFound("Run");
+          markBudgetStoppedTurns(state, run, "hard", now());
+          if (run.discussionId) {
+            const discussion = state.discussions.find(
+              (item) => item.id === run.discussionId
+            );
+            if (discussion) {
+              const round = discussion.rounds.find(
+                (item) => item.runId === run.id
+              );
+              appendDiscussionEvent(
+                discussion,
+                "discussion_budget_exhausted",
+                budgetExhaustedPayload({
+                  roundId: round?.id,
+                  runId: run.id,
+                  dimension: violated.details.dimension,
+                  decision: "hard",
+                  evaluation: evaluateDiscussionBudget(state, discussion),
+                  violation: {
+                    used: violated.details.used,
+                    limit: violated.details.limit,
+                    nextCallEstimate: violated.details.nextCallEstimate
+                  }
+                })
+              );
+            }
+          }
+          const settlement = settleRun(state, {
+            runId,
+            outcome: "interrupted",
+            reason: "discussion_budget_exhausted",
+            error: message,
+            errorCode: error.code,
+            interrupted: true
+          });
+          settleDiscussionTurns(state, runId, message);
+          return { run: structuredClone(run), settlement };
+        });
+        logRunSettlement(
+          interrupted.settlement,
+          interrupted.run.requestId,
+          { message }
+        );
+        return interrupted.run;
+      }
       const budgetError =
         error instanceof DiscussionContextBudgetError ? error : undefined;
       const evidenceError =
@@ -2075,6 +2208,25 @@ export class ConversationRunService {
         signal,
         false
       );
+    }
+
+    if (
+      context.phaseContext &&
+      context.phaseContext.phase !== "synthesis"
+    ) {
+      const plan = context.phaseContext.plan;
+      const phaseDiscussionId = context.phaseContext.discussionId;
+      const evaluation = await this.store.read((state) => {
+        const discussion = state.discussions.find(
+          (item) => item.id === phaseDiscussionId
+        );
+        if (!discussion) return null;
+        return evaluateDiscussionBudget(state, discussion, {
+          nextCallTokenEstimate:
+            plan.inputTokens + plan.outputReserveTokens
+        });
+      });
+      if (evaluation) assertDiscussionBudgetForNextCall(evaluation);
     }
 
     const message = await this.store.update((state) => {

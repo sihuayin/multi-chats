@@ -16,7 +16,8 @@ import {
   providerInputSchema,
   skillInputSchema,
   taskInputSchema,
-  taskPatchSchema
+  taskPatchSchema,
+  workspacePatchSchema
 } from "@/server/domain/schemas";
 import type { ProviderRegistry } from "@/server/application/provider-gateway";
 import { ApiError, notFound } from "@/server/application/errors";
@@ -60,7 +61,9 @@ export class WorkspaceService {
     return this.store.read((state) => ({
       workspace: {
         id: state.workspace.id,
-        name: state.workspace.name
+        name: state.workspace.name,
+        discussionBudgetDefaults:
+          state.workspace.discussionBudgetDefaults
       },
       providers: state.providers.map(publicProvider),
       employees: state.employees,
@@ -76,6 +79,18 @@ export class WorkspaceService {
       discussions: state.discussions,
       approvals: state.approvals
     }));
+  }
+
+  async updateWorkspace(input: unknown): Promise<WorkspaceView> {
+    const parsed = workspacePatchSchema.parse(input);
+    await this.store.update((state) => {
+      if (parsed.discussionBudgetDefaults !== undefined) {
+        state.workspace.discussionBudgetDefaults =
+          parsed.discussionBudgetDefaults ?? undefined;
+      }
+      state.workspace.updatedAt = new Date().toISOString();
+    });
+    return this.getWorkspaceView();
   }
 
   async listProviders(): Promise<PublicProvider[]> {

@@ -9,6 +9,13 @@ import { parseDiscussionBrief } from "@/server/application/discussion-brief";
 import { mapDiscussionBriefToTask } from "@/server/application/discussion-task-handoff";
 import { createDraftTask } from "@/server/application/task-factory";
 import {
+  budgetDimension,
+  budgetExhaustedPayload,
+  evaluateDiscussionBudget,
+  mergeDiscussionBudget,
+  type DiscussionBudgetEvaluation
+} from "@/server/application/discussion-budget";
+import {
   buildDiscussionRoundDetail,
   buildDiscussionView
 } from "@/server/application/discussion-view";
@@ -32,6 +39,7 @@ import type {
 import type {
   AppState,
   Discussion,
+  DiscussionBudget,
   DiscussionIntervention,
   DiscussionInterventionKind,
   DiscussionRound,
@@ -347,6 +355,10 @@ export class DiscussionOrchestrator {
         facilitatorParticipantId: facilitators[0].id,
         maxRounds: parsed.maxRounds,
         currentRound: 0,
+        budget: mergeDiscussionBudget(
+          state.workspace.discussionBudgetDefaults,
+          parsed.budget
+        ),
         sourceTaskId: parsed.sourceTaskId,
         participants,
         rounds: [],
@@ -434,6 +446,12 @@ export class DiscussionOrchestrator {
       if (parsed.maxRounds !== undefined) {
         discussion.maxRounds = parsed.maxRounds;
       }
+      if (parsed.budget !== undefined) {
+        discussion.budget = mergeDiscussionBudget(
+          discussion.budget,
+          parsed.budget
+        );
+      }
       const facilitatorEmployeeId =
         parsed.facilitatorId ??
         previousFacilitatorEmployeeId;
@@ -479,6 +497,14 @@ export class DiscussionOrchestrator {
               {
                 kind: "budget_change" as const,
                 content: `Maximum content rounds changed to ${parsed.maxRounds}.`
+              }
+            ]
+          : []),
+        ...(parsed.budget !== undefined
+          ? [
+              {
+                kind: "budget_change" as const,
+                content: "Token and cost budget updated."
               }
             ]
           : [])
@@ -621,7 +647,10 @@ export class DiscussionOrchestrator {
     return this.getDiscussionView(discussionId);
   }
 
-  async extendDiscussion(discussionId: string) {
+  async extendDiscussion(
+    discussionId: string,
+    input: { budget?: DiscussionBudget } = {}
+  ) {
     const extension = await this.store.update((state) => {
       const discussion = discussionById(state, discussionId);
       if (discussion.status !== "review") {
@@ -646,6 +675,20 @@ export class DiscussionOrchestrator {
         timestamp,
         this.eventFactory
       );
+      if (input.budget !== undefined) {
+        discussion.budget = mergeDiscussionBudget(
+          discussion.budget,
+          input.budget
+        );
+        applyLifecycleIntervention(
+          state,
+          discussion,
+          "budget_change",
+          "Budget was raised while extending the Discussion.",
+          timestamp,
+          this.eventFactory
+        );
+      }
       applyLifecycleIntervention(
         state,
         discussion,
@@ -823,7 +866,8 @@ export class DiscussionOrchestrator {
         }
         return {
           kind: "next" as const,
-          discussion: structuredClone(discussion)
+          discussion: structuredClone(discussion),
+          budget: evaluateDiscussionBudget(state, discussion)
         };
       });
 
@@ -838,6 +882,9 @@ export class DiscussionOrchestrator {
       }
       if (decision.kind === "settle") {
         if ((await this.settleLatestRun(discussionId)) !== "completed") {
+          if (await this.transitionIfBudgetExhausted(discussionId)) {
+            continue;
+          }
           break;
         }
         continue;
@@ -855,6 +902,8 @@ export class DiscussionOrchestrator {
       if (latest.phase === "positions") {
         if (contentRounds.length >= discussion.maxRounds) {
           await this.prepareSynthesis(discussionId, latest);
+        } else if (decision.budget.decision !== "proceed") {
+          await this.transitionBudgetExhausted(discussionId, latest, decision.budget);
         } else {
           await this.preparePhase(
             discussionId,
@@ -869,6 +918,10 @@ export class DiscussionOrchestrator {
         contentRounds.length >= discussion.maxRounds
       ) {
         await this.prepareSynthesis(discussionId, latest);
+        continue;
+      }
+      if (decision.budget.decision !== "proceed") {
+        await this.transitionBudgetExhausted(discussionId, latest, decision.budget);
         continue;
       }
       await this.preparePhase(
@@ -1729,7 +1782,8 @@ export class DiscussionOrchestrator {
       }
       if (
         latestRun.status !== "completed" &&
-        discussion.status !== "cancelled"
+        discussion.status !== "cancelled" &&
+        latestRun.errorCode !== "discussion_budget_exhausted"
       ) {
         discussion.status = "interrupted";
         appendDiscussionEvent(
@@ -1786,6 +1840,78 @@ export class DiscussionOrchestrator {
       );
       state.workspace.updatedAt = timestamp;
     });
+  }
+
+  private async transitionIfBudgetExhausted(
+    discussionId: string
+  ): Promise<boolean> {
+    const target = await this.store.read((state) => {
+      const discussion = discussionById(state, discussionId);
+      if (discussion.status !== "running") return null;
+      const round = discussion.rounds.at(-1);
+      if (!round?.runId || round.phase === "synthesis") return null;
+      const run = state.runs.find((item) => item.id === round.runId);
+      if (
+        !run ||
+        run.errorCode !== "discussion_budget_exhausted" ||
+        run.status === "queued" ||
+        run.status === "running" ||
+        run.status === "waiting_approval"
+      ) {
+        return null;
+      }
+      return {
+        round: structuredClone(round),
+        budget: evaluateDiscussionBudget(state, discussion)
+      };
+    });
+    if (!target) return false;
+    await this.transitionBudgetExhausted(
+      discussionId,
+      target.round,
+      target.budget,
+      false
+    );
+    return true;
+  }
+
+  private async transitionBudgetExhausted(
+    discussionId: string,
+    round: DiscussionRound,
+    evaluation: DiscussionBudgetEvaluation,
+    emitEvent = true
+  ): Promise<void> {
+    const dimension = budgetDimension(evaluation);
+    const decision =
+      evaluation.decision === "hard_stop" ? "hard" : "soft";
+    await this.store.update((state) => {
+      const discussion = discussionById(state, discussionId);
+      if (!emitEvent) return;
+      appendDiscussionEvent(
+        discussion,
+        "discussion_budget_exhausted",
+        budgetExhaustedPayload({
+          roundId: round.id,
+          runId: round.runId,
+          dimension,
+          decision,
+          evaluation
+        }),
+        this.eventFactory
+      );
+      discussion.updatedAt = this.clock();
+      state.workspace.updatedAt = discussion.updatedAt;
+    });
+    const hasBrief = await this.store.read((state) =>
+      Boolean(
+        discussionById(state, discussionId).latestBriefArtifactId
+      )
+    );
+    if (hasBrief) {
+      await this.moveToReview(discussionId);
+      return;
+    }
+    await this.prepareSynthesis(discussionId, round);
   }
 
   private async prepareSynthesis(

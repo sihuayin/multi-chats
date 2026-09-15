@@ -4,10 +4,19 @@ import type { ArtifactType } from "@/lib/artifact-types";
 
 export type IsoDate = string;
 
+export type DiscussionBudget = {
+  maxTotalTokens?: number;
+  softTotalTokens?: number;
+  maxTotalCostMicros?: number;
+  softTotalCostMicros?: number;
+  currency?: string;
+};
+
 export type Workspace = {
   id: string;
   name: string;
   workerHeartbeatAt?: IsoDate;
+  discussionBudgetDefaults?: DiscussionBudget;
   createdAt: IsoDate;
   updatedAt: IsoDate;
 };
@@ -547,6 +556,7 @@ export type Discussion = {
   revision?: number;
   latestBriefArtifactId?: string;
   confirmedBriefArtifactId?: string;
+  budget?: DiscussionBudget;
   constraints?: string[];
   questions?: string[];
   note?: string;
