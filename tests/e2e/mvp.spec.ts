@@ -109,6 +109,20 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   expect(composerBox!.y + composerBox!.height).toBeLessThanOrEqual(
     await page.evaluate(() => window.innerHeight)
   );
+  const taskPanelToggle = page.getByTitle("Collapse Tasks panel");
+  const conversationSurface = page.locator(".conversation-surface");
+  const expandedSurfaceWidth = (await conversationSurface.boundingBox())!.width;
+  await expect(taskPanelToggle).toHaveAttribute("aria-expanded", "true");
+  await taskPanelToggle.click();
+  await expect(page.locator(".task-panel")).toBeHidden();
+  await expect(
+    page.getByTitle("Expand Tasks panel")
+  ).toHaveAttribute("aria-expanded", "false");
+  const collapsedSurfaceWidth = (await conversationSurface.boundingBox())!.width;
+  expect(collapsedSurfaceWidth).toBeGreaterThan(expandedSurfaceWidth);
+  await page.getByTitle("Expand Tasks panel").click();
+  await expect(page.locator(".task-panel")).toBeVisible();
+  await expect(taskPanelToggle).toHaveAttribute("aria-expanded", "true");
   await page
     .getByPlaceholder("Message the group or mention @employee")
     .fill("@all prepare the launch brief");

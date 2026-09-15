@@ -10,7 +10,8 @@ import {
   Hash,
   LoaderCircle,
   MessageSquarePlus,
-  PanelRight,
+  PanelRightClose,
+  PanelRightOpen,
   RotateCcw,
   Send,
   ShieldAlert,
@@ -705,11 +706,26 @@ export function ChatWorkspace() {
                 <UserPen size={16} />
               </button>
               <button
-                className="icon-button"
-                title={t("chat.toggleTasks")}
+                className="icon-button task-panel-toggle"
+                title={
+                  taskPanelOpen
+                    ? t("chat.collapseTasks")
+                    : t("chat.expandTasks")
+                }
+                aria-label={
+                  taskPanelOpen
+                    ? t("chat.collapseTasks")
+                    : t("chat.expandTasks")
+                }
+                aria-controls="task-panel"
+                aria-expanded={taskPanelOpen}
                 onClick={() => setTaskPanelOpen((open) => !open)}
               >
-                <PanelRight size={16} />
+                {taskPanelOpen ? (
+                  <PanelRightClose size={16} />
+                ) : (
+                  <PanelRightOpen size={16} />
+                )}
               </button>
             </header>
 
@@ -903,7 +919,7 @@ export function ChatWorkspace() {
         )}
       </section>
 
-      <aside className="task-panel">
+      <aside id="task-panel" className="task-panel">
         <div className="section-heading">
           <div>
             <span className="eyebrow">{t("common.accountability")}</span>
