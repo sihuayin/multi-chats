@@ -81,7 +81,7 @@ The terminal disposition of a Run: completed, failed, cancelled, or interrupted.
 _Avoid_: Result, status
 
 **Provider attempt**:
-One auditable call to a Provider model made for a Run, synthesis, compression, or smoke test.
+One auditable call to a Provider model made for a Run, synthesis, compression, or Provider smoke matrix.
 _Avoid_: Provider call, invocation
 
 **Model usage**:
@@ -115,6 +115,26 @@ _Avoid_: Summary, truncation
 **Pricing snapshot**:
 The versioned model rates used to calculate the cost of a Provider attempt without changing historical cost when Provider prices change.
 _Avoid_: Price table, current rate
+
+**Provider family**:
+The request/response dialect a Provider speaks — `openai_compatible`, `anthropic`, or `google` — used to require that a Provider smoke matrix proving more than one target exercises independent adapters, not one dialect twice.
+_Avoid_: Provider vendor, API flavour
+
+**Smoke target role**:
+Whether a Provider smoke matrix target is the `primary` under test or the `fallback` that must take over when the primary fails.
+_Avoid_: Provider slot, target order
+
+**Provider smoke matrix**:
+The opt-in, redacted, token- and cost-capped run of Smoke scenarios that proves the production Provider adapters satisfy the reliable Discussion contracts without making paid credentials mandatory for normal verification.
+_Avoid_: Provider test suite, integration test
+
+**Smoke scenario**:
+One named contract a Provider smoke matrix proves against the production adapters, such as structured output, usage capture, context pressure, compression, retry, failover, cancellation, or Discussion Brief generation.
+_Avoid_: Test case, fixture
+
+**Provider smoke report**:
+The redacted, versioned evidence a Provider smoke matrix emits: each Smoke scenario's status, attempts with Provider, model, outcome, usage, and cost, its artifact links, the totals, and the token and cost caps it stayed within.
+_Avoid_: Test log, results file
 
 **Approval**:
 A user decision required before an employee invokes a side-effecting tool.
