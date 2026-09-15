@@ -109,7 +109,7 @@ describe("MemoryStore runtime contracts", () => {
       unresolvedQuestions: [],
       minorityPositions: [],
       schemaVersion: 1,
-      promptProfileVersion: "discussion-prompts.v2",
+      promptProfileVersion: "discussion-prompts.v3",
       compressionProfileVersion: "discussion-compression.v1",
       contentHash: "hash-memory",
       sourceSpanHash: "source-span-memory",

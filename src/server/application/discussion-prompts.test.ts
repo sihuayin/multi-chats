@@ -15,7 +15,7 @@ describe("Discussion prompt profiles", () => {
     });
 
     expect(prompt.version).toBe(DISCUSSION_PROMPT_PROFILE_VERSION);
-    expect(prompt.version).toBe("discussion-prompts.v2");
+    expect(prompt.version).toBe("discussion-prompts.v3");
     expect(prompt.systemInstructions).toContain("solution");
     expect(prompt.systemInstructions).toContain("facilitator");
     expect(prompt.systemInstructions).toContain("synthesis");

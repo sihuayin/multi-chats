@@ -32,7 +32,14 @@ const payloadSchema = z
     openQuestions: z.array(z.string()),
     agreements: z.array(z.string()).optional(),
     disagreements: z.array(z.string()).optional(),
-    corrections: z.array(z.string()).optional()
+    corrections: z.array(z.string()).optional(),
+    convergence: z
+      .object({
+        recommended: z.boolean(),
+        reasons: z.array(z.string())
+      })
+      .strict()
+      .optional()
   })
   .strict();
 

@@ -5,6 +5,7 @@ import {
   DiscussionOrchestrator,
   hasDiscussionConverged
 } from "@/server/application/discussion-orchestrator";
+import { contentAvailability } from "@/server/application/discussion-protocol";
 import { AesCredentialCipher } from "@/server/security/credential-cipher";
 import { MemoryStore } from "@/server/store/memory-store";
 import {
@@ -20,41 +21,96 @@ import {
 import type {
   AppState,
   Discussion,
+  DiscussionRound,
   DiscussionTurnPayload
 } from "@/server/domain/types";
 import type { ModelGateway } from "@/server/application/model-gateway";
 
 describe("DiscussionOrchestrator", () => {
-  it("detects convergence with deterministic Unicode and case normalization", () => {
+  it("detects convergence from consecutive quiet Cross-response Rounds", () => {
     const base = createFixtureDiscussion();
-    const first = structuredClone(base.rounds[0]);
-    first.id = "cross-1";
-    first.phase = "cross_response";
-    first.turns[0].payload = {
-      summary: "first",
-      claims: [{ statement: "  Release Risk  ", confidence: "medium" }],
-      assumptions: ["Same Assumption"],
-      risks: ["Straße"],
-      openQuestions: [],
-      disagreements: []
-    };
-    const second = structuredClone(base.rounds[0]);
-    second.id = "cross-2";
-    second.phase = "cross_response";
-    second.turns[0].payload = {
-      summary: "second",
+    const supported = (statement: string): DiscussionTurnPayload => ({
+      summary: statement,
       claims: [
-        { statement: "ｒｅｌｅａｓｅ risk", confidence: "medium" }
+        {
+          statement,
+          kind: "fact",
+          evidenceIds: ["external:https://example.com/evidence"],
+          confidence: "high"
+        }
       ],
-      assumptions: ["same assumption"],
-      risks: ["STRASSE"],
+      assumptions: [],
+      risks: [],
       openQuestions: [],
-      disagreements: []
+      agreements: [],
+      disagreements: [],
+      corrections: []
+    });
+    const crossRound = (
+      id: string,
+      payloads: DiscussionTurnPayload[]
+    ): DiscussionRound => {
+      const round = structuredClone(base.rounds[0]);
+      round.id = id;
+      round.phase = "cross_response";
+      round.turns.forEach((turn, index) => {
+        turn.payload = payloads[index % payloads.length];
+      });
+      return round;
     };
 
-    expect(hasDiscussionConverged([first, second])).toBe(true);
-    second.turns[0].payload.risks = ["New dependency risk"];
+    const first = crossRound("cross-1", [supported("  Release Risk  ")]);
+    const second = crossRound("cross-2", [supported("ｒｅｌｅａｓｅ risk")]);
+    const third = crossRound("cross-3", [supported("RELEASE RISK")]);
+    expect(hasDiscussionConverged([first])).toBe(false);
+    // One quiet Round is not enough; two consecutive quiet Rounds converge.
     expect(hasDiscussionConverged([first, second])).toBe(false);
+    expect(hasDiscussionConverged([first, second, third])).toBe(true);
+
+    const freshQuestion = crossRound("cross-4", [
+      { ...supported("Release Risk"), openQuestions: ["Is rollback safe?"] }
+    ]);
+    expect(
+      hasDiscussionConverged([first, second, third, freshQuestion])
+    ).toBe(false);
+
+    const freshCorrection = crossRound("cross-5", [
+      { ...supported("Release Risk"), corrections: ["Earlier estimate was wrong."] }
+    ]);
+    expect(hasDiscussionConverged([freshQuestion, freshCorrection])).toBe(false);
+
+    const freshEvidence = crossRound("cross-6", [
+      {
+        ...supported("Release Risk"),
+        claims: [
+          {
+            statement: "Release Risk",
+            kind: "fact",
+            evidenceIds: ["external:https://example.com/new-source"],
+            confidence: "high"
+          }
+        ]
+      }
+    ]);
+    expect(hasDiscussionConverged([first, freshEvidence])).toBe(false);
+
+    // Unsupported claims, assumptions, and risks are not tracked categories.
+    const untracked = crossRound("cross-7", [
+      {
+        ...supported("Release Risk"),
+        claims: [{ statement: "A fresh opinion", confidence: "medium" }],
+        assumptions: ["New assumption"],
+        risks: ["Straße"]
+      }
+    ]);
+    expect(hasDiscussionConverged([first, second, untracked])).toBe(true);
+
+    // Pending mandatory interventions block convergence.
+    expect(
+      hasDiscussionConverged([first, second, third], {
+        pendingInterventions: 1
+      })
+    ).toBe(false);
   });
 
   it("starts a Discussion with a Positions phase Run", async () => {
@@ -91,7 +147,7 @@ describe("DiscussionOrchestrator", () => {
     expect(persisted.discussion).toMatchObject({
       status: "running",
       currentRound: 1,
-      promptProfileVersion: "discussion-prompts.v2",
+      promptProfileVersion: "discussion-prompts.v3",
       rounds: [
         {
           roundNumber: 1,
@@ -535,7 +591,7 @@ describe("DiscussionOrchestrator", () => {
     });
     expect(forced).toMatchObject({
       status: "running",
-      promptProfileVersion: "discussion-prompts.v2"
+      promptProfileVersion: "discussion-prompts.v3"
     });
     const synthesis = forced.rounds.at(-1)!;
     expect(synthesis).toMatchObject({
@@ -584,7 +640,7 @@ describe("DiscussionOrchestrator", () => {
       previousArtifactId: "brief-context"
     });
     expect(JSON.parse(briefArtifact!.content)).toMatchObject({
-      promptProfileVersion: "discussion-prompts.v2"
+      promptProfileVersion: "discussion-prompts.v3"
     });
     expect(reviewed.events?.map((event) => event.type)).toContain(
       "brief_created"
@@ -1201,6 +1257,369 @@ function failingGateway(message: string): ModelGateway {
     }
   };
 }
+
+describe("DiscussionOrchestrator convergence and synthesis governance", () => {
+  function governanceHarness(state: AppState) {
+    const store = new MemoryStore(state);
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      discussionModelGateway()
+    );
+    return {
+      store,
+      runs,
+      orchestrator: new DiscussionOrchestrator(store, runs)
+    };
+  }
+
+  function draftDiscussion(state: AppState, maxRounds: number): Discussion {
+    const discussion = createFixtureDiscussion({
+      workspaceId: state.workspace.id,
+      conversationId: state.conversations[0].id
+    });
+    discussion.status = "draft";
+    discussion.currentRound = 0;
+    discussion.maxRounds = maxRounds;
+    discussion.rounds = [];
+    state.discussions.push(discussion);
+    return discussion;
+  }
+
+  async function setSupportedPayloads(
+    store: MemoryStore,
+    discussionId: string,
+    roundNumber: number,
+    marker: string,
+    recommend = false
+  ): Promise<void> {
+    await store.update((state) => {
+      const round = state.discussions
+        .find((item) => item.id === discussionId)!
+        .rounds.find((item) => item.roundNumber === roundNumber)!;
+      round.turns.forEach((turn, index) => {
+        turn.payload = {
+          summary: `${marker} ${index}`,
+          claims: [
+            {
+              statement: `${marker} claim ${index}`,
+              kind: "fact",
+              evidenceIds: [
+                `external:https://example.com/${marker}-${index}`
+              ],
+              confidence: "high"
+            }
+          ],
+          assumptions: [],
+          risks: [],
+          openQuestions: [],
+          agreements: [],
+          disagreements: [],
+          corrections: [],
+          ...(recommend
+            ? {
+                convergence: {
+                  recommended: true,
+                  reasons: ["Analysis looks complete."]
+                }
+              }
+            : {})
+        };
+      });
+    });
+  }
+
+  it("treats model convergence recommendations as advisory only", async () => {
+    const state = createFixtureState();
+    const discussion = draftDiscussion(state, 5);
+    const { store, runs, orchestrator } = governanceHarness(state);
+
+    await orchestrator.startDiscussion(discussion.id);
+    await processLatestDiscussionRun(store, runs, discussion.id);
+    await setSupportedPayloads(store, discussion.id, 1, "position", true);
+    await orchestrator.advanceDiscussion(discussion.id);
+    await processLatestDiscussionRun(store, runs, discussion.id);
+    await setSupportedPayloads(store, discussion.id, 2, "cross-two", true);
+
+    const advanced = await orchestrator.advanceDiscussion(discussion.id);
+
+    // Fresh supported values exist, so the recommendation cannot converge
+    // the Discussion: another Cross-response Round is scheduled.
+    expect(advanced.status).toBe("running");
+    expect(advanced.rounds.at(-1)).toMatchObject({
+      roundNumber: 3,
+      phase: "cross_response"
+    });
+    expect(
+      (advanced.events ?? []).some(
+        (event) => event.type === "discussion_converged"
+      )
+    ).toBe(false);
+  });
+
+  it("blocks convergence while a mandatory intervention is pending", async () => {
+    const state = createFixtureState();
+    const discussion = draftDiscussion(state, 5);
+    const { store, runs, orchestrator } = governanceHarness(state);
+
+    await orchestrator.startDiscussion(discussion.id);
+    await processLatestDiscussionRun(store, runs, discussion.id);
+    await setTurnPayloads(store, discussion.id, 1, ["Position A", "Position B"]);
+    await orchestrator.advanceDiscussion(discussion.id);
+    await processLatestDiscussionRun(store, runs, discussion.id);
+    await setTurnPayloads(store, discussion.id, 2, ["Cross A", "Cross B"]);
+    await orchestrator.advanceDiscussion(discussion.id);
+    await processLatestDiscussionRun(store, runs, discussion.id);
+    await setTurnPayloads(store, discussion.id, 3, ["Cross A", "Cross B"]);
+
+    await orchestrator.addIntervention(
+      discussion.id,
+      { kind: "constraint", content: "Keep PostgreSQL optional." },
+      {}
+    );
+
+    const blocked = await orchestrator.advanceDiscussion(discussion.id);
+    expect(blocked.rounds.at(-1)).toMatchObject({
+      roundNumber: 4,
+      phase: "cross_response"
+    });
+    expect(
+      (blocked.events ?? []).some(
+        (event) => event.type === "discussion_converged"
+      )
+    ).toBe(false);
+
+    await processLatestDiscussionRun(store, runs, discussion.id);
+    await setTurnPayloads(store, discussion.id, 4, ["Cross A", "Cross B"]);
+    const converged = await orchestrator.advanceDiscussion(discussion.id);
+    expect(converged.rounds.at(-1)).toMatchObject({ phase: "synthesis" });
+    expect(
+      (converged.events ?? []).some(
+        (event) => event.type === "discussion_converged"
+      )
+    ).toBe(true);
+  });
+
+  it("gives round, token, and cost limits precedence over convergence", async () => {
+    const state = createFixtureState();
+    const discussion = draftDiscussion(state, 3);
+    const { store, runs, orchestrator } = governanceHarness(state);
+
+    await orchestrator.startDiscussion(discussion.id);
+    await processLatestDiscussionRun(store, runs, discussion.id);
+    await setTurnPayloads(store, discussion.id, 1, ["Position A", "Position B"]);
+    await orchestrator.advanceDiscussion(discussion.id);
+    await processLatestDiscussionRun(store, runs, discussion.id);
+    await setTurnPayloads(store, discussion.id, 2, ["Cross A", "Cross B"]);
+    await orchestrator.advanceDiscussion(discussion.id);
+    await processLatestDiscussionRun(store, runs, discussion.id);
+    await setTurnPayloads(store, discussion.id, 3, ["Cross A", "Cross B"]);
+
+    // Two consecutive quiet Rounds coincide with the round cap: the cap
+    // reason wins.
+    const advanced = await orchestrator.advanceDiscussion(discussion.id);
+    expect(advanced.rounds.at(-1)).toMatchObject({ phase: "synthesis" });
+    const types = (advanced.events ?? []).map((event) => event.type);
+    expect(types).toContain("discussion_budget_exhausted");
+    expect(types).not.toContain("discussion_converged");
+  });
+
+  it("terminates at the round cap when values never stop changing", async () => {
+    const state = createFixtureState();
+    const discussion = draftDiscussion(state, 3);
+    const { store, runs, orchestrator } = governanceHarness(state);
+
+    await orchestrator.startDiscussion(discussion.id);
+    await processLatestDiscussionRun(store, runs, discussion.id);
+    await setSupportedPayloads(store, discussion.id, 1, "position");
+    await orchestrator.advanceDiscussion(discussion.id);
+    await processLatestDiscussionRun(store, runs, discussion.id);
+    await setSupportedPayloads(store, discussion.id, 2, "cross-two");
+    await orchestrator.advanceDiscussion(discussion.id);
+    await processLatestDiscussionRun(store, runs, discussion.id);
+    await setSupportedPayloads(store, discussion.id, 3, "cross-three");
+
+    const advanced = await orchestrator.advanceDiscussion(discussion.id);
+    expect(advanced.rounds.at(-1)).toMatchObject({ phase: "synthesis" });
+    expect(
+      (advanced.events ?? []).some(
+        (event) => event.type === "discussion_converged"
+      )
+    ).toBe(false);
+  });
+
+  it("gives token budget exhaustion precedence over a satisfied convergence rule", async () => {
+    const state = createFixtureState();
+    const discussion = draftDiscussion(state, 5);
+    discussion.budget = { maxTotalTokens: 100_000, softTotalTokens: 40 };
+    const { store, runs, orchestrator } = governanceHarness(state);
+
+    await orchestrator.startDiscussion(discussion.id);
+    await processLatestDiscussionRun(store, runs, discussion.id);
+    await setTurnPayloads(store, discussion.id, 1, ["Position A", "Position B"]);
+    await orchestrator.advanceDiscussion(discussion.id);
+    await processLatestDiscussionRun(store, runs, discussion.id);
+    await setTurnPayloads(store, discussion.id, 2, ["Cross A", "Cross B"]);
+    await orchestrator.advanceDiscussion(discussion.id);
+    await processLatestDiscussionRun(store, runs, discussion.id);
+    await setTurnPayloads(store, discussion.id, 3, ["Cross A", "Cross B"]);
+    // Two consecutive quiet Rounds would converge, but the soft token
+    // budget is exhausted first.
+    await store.update((current) => {
+      current.providerAttempts.push(
+        createFixtureProviderAttempt({
+          id: "convergence-budget-1",
+          workspaceId: current.workspace.id,
+          discussionId: discussion.id,
+          purpose: "discussion_turn",
+          usage: {
+            inputTokens: 50,
+            outputTokens: 0,
+            totalTokens: 50,
+            source: "provider"
+          }
+        })
+      );
+    });
+
+    const advanced = await orchestrator.advanceDiscussion(discussion.id);
+
+    expect(advanced.rounds.at(-1)).toMatchObject({ phase: "synthesis" });
+    const types = (advanced.events ?? []).map((event) => event.type);
+    expect(types).toContain("discussion_budget_exhausted");
+    expect(types).not.toContain("discussion_converged");
+  });
+
+  it("never converges on Cross-response Rounds without validated payloads", () => {
+    const base = createFixtureDiscussion();
+    const crossRound = (id: string, withPayload: boolean): DiscussionRound => {
+      const round = structuredClone(base.rounds[0]);
+      round.id = id;
+      round.phase = "cross_response";
+      round.turns.forEach((turn) => {
+        if (withPayload) return;
+        turn.payload = undefined;
+        turn.content = "Text without a validated payload.";
+      });
+      return round;
+    };
+
+    expect(
+      hasDiscussionConverged([
+        crossRound("cross-1", false),
+        crossRound("cross-2", false)
+      ])
+    ).toBe(false);
+  });
+
+  it("does not count content-only Turns toward the synthesis minimum", () => {
+    const discussion = createFixtureDiscussion();
+    const round = discussion.rounds[0];
+    round.turns.forEach((turn) => {
+      turn.payload = undefined;
+      turn.content = "Text without a validated payload.";
+    });
+    expect(contentAvailability([round])).toEqual({
+      validPositionParticipants: 0,
+      validCrossResponseTurns: 0
+    });
+  });
+
+  it("interrupts with a stable reason when the Facilitator is unavailable", async () => {
+    const state = createFixtureState();
+    const discussion = draftDiscussion(state, 5);
+    const { store, runs, orchestrator } = governanceHarness(state);
+
+    await orchestrator.startDiscussion(discussion.id);
+    await processLatestDiscussionRun(store, runs, discussion.id);
+    await setSupportedPayloads(store, discussion.id, 1, "position");
+    for (const roundNumber of [2, 3, 4]) {
+      await orchestrator.advanceDiscussion(discussion.id);
+      await processLatestDiscussionRun(store, runs, discussion.id);
+      if (roundNumber < 4) {
+        await setSupportedPayloads(store, discussion.id, roundNumber, "cross");
+      }
+    }
+    await setSupportedPayloads(store, discussion.id, 4, "cross");
+
+    await store.update((current) => {
+      const facilitatorEmployeeId = current.discussions
+        .find((item) => item.id === discussion.id)!
+        .participants.find(
+          (participant) =>
+            participant.id ===
+            current.discussions.find((item) => item.id === discussion.id)!
+              .facilitatorParticipantId
+        )!.employeeId;
+      current.employees.find(
+        (employee) => employee.id === facilitatorEmployeeId
+      )!.active = false;
+    });
+
+    const interrupted = await orchestrator.advanceDiscussion(discussion.id);
+
+    expect(interrupted.status).toBe("interrupted");
+    expect(
+      interrupted.rounds.map((round) => round.phase)
+    ).not.toContain("synthesis");
+    expect(interrupted.events?.at(-1)).toMatchObject({
+      type: "discussion_interrupted",
+      payload: { code: "discussion_facilitator_unavailable" }
+    });
+    // Completed Rounds stay reviewable instead of failing silently.
+    expect(
+      interrupted.rounds.filter((round) => round.status === "completed")
+    ).toHaveLength(4);
+  });
+
+  it("interrupts when a restored Round carries a fact claim without evidence", async () => {
+    const state = createFixtureState();
+    const discussion = draftDiscussion(state, 5);
+    const { store, runs, orchestrator } = governanceHarness(state);
+
+    await orchestrator.startDiscussion(discussion.id);
+    await processLatestDiscussionRun(store, runs, discussion.id);
+    await setSupportedPayloads(store, discussion.id, 1, "position");
+    for (const roundNumber of [2, 3, 4]) {
+      await orchestrator.advanceDiscussion(discussion.id);
+      await processLatestDiscussionRun(store, runs, discussion.id);
+      if (roundNumber < 4) {
+        await setSupportedPayloads(store, discussion.id, roundNumber, "cross");
+      }
+    }
+    await setSupportedPayloads(store, discussion.id, 4, "cross");
+    await store.update((current) => {
+      const round = current.discussions
+        .find((item) => item.id === discussion.id)!
+        .rounds.at(-1)!;
+      round.turns[0].payload = {
+        ...round.turns[0].payload!,
+        claims: [
+          {
+            statement: "Restored fact without evidence.",
+            kind: "fact",
+            evidenceIds: [],
+            confidence: "high"
+          }
+        ]
+      };
+    });
+
+    const interrupted = await orchestrator.advanceDiscussion(discussion.id);
+
+    expect(interrupted.status).toBe("interrupted");
+    expect(
+      interrupted.rounds.map((round) => round.phase)
+    ).not.toContain("synthesis");
+    expect(interrupted.events?.at(-1)).toMatchObject({
+      type: "discussion_interrupted",
+      payload: { code: "discussion_evidence_unvalidated" }
+    });
+    expect(
+      interrupted.rounds.filter((round) => round.status === "completed")
+    ).toHaveLength(4);
+  });
+});
 
 describe("DiscussionOrchestrator budget enforcement", () => {
   function harness(state: AppState) {

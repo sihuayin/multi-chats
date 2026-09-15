@@ -118,7 +118,7 @@ export function createFixtureDiscussion(
     title: "Choose a persistence model",
     mode: "solution",
     language: "en",
-    promptProfileVersion: "discussion-prompts.v2",
+    promptProfileVersion: "discussion-prompts.v3",
     status: "review",
     facilitatorParticipantId: participants[1].id,
     maxRounds: 3,
@@ -245,7 +245,7 @@ export function createFixtureBrief(
 ): DiscussionBrief {
   return {
     schemaVersion: 2,
-    promptProfileVersion: "discussion-prompts.v2",
+    promptProfileVersion: "discussion-prompts.v3",
     discussionId,
     mode: "solution",
     title: "Choose a persistence model",

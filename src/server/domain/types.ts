@@ -464,6 +464,10 @@ export type DiscussionTurnPayload = {
   agreements?: string[];
   disagreements?: string[];
   corrections?: string[];
+  convergence?: {
+    recommended: boolean;
+    reasons: string[];
+  };
 };
 
 export type DiscussionTurn = {

@@ -421,7 +421,10 @@ describe("ConversationRun", () => {
       engine,
       {
         modelContext: () => ({
-          contextWindow: 5_500,
+          // Sized so priority retention still overflows (forcing
+          // compression) while the compressed plan fits with the v3
+          // prompt profile's extra convergence guidance.
+          contextWindow: 5_700,
           maxOutputTokens: 200
         }),
         sleep: async () => undefined,

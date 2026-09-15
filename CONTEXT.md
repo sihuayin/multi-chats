@@ -100,6 +100,14 @@ _Avoid_: Steering message, prompt
 The bounded total token and optional total cost limits of a Discussion, inherited from Workspace defaults at creation, with soft and hard thresholds enforced before each Provider call.
 _Avoid_: Quota, allowance, spending limit
 
+**Convergence Recommendation**:
+An advisory signal a cross-response Turn may return suggesting that content Rounds are complete; it never changes Discussion status or stops execution by itself.
+_Avoid_: Convergence decision, verdict
+
+**Quiet Round**:
+A completed Cross-response Round whose validated Turns add no new normalized supported claim, evidence reference, correction, or unresolved question; two consecutive Quiet Rounds converge a Discussion unless a limit or pending Discussion intervention takes precedence.
+_Avoid_: Idle round, empty round
+
 **Compression record**:
 An immutable, source-linked representation of completed Discussion history that replaces older Turns in a model request when the token budget requires it.
 _Avoid_: Summary, truncation

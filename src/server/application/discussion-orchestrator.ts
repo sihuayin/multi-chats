@@ -20,6 +20,7 @@ import {
   buildDiscussionView
 } from "@/server/application/discussion-view";
 import {
+  CONVERGENCE_REQUIRED_QUIET_ROUNDS,
   contentAvailability,
   contentRounds,
   DEFAULT_DISCUSSION_CONTENT_ROUNDS,
@@ -218,6 +219,37 @@ function applyPendingInterventionsInState(
     applyIntervention(discussion, intervention, timestamp, eventFactory);
   }
   return pending.length;
+}
+
+function pendingInterventionCount(
+  state: AppState,
+  discussionId: string
+): number {
+  return state.discussionInterventions.filter(
+    (item) =>
+      item.discussionId === discussionId && item.status === "pending"
+  ).length;
+}
+
+const MAX_ADVISORY_CONVERGENCE_REASONS = 10;
+
+function advisoryConvergenceSummary(discussion: Discussion): {
+  advisoryRecommendationCount: number;
+  advisoryReasons: string[];
+} {
+  const advisoryTurns = discussion.rounds
+    .filter(
+      (item) =>
+        item.phase === "cross_response" && item.status === "completed"
+    )
+    .flatMap((item) => item.turns)
+    .filter((turn) => turn.payload?.convergence?.recommended === true);
+  return {
+    advisoryRecommendationCount: advisoryTurns.length,
+    advisoryReasons: advisoryTurns
+      .flatMap((turn) => turn.payload?.convergence?.reasons ?? [])
+      .slice(0, MAX_ADVISORY_CONVERGENCE_REASONS)
+  };
 }
 
 function activeRunInState(
@@ -867,7 +899,13 @@ export class DiscussionOrchestrator {
         return {
           kind: "next" as const,
           discussion: structuredClone(discussion),
-          budget: evaluateDiscussionBudget(state, discussion)
+          budget: evaluateDiscussionBudget(state, discussion),
+          converged: hasDiscussionConverged(discussion.rounds, {
+            pendingInterventions: pendingInterventionCount(
+              state,
+              discussion.id
+            )
+          })
         };
       });
 
@@ -913,15 +951,16 @@ export class DiscussionOrchestrator {
         }
         continue;
       }
-      if (
-        hasDiscussionConverged(discussion.rounds) ||
-        contentRounds.length >= discussion.maxRounds
-      ) {
+      if (contentRounds.length >= discussion.maxRounds) {
         await this.prepareSynthesis(discussionId, latest);
         continue;
       }
       if (decision.budget.decision !== "proceed") {
         await this.transitionBudgetExhausted(discussionId, latest, decision.budget);
+        continue;
+      }
+      if (decision.converged) {
+        await this.prepareSynthesis(discussionId, latest);
         continue;
       }
       await this.preparePhase(
@@ -1911,26 +1950,32 @@ export class DiscussionOrchestrator {
       await this.moveToReview(discussionId);
       return;
     }
-    await this.prepareSynthesis(discussionId, round);
+    await this.prepareSynthesis(discussionId, round, {
+      recordExhaustion: false
+    });
   }
 
   private async prepareSynthesis(
     discussionId: string,
-    sourceRound: DiscussionRound
+    sourceRound: DiscussionRound,
+    options: { recordExhaustion?: boolean } = {}
   ): Promise<void> {
     const discussion = await this.getDiscussion(discussionId);
-    const facilitatorAvailable = await this.store.read((state) => {
+    const gate = await this.store.read((state) => {
       const current = discussionById(state, discussionId);
       const facilitator = current.participants.find(
         (participant) =>
           participant.id === current.facilitatorParticipantId
       );
-      return state.employees.some(
-        (employee) =>
-          employee.id === facilitator?.employeeId && employee.active
-      );
+      return {
+        facilitatorAvailable: state.employees.some(
+          (employee) =>
+            employee.id === facilitator?.employeeId && employee.active
+        ),
+        pendingInterventions: pendingInterventionCount(state, discussionId)
+      };
     });
-    if (!facilitatorAvailable) {
+    if (!gate.facilitatorAvailable) {
       await this.interruptDiscussion(
         discussionId,
         "discussion_facilitator_unavailable",
@@ -1950,12 +1995,49 @@ export class DiscussionOrchestrator {
       );
       return;
     }
-    if (hasDiscussionConverged(discussion.rounds)) {
-      await this.recordConvergence(discussionId, sourceRound);
+    // Counted Turns are payload-validated at ingestion; re-check the
+    // evidence invariant explicitly so restored or legacy records can
+    // never reach Synthesis on unvalidated fact claims.
+    const evidenceValid = discussion.rounds
+      .flatMap((round) => round.turns)
+      .filter((turn) => turn.status === "completed" && turn.payload)
+      .every((turn) =>
+        (turn.payload?.claims ?? []).every(
+          (claim) =>
+            claim.kind !== "fact" ||
+            (claim.evidenceIds?.length ?? 0) > 0
+        )
+      );
+    if (!evidenceValid) {
+      await this.interruptDiscussion(
+        discussionId,
+        "discussion_evidence_unvalidated",
+        sourceRound
+      );
       return;
     }
+    // The budget transition caller already recorded the exhaustion fact;
+    // only gate and schedule in that case.
+    if (options.recordExhaustion === false) {
+      await this.preparePhase(
+        discussionId,
+        nextDiscussionRoundNumber(discussion.rounds),
+        "synthesis"
+      );
+      return;
+    }
+    // Round, token, and cost limits take precedence over convergence
+    // and over any model recommendation.
     if (contentRounds(discussion.rounds).length >= discussion.maxRounds) {
       await this.recordBudgetExhausted(discussionId, sourceRound);
+      return;
+    }
+    if (
+      hasDiscussionConverged(discussion.rounds, {
+        pendingInterventions: gate.pendingInterventions
+      })
+    ) {
+      await this.recordConvergence(discussionId, sourceRound);
       return;
     }
     await this.preparePhase(
@@ -1977,7 +2059,9 @@ export class DiscussionOrchestrator {
         {
           roundId: round.id,
           runId: round.runId,
-          reason: "no_new_normalized_values"
+          reason: "consecutive_quiet_cross_response_rounds",
+          requiredQuietRounds: CONVERGENCE_REQUIRED_QUIET_ROUNDS,
+          ...advisoryConvergenceSummary(discussion)
         },
         this.eventFactory
       );

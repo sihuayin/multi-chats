@@ -110,42 +110,63 @@ function caseFold(value: string): string {
     .replaceAll("ς", "σ");
 }
 
-function normalizedValues(payload: DiscussionTurnPayload): Set<string> {
-  return new Set(
-    [
-      ...payload.claims.map((claim) => claim.statement),
-      ...payload.assumptions,
-      ...payload.risks,
-      ...payload.openQuestions,
-      ...(payload.disagreements ?? [])
-    ]
-      .map(caseFold)
-      .filter(Boolean)
-  );
+/**
+ * Convergence requires this many consecutive completed Cross-response
+ * Rounds that add no new normalized tracked value.
+ */
+export const CONVERGENCE_REQUIRED_QUIET_ROUNDS = 2;
+
+function convergenceValues(payload: DiscussionTurnPayload): string[] {
+  return [
+    ...payload.claims.flatMap((claim) =>
+      (claim.evidenceIds?.length ?? 0) > 0
+        ? [
+            caseFold(claim.statement),
+            ...(claim.evidenceIds ?? []).map(caseFold)
+          ]
+        : []
+    ),
+    ...(payload.corrections ?? []).map(caseFold),
+    ...payload.openQuestions.map(caseFold)
+  ].filter(Boolean);
 }
 
+/**
+ * Deterministic convergence: the last CONVERGENCE_REQUIRED_QUIET_ROUNDS
+ * consecutive completed Cross-response Rounds each added no new
+ * normalized supported claim, evidence reference, correction, or
+ * unresolved question. Model recommendations never influence this
+ * result, and pending Discussion interventions block convergence until
+ * they are applied.
+ */
 export function hasDiscussionConverged(
-  rounds: DiscussionRound[]
+  rounds: DiscussionRound[],
+  options: { pendingInterventions?: number } = {}
 ): boolean {
-  const known = new Set<string>();
-  let sawNoNewInformation = false;
-  for (const round of rounds.filter(
-    (item) => item.phase === "cross_response"
-  )) {
+  if ((options.pendingInterventions ?? 0) > 0) return false;
+  const seen = new Set<string>();
+  let consecutiveQuiet = 0;
+  for (const round of rounds) {
+    if (round.status !== "completed") continue;
     const values = new Set<string>();
+    let payloadTurns = 0;
     for (const turn of round.turns) {
       if (turn.status !== "completed" || !turn.payload) continue;
-      for (const value of normalizedValues(turn.payload)) {
+      payloadTurns += 1;
+      for (const value of convergenceValues(turn.payload)) {
         values.add(value);
       }
     }
-    const newValues = [...values].filter((value) => !known.has(value));
-    if (newValues.length === 0 && values.size > 0) {
-      sawNoNewInformation = true;
+    const hasNewValue = [...values].some((value) => !seen.has(value));
+    for (const value of values) seen.add(value);
+    if (round.phase === "cross_response") {
+      // A Round without any validated payload is quiet from failure,
+      // not from agreement: it never advances the streak.
+      const quiet = payloadTurns > 0 && !hasNewValue;
+      consecutiveQuiet = quiet ? consecutiveQuiet + 1 : 0;
     }
-    for (const value of values) known.add(value);
   }
-  return sawNoNewInformation;
+  return consecutiveQuiet >= CONVERGENCE_REQUIRED_QUIET_ROUNDS;
 }
 
 export function contentRounds(
@@ -167,9 +188,7 @@ export function contentAvailability(rounds: DiscussionRound[]): {
       positions.flatMap((round) =>
         round.turns
           .filter(
-            (turn) =>
-              turn.status === "completed" &&
-              (turn.payload || turn.content)
+            (turn) => turn.status === "completed" && turn.payload
           )
           .map((turn) => turn.employeeId)
       )
@@ -178,9 +197,7 @@ export function contentAvailability(rounds: DiscussionRound[]): {
       (count, round) =>
         count +
         round.turns.filter(
-          (turn) =>
-            turn.status === "completed" &&
-            (turn.payload || turn.content)
+          (turn) => turn.status === "completed" && turn.payload
         ).length,
       0
     )

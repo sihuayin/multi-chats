@@ -99,6 +99,35 @@ describe("Discussion Brief", () => {
     );
   });
 
+  it("keeps a v2 prompt-profile Brief revision loadable after the v3 bump", () => {
+    const state = createFixtureState();
+    const discussion = createFixtureDiscussion({
+      workspaceId: state.workspace.id,
+      conversationId: state.conversations[0].id
+    });
+    const revision = {
+      ...brief(),
+      promptProfileVersion: "discussion-prompts.v2",
+      discussionId: discussion.id
+    };
+
+    const { artifact } = createDiscussionBriefRevision(
+      state,
+      discussion,
+      JSON.stringify(revision),
+      {
+        id: () => "brief-artifact-v2",
+        now: () => "2026-01-01T00:00:00.000Z"
+      }
+    );
+
+    expect(artifact).toMatchObject({
+      kind: "discussion_brief",
+      schemaVersion: 2,
+      revision: 1
+    });
+  });
+
   it("rejects duplicate option IDs", () => {
     const value = brief();
     value.options.push(structuredClone(value.options[0]));

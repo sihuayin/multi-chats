@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { DISCUSSION_PROMPT_PROFILE_VERSION } from "@/server/application/discussion-prompts";
+import {
+  DISCUSSION_PROMPT_PROFILE_VERSION,
+  LEGACY_DISCUSSION_PROMPT_PROFILES
+} from "@/server/application/discussion-prompts";
 import { validateDiscussionBriefEvidence } from "@/server/application/discussion-evidence";
 import { parseJsonObject } from "@/server/application/structured-output";
 import type {
@@ -166,12 +169,16 @@ export function createDiscussionBriefRevision(
   brief: DiscussionBrief;
 } {
   const brief = parseDiscussionBrief(raw);
+  // A v1 Brief predates the v2 schema, and a v2 Brief predates the v3
+  // prompt profile, so both stay loadable alongside the current profile.
+  const usesLegacyProfile = LEGACY_DISCUSSION_PROMPT_PROFILES.some(
+    (profile) =>
+      profile.promptProfileVersion === brief.promptProfileVersion &&
+      profile.briefSchemaVersion === brief.schemaVersion
+  );
   if (
     brief.promptProfileVersion !== DISCUSSION_PROMPT_PROFILE_VERSION &&
-    !(
-      brief.schemaVersion === 1 &&
-      brief.promptProfileVersion === "discussion-prompts.v1"
-    )
+    !usesLegacyProfile
   ) {
     throw new Error("Discussion Brief prompt profile is unsupported");
   }

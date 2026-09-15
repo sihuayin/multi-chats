@@ -296,6 +296,21 @@ describe("Discussion quality evaluation", () => {
     ).toThrow("unsupported compression schema");
   });
 
+  it("keeps legacy v2 Prompt records compatible after the v3 profile bump", () => {
+    const result = evaluateDiscussionQuality(sample());
+    expect(() =>
+      validateQualityResults([
+        {
+          ...result,
+          contractVersions: {
+            ...result.contractVersions,
+            promptProfile: "discussion-prompts.v2"
+          }
+        }
+      ])
+    ).not.toThrow();
+  });
+
   it("keeps legacy v1 Prompt and Brief records compatible with the current rubric", () => {
     const input = sample();
     const legacyBrief = {

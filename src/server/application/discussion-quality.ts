@@ -9,10 +9,12 @@ import { DISCUSSION_BRIEF_SCHEMA_VERSION } from "@/server/application/discussion
 import {
   DISCUSSION_COMPRESSION_SCHEMA_VERSION
 } from "@/server/application/discussion-compression";
-import { DISCUSSION_PROMPT_PROFILE_VERSION } from "@/server/application/discussion-prompts";
+import {
+  DISCUSSION_PROMPT_PROFILE_VERSION,
+  LEGACY_DISCUSSION_PROMPT_PROFILES
+} from "@/server/application/discussion-prompts";
 
 export const DISCUSSION_EVIDENCE_PROTOCOL_VERSION = "discussion-evidence.v1";
-const LEGACY_PROMPT_PROFILE_VERSION = "discussion-prompts.v1";
 const LEGACY_BRIEF_SCHEMA_VERSION = 1;
 
 export const DISCUSSION_QUALITY_RUBRIC_VERSION =
@@ -33,7 +35,7 @@ export type QualityDimension = (typeof QUALITY_DIMENSIONS)[number];
 export type QualityCorpusScenario = {
   id: string;
   mode: DiscussionMode;
-  promptProfileVersion: "discussion-prompts.v2";
+  promptProfileVersion: typeof DISCUSSION_PROMPT_PROFILE_VERSION;
   expected: {
     requiredRoles: string[];
     requiredSignal: "constraints" | "open_questions" | "options" | "risks";
@@ -48,7 +50,7 @@ export const DISCUSSION_QUALITY_CORPUS: readonly QualityCorpusScenario[] = [
   {
     id: "requirements-release-scope",
     mode: "requirements",
-    promptProfileVersion: "discussion-prompts.v2",
+    promptProfileVersion: DISCUSSION_PROMPT_PROFILE_VERSION,
     expected: {
       requiredRoles: ["analyst", "researcher", "skeptic", "designer", "facilitator"],
       requiredSignal: "constraints",
@@ -61,7 +63,7 @@ export const DISCUSSION_QUALITY_CORPUS: readonly QualityCorpusScenario[] = [
   {
     id: "problem-root-cause",
     mode: "problem",
-    promptProfileVersion: "discussion-prompts.v2",
+    promptProfileVersion: DISCUSSION_PROMPT_PROFILE_VERSION,
     expected: {
       requiredRoles: ["analyst", "researcher", "skeptic", "designer", "facilitator"],
       requiredSignal: "open_questions",
@@ -74,7 +76,7 @@ export const DISCUSSION_QUALITY_CORPUS: readonly QualityCorpusScenario[] = [
   {
     id: "solution-architecture",
     mode: "solution",
-    promptProfileVersion: "discussion-prompts.v2",
+    promptProfileVersion: DISCUSSION_PROMPT_PROFILE_VERSION,
     expected: {
       requiredRoles: ["analyst", "researcher", "skeptic", "designer", "facilitator"],
       requiredSignal: "options",
@@ -87,7 +89,7 @@ export const DISCUSSION_QUALITY_CORPUS: readonly QualityCorpusScenario[] = [
   {
     id: "review-release-readiness",
     mode: "review",
-    promptProfileVersion: "discussion-prompts.v2",
+    promptProfileVersion: DISCUSSION_PROMPT_PROFILE_VERSION,
     expected: {
       requiredRoles: ["analyst", "researcher", "skeptic", "designer", "facilitator"],
       requiredSignal: "risks",
@@ -204,7 +206,11 @@ export function validateQualityResults(
     }
     if (
       result.contractVersions.promptProfile !== DISCUSSION_PROMPT_PROFILE_VERSION &&
-      result.contractVersions.promptProfile !== LEGACY_PROMPT_PROFILE_VERSION
+      !LEGACY_DISCUSSION_PROMPT_PROFILES.some(
+        (profile) =>
+          profile.promptProfileVersion ===
+          result.contractVersions.promptProfile
+      )
     ) {
       throw new Error(
         `Quality result ${result.scenarioId} uses an unsupported prompt profile.`

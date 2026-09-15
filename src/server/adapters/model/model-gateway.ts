@@ -17,6 +17,7 @@ import {
   classifyProviderFailure,
   retryAfterMsFromHeaders
 } from "@/server/application/provider-reliability";
+import { DISCUSSION_PROMPT_PROFILE_VERSION } from "@/server/application/discussion-prompts";
 
 export class FakeModelGateway implements ModelGateway {
   constructor(
@@ -107,7 +108,11 @@ export class FakeModelGateway implements ModelGateway {
       .split("\n")[0]
       .replace("You are ", "")
       .replace(/\.$/, "");
-    if (request.systemPrompt.includes("Profile version: discussion-prompts.v2")) {
+    if (
+      request.systemPrompt.includes(
+        `Profile version: ${DISCUSSION_PROMPT_PROFILE_VERSION}`
+      )
+    ) {
       const phase =
         request.systemPrompt.match(/^Phase: (\w+)\./m)?.[1] ??
         "positions";
@@ -124,7 +129,7 @@ export class FakeModelGateway implements ModelGateway {
         phase === "synthesis"
           ? {
               schemaVersion: 2,
-              promptProfileVersion: "discussion-prompts.v2",
+              promptProfileVersion: DISCUSSION_PROMPT_PROFILE_VERSION,
               discussionId,
               mode,
               title,
