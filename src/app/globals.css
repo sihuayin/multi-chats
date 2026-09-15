@@ -809,6 +809,12 @@ select:focus {
   cursor: pointer;
 }
 
+.task-panel-toggle[aria-expanded="false"] {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: #bdd3e0;
+}
+
 .button-row {
   display: flex;
   align-items: center;
