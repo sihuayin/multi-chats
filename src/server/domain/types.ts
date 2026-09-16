@@ -364,6 +364,15 @@ export type TaskStatus =
   | "completed"
   | "cancelled";
 
+export type TaskAction =
+  | "start"
+  | "block"
+  | "resume"
+  | "review"
+  | "return_to_work"
+  | "complete"
+  | "cancel";
+
 export type Task = {
   id: string;
   workspaceId: string;

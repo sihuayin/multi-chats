@@ -235,6 +235,21 @@ test("configures an Employee Group and completes a mentioned Run", async ({
 
   await taskCard.getByRole("button", { name: "Start" }).click();
   await expect(taskCard.locator(".status-pill.in_progress")).toBeVisible();
+  await expect(
+    page.locator(".message-stream").getByText("Task: Review launch brief")
+  ).toBeVisible();
+  await expect(page.locator(".message-bubble.employee")).toHaveCount(4, {
+    timeout: 10_000
+  });
+  await page.reload();
+  await page
+    .locator(".conversation-item")
+    .filter({ hasText: `${editedGroupName} Conversation` })
+    .click();
+  await expect(taskCard.locator(".status-pill.in_progress")).toBeVisible();
+  await expect(
+    page.locator(".message-stream").getByText("Task: Review launch brief")
+  ).toBeVisible();
   await taskCard.getByRole("button", { name: "Block" }).click();
   await expect(taskCard.locator(".status-pill.blocked")).toBeVisible();
   await taskCard.getByRole("button", { name: "Resume" }).click();

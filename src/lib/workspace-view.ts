@@ -12,6 +12,7 @@ import type {
   RunEvent,
   Skill,
   Task,
+  TaskAction,
   ToolDefinition
 } from "@/server/domain/types";
 
@@ -37,7 +38,7 @@ export type WorkspaceView = {
   messages: Message[];
   runs: Run[];
   runEvents: RunEvent[];
-  tasks: Task[];
+  tasks: Array<Task & { availableActions: TaskAction[] }>;
   artifacts: Artifact[];
   discussions: Discussion[];
   approvals: Approval[];

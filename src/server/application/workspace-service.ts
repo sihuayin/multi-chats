@@ -23,6 +23,7 @@ import type { ProviderRegistry } from "@/server/application/provider-gateway";
 import { ApiError, notFound } from "@/server/application/errors";
 import { transitionTask } from "@/server/application/task-ledger";
 import { createDraftTask } from "@/server/application/task-factory";
+import { availableTaskActions } from "@/server/application/task-actions";
 import {
   createTaskArtifact,
   updateTaskArtifact
@@ -74,7 +75,10 @@ export class WorkspaceService {
       messages: state.messages,
       runs: state.runs,
       runEvents: state.runEvents,
-      tasks: state.tasks,
+      tasks: state.tasks.map((task) => ({
+        ...task,
+        availableActions: availableTaskActions(state, task)
+      })),
       artifacts: state.artifacts,
       discussions: state.discussions,
       approvals: state.approvals

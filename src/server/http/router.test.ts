@@ -89,7 +89,11 @@ describe("workspace view", () => {
       ["workspace"]
     );
     const view = (await response.json()) as {
-      tasks: Array<{ id: string; history: Array<{ runId?: string }> }>;
+      tasks: Array<{
+        id: string;
+        history: Array<{ runId?: string }>;
+        availableActions: string[];
+      }>;
       messages: Array<{ id: string; taskId?: string }>;
       runs: Array<{ id: string; taskId?: string }>;
     };
@@ -98,6 +102,9 @@ describe("workspace view", () => {
     expect(view.tasks.find((item) => item.id === task.id)?.history).toContainEqual(
       expect.objectContaining({ runId: run.id })
     );
+    expect(
+      view.tasks.find((item) => item.id === task.id)?.availableActions
+    ).toEqual(["block", "review", "cancel"]);
     expect(view.messages.find((item) => item.id === message.id)?.taskId).toBe(
       task.id
     );

@@ -22,7 +22,7 @@ export function transitionTask(
   task: Task,
   next: TaskStatus,
   actorId: string
-): void {
+): Task["history"][number] {
   const current = task.status;
   if (next === "completed") {
     if (actorId !== "user") {
@@ -59,10 +59,12 @@ export function transitionTask(
   }
 
   task.status = next;
-  task.history.push({
+  const entry = {
     status: next,
     at: new Date().toISOString(),
     actorId
-  });
-  task.updatedAt = task.history.at(-1)!.at;
+  };
+  task.history.push(entry);
+  task.updatedAt = entry.at;
+  return entry;
 }

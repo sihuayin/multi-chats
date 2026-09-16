@@ -23,22 +23,27 @@ afterEach(() => {
   else process.env.DATABASE_URL = originalDatabaseUrl;
 });
 
+function setupContractServices() {
+  process.env.MODEL_MODE = "fake";
+  process.env.DATABASE_URL = "postgres://contract-test";
+  const store = new MemoryStore(createFixtureState());
+  setStoreForTests(store);
+  const runService = new ConversationRunService(
+    store,
+    new AesCredentialCipher(TEST_KEY),
+    new FakeModelGateway()
+  );
+  setServicesForTests({
+    workspace: getServices().workspace,
+    runs: runService,
+    discussions: new DiscussionOrchestrator(store, runService)
+  });
+  return { store, runService };
+}
+
 describe("Conversation HTTP and SSE contract", () => {
   it("translates a mentioned Message into an ordered persisted Run event stream", async () => {
-    process.env.MODEL_MODE = "fake";
-    process.env.DATABASE_URL = "postgres://contract-test";
-    const store = new MemoryStore(createFixtureState());
-    setStoreForTests(store);
-    const runService = new ConversationRunService(
-      store,
-      new AesCredentialCipher(TEST_KEY),
-      new FakeModelGateway()
-    );
-    setServicesForTests({
-      workspace: getServices().workspace,
-      runs: runService,
-      discussions: new DiscussionOrchestrator(store, runService)
-    });
+    setupContractServices();
 
     const startedResponse = await handleApiRequest(
       new Request("http://localhost/api/conversations/conversation/messages", {
@@ -113,5 +118,164 @@ describe("Conversation HTTP and SSE contract", () => {
       authorType: "employee",
       status: "complete"
     });
+  });
+
+  it("starts an assigned Task as one idempotent Conversation Run", async () => {
+    const { store } = setupContractServices();
+    const conversationId = "30000000-0000-4000-8000-000000000001";
+    const task = await getServices().workspace.createTask(conversationId, {
+      title: "Prepare launch brief",
+      goal: "Produce a concise launch brief.",
+      assigneeIds: [
+        "20000000-0000-4000-8000-000000000001",
+        "20000000-0000-4000-8000-000000000002"
+      ]
+    });
+    const startRequest = (taskId: string, key: string) =>
+      new Request(`http://localhost/api/tasks/${taskId}/run`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": key
+        },
+        body: "{}"
+      });
+
+    const firstResponse = await handleApiRequest(
+      startRequest(task.id, "task-start-one"),
+      ["tasks", task.id, "run"]
+    );
+    expect(firstResponse.status).toBe(202);
+    const first = (await firstResponse.json()) as {
+      message: { id: string; taskId?: string; runId?: string };
+      run: {
+        id: string;
+        taskId?: string;
+        triggerMessageId: string;
+        memberSnapshot: string[];
+      };
+    };
+    expect(first.run).toMatchObject({
+      taskId: task.id,
+      triggerMessageId: first.message.id,
+      memberSnapshot: [
+        "20000000-0000-4000-8000-000000000001",
+        "20000000-0000-4000-8000-000000000002"
+      ]
+    });
+    expect(first.message).toMatchObject({
+      taskId: task.id,
+      runId: first.run.id
+    });
+
+    const replayResponse = await handleApiRequest(
+      startRequest(task.id, "task-start-one"),
+      ["tasks", task.id, "run"]
+    );
+    const replay = (await replayResponse.json()) as {
+      run: { id: string };
+    };
+    expect(replay.run.id).toBe(first.run.id);
+    expect(await store.read((state) => state.runs)).toHaveLength(1);
+
+    const secondTask = await getServices().workspace.createTask(conversationId, {
+      title: "Second Task",
+      goal: "This Task must wait for the active Run.",
+      assigneeIds: ["20000000-0000-4000-8000-000000000002"]
+    });
+    const conflictResponse = await handleApiRequest(
+      startRequest(secondTask.id, "task-start-two"),
+      ["tasks", secondTask.id, "run"]
+    );
+    expect(conflictResponse.status).toBe(409);
+    await expect(conflictResponse.json()).resolves.toMatchObject({
+      code: "active_run"
+    });
+
+    await getServices().runs.processRun(first.run.id);
+    const state = await store.read((current) => ({
+      task: current.tasks.find((item) => item.id === task.id),
+      secondTask: current.tasks.find((item) => item.id === secondTask.id),
+      run: current.runs.find((item) => item.id === first.run.id),
+      messages: current.messages
+        .filter((message) => message.runId === first.run.id)
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+    }));
+
+    expect(state.task).toMatchObject({
+      status: "in_progress",
+      history: expect.arrayContaining([
+        expect.objectContaining({ runId: first.run.id })
+      ])
+    });
+    expect(state.secondTask?.status).toBe("draft");
+    expect(state.run?.status).toBe("completed");
+    expect(
+      state.messages
+        .filter((message) => message.authorType === "employee")
+        .map((message) => message.authorId)
+    ).toEqual([
+      "20000000-0000-4000-8000-000000000001",
+      "20000000-0000-4000-8000-000000000002"
+    ]);
+  });
+
+  it("rejects Task start when an assignee is no longer in the Conversation", async () => {
+    const { runService, store } = setupContractServices();
+    const conversationId = "30000000-0000-4000-8000-000000000001";
+    const task = await getServices().workspace.createTask(conversationId, {
+      title: "Invalid assignee",
+      goal: "Do not start the Run.",
+      assigneeIds: ["20000000-0000-4000-8000-000000000001"]
+    });
+    await store.update((state) => {
+      state.conversations[0].memberIds = [
+        "20000000-0000-4000-8000-000000000002"
+      ];
+    });
+
+    await expect(runService.startTask(task.id)).rejects.toMatchObject({
+      code: "task_assignees_invalid"
+    });
+    expect(await store.read((state) => state.runs)).toHaveLength(0);
+  });
+
+  it("keeps Tool execution inside the Task Run seam", async () => {
+    const { store } = setupContractServices();
+    const conversationId = "30000000-0000-4000-8000-000000000001";
+    const task = await getServices().workspace.createTask(conversationId, {
+      title: "Read current time",
+      goal: "USE_CURRENT_TIME",
+      assigneeIds: ["20000000-0000-4000-8000-000000000001"]
+    });
+    const response = await handleApiRequest(
+      new Request(`http://localhost/api/tasks/${task.id}/run`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": "task-tool-run"
+        },
+        body: "{}"
+      }),
+      ["tasks", task.id, "run"]
+    );
+    const started = (await response.json()) as { run: { id: string } };
+
+    await getServices().runs.processRun(started.run.id);
+    const state = await store.read((current) => ({
+      messages: current.messages.filter(
+        (message) => message.runId === started.run.id
+      ),
+      events: current.runEvents.filter(
+        (event) => event.runId === started.run.id
+      )
+    }));
+
+    expect(state.messages.some((message) => message.content.includes("Current time:"))).toBe(
+      true
+    );
+    expect(state.events.map((event) => event.type)).toEqual(
+      expect.arrayContaining(["tool_started", "tool_completed"])
+    );
   });
 });

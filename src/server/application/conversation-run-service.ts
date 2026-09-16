@@ -102,6 +102,11 @@ export type StartPhaseRunResult = {
   run: Run;
 };
 
+export type StartTaskResult = {
+  message: Message;
+  run: Run;
+};
+
 type ToolCallContext = {
   runId: string;
   requestId?: string;
@@ -353,6 +358,7 @@ function createRun(
     triggerMessage: Message;
     requestId?: string;
     memberSnapshot: string[];
+    taskId?: string;
     discussionId?: string;
     discussionRound?: number;
     runStartedPayload?: Record<string, unknown>;
@@ -378,6 +384,7 @@ function createRun(
     conversationId: input.conversationId,
     triggerMessageId: input.triggerMessage.id,
     requestId: input.requestId,
+    ...(input.taskId ? { taskId: input.taskId } : {}),
     ...(input.discussionId
       ? {
           discussionId: input.discussionId,
@@ -390,9 +397,11 @@ function createRun(
   };
   state.runs.push(run);
   input.triggerMessage.runId = run.id;
+  if (input.taskId) input.triggerMessage.taskId = input.taskId;
   appendEvent(state, run, "run_started", {
     triggerMessageId: input.triggerMessage.id,
     memberSnapshot: input.memberSnapshot,
+    ...(input.taskId ? { taskId: input.taskId } : {}),
     ...input.runStartedPayload
   });
   state.workspace.updatedAt = timestamp;
@@ -688,6 +697,86 @@ export class ConversationRunService {
         memberIds: result.run.memberSnapshot
       });
     }
+    return result;
+  }
+
+  async startTask(
+    taskId: string,
+    options: { requestId?: string } = {}
+  ): Promise<StartTaskResult> {
+    const result = await this.store.update((state) => {
+      const task = state.tasks.find((item) => item.id === taskId);
+      if (!task) notFound("Task");
+      if (task.status !== "draft") {
+        throw new ApiError(
+          409,
+          "Only draft Tasks can start a Run",
+          "task_not_startable"
+        );
+      }
+      const conversation = state.conversations.find(
+        (item) => item.id === task.conversationId
+      );
+      if (!conversation) notFound("Conversation");
+      const conversationMembers = new Set(conversation.memberIds);
+      const uniqueAssignees = new Set(task.assigneeIds);
+      const assignees = task.assigneeIds
+        .map((id) => state.employees.find((employee) => employee.id === id))
+        .filter(
+          (employee): employee is Employee =>
+            Boolean(
+              employee?.active && conversationMembers.has(employee.id)
+            )
+        );
+      if (
+        task.assigneeIds.length === 0 ||
+        uniqueAssignees.size !== task.assigneeIds.length ||
+        assignees.length !== task.assigneeIds.length
+      ) {
+        throw new ApiError(
+          400,
+          "Task assignees must be active Conversation Employees",
+          "task_assignees_invalid"
+        );
+      }
+
+      const timestamp = now();
+      const message: Message = {
+        id: crypto.randomUUID(),
+        workspaceId: state.workspace.id,
+        conversationId: task.conversationId,
+        taskId: task.id,
+        authorType: "system",
+        authorId: "system",
+        content: [
+          `Task: ${task.title}`,
+          `Task ID: ${task.id}`,
+          `Goal:\n${task.goal}`
+        ].join("\n"),
+        status: "complete",
+        createdAt: timestamp,
+        updatedAt: timestamp
+      };
+      state.messages.push(message);
+
+      const run = createRun(state, {
+        conversationId: task.conversationId,
+        triggerMessage: message,
+        requestId: options.requestId,
+        memberSnapshot: assignees.map((employee) => employee.id),
+        taskId: task.id
+      });
+      const historyEntry = transitionTask(task, "in_progress", "user");
+      historyEntry.runId = run.id;
+      return { message, run };
+    });
+    logger.info("run.started", {
+      requestId: result.run.requestId,
+      runId: result.run.id,
+      conversationId: result.run.conversationId,
+      taskId,
+      memberIds: result.run.memberSnapshot
+    });
     return result;
   }
 

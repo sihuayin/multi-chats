@@ -12,6 +12,7 @@ import {
   MessageSquarePlus,
   PanelRightClose,
   PanelRightOpen,
+  Play,
   RotateCcw,
   Send,
   ShieldAlert,
@@ -452,6 +453,22 @@ export function ChatWorkspace() {
       setTaskTitle("");
       setTaskGoal("");
       setTaskAssigneeIds([]);
+      await refresh();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function startTask(task: Task) {
+    setBusy(true);
+    setError(null);
+    try {
+      await apiRequest(`/api/tasks/${task.id}/run`, {
+        method: "POST",
+        headers: { "idempotency-key": crypto.randomUUID() }
+      });
       await refresh();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
@@ -1016,15 +1033,24 @@ export function ChatWorkspace() {
                     .join(", ")}
                 </small>
                 <div className="button-row wrap">
-                  {task.status === "draft" ? (
+                  {task.availableActions.includes("start") ? (
                     <button
                       className="button quiet"
-                      onClick={() => updateTask(task, "in_progress")}
+                      onClick={() => startTask(task)}
+                      disabled={busy}
                     >
+                      <Play size={14} />
                       {t("chat.start")}
                     </button>
                   ) : null}
-                  {task.status === "in_progress" ? (
+                  {task.status === "draft" &&
+                  !task.availableActions.includes("start") ? (
+                    <span className="field-hint">
+                      {t("chat.startUnavailable")}
+                    </span>
+                  ) : null}
+                  {task.availableActions.includes("block") &&
+                  task.availableActions.includes("review") ? (
                     <>
                       <button
                         className="button quiet"
@@ -1040,7 +1066,8 @@ export function ChatWorkspace() {
                       </button>
                     </>
                   ) : null}
-                  {task.status === "blocked" ? (
+                  {task.availableActions.includes("resume") &&
+                  task.availableActions.includes("review") ? (
                     <>
                       <button
                         className="button quiet"
@@ -1056,7 +1083,8 @@ export function ChatWorkspace() {
                       </button>
                     </>
                   ) : null}
-                  {task.status === "review" ? (
+                  {task.availableActions.includes("return_to_work") &&
+                  task.availableActions.includes("complete") ? (
                     <>
                       <button
                         className="button quiet"
@@ -1073,9 +1101,7 @@ export function ChatWorkspace() {
                       </button>
                     </>
                   ) : null}
-                  {["draft", "in_progress", "blocked", "review"].includes(
-                    task.status
-                  ) ? (
+                  {task.availableActions.includes("cancel") ? (
                     <button
                       className="button quiet danger-text"
                       onClick={() => updateTask(task, "cancelled")}
