@@ -77,6 +77,10 @@ import {
   isActiveRun
 } from "@/server/application/run-ledger";
 import {
+  runResumeBlocker,
+  runResumeBlockerDetails
+} from "@/server/application/run-resume";
+import {
   settleRun,
   type RunSettlementResult
 } from "@/server/application/run-settlement";
@@ -1239,73 +1243,10 @@ export class ConversationRunService {
         );
       }
       options.validate?.(state, run);
-      const activeRun = state.runs.find(
-        (item) =>
-          item.id !== run.id &&
-          item.conversationId === run.conversationId &&
-          isActiveRun(item)
-      );
-      if (activeRun) {
-        throw new ApiError(
-          409,
-          "This Conversation already has an active Run",
-          "active_run"
-        );
-      }
-      const completedMessageIds = new Set(
-        state.runEvents
-          .filter(
-            (event) =>
-              event.runId === runId &&
-              event.type === "message_completed"
-          )
-          .map((event) => String(event.payload.messageId ?? ""))
-      );
-      const visibleUnfinishedMessage = state.messages.some(
-        (message) =>
-          message.runId === runId &&
-          message.authorType !== "user" &&
-          !(
-            message.authorType === "system" &&
-            message.id === run.triggerMessageId &&
-            message.taskId === run.taskId
-          ) &&
-          message.content.trim().length > 0 &&
-          !completedMessageIds.has(message.id)
-      );
-      if (visibleUnfinishedMessage) {
-        throw new ApiError(
-          409,
-          "Run cannot be resumed after visible output was produced",
-          "run_resume_visible_output"
-        );
-      }
-      const unsafeToolStart = state.runEvents.some(
-        (event) =>
-          event.runId === runId &&
-          event.type === "tool_started" &&
-          !completedMessageIds.has(
-            String(event.payload.messageId ?? "")
-          )
-      );
-      if (unsafeToolStart) {
-        throw new ApiError(
-          409,
-          "Run cannot be resumed after a Tool call has started",
-          "run_resume_tool_side_effect"
-        );
-      }
-      const ambiguousAttempt = state.providerAttempts.some(
-        (attempt) =>
-          attempt.runId === runId &&
-          attempt.status === "ambiguous"
-      );
-      if (ambiguousAttempt) {
-        throw new ApiError(
-          409,
-          "Run cannot be resumed after an ambiguous Provider execution",
-          "run_resume_ambiguous_execution"
-        );
+      const blocker = runResumeBlocker(state, run);
+      if (blocker) {
+        const details = runResumeBlockerDetails[blocker];
+        throw new ApiError(409, details.message, details.code);
       }
       for (const message of state.messages) {
         if (message.runId === runId && message.status === "streaming") {

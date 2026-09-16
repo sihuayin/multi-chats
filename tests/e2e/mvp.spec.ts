@@ -585,6 +585,95 @@ test("shows a redacted diagnostics surface on desktop and mobile", async ({
   await page.getByRole("button", { name: "Validate and save" }).click();
   await expect(page.getByText("Provider saved.")).toBeVisible();
 
+  const workspace = await page.request
+    .get("/api/workspace")
+    .then((response) => response.json()) as {
+    providers: Array<{
+      id: string;
+      label: string;
+      providerCredentialId?: string;
+    }>;
+  };
+  const provider = workspace.providers.find(
+    (item) => item.label === `Diagnostics Provider ${suffix}`
+  );
+  expect(provider).toBeTruthy();
+  const modelsResponse = await page.request.get(
+    `/api/providers/${provider!.id}/models`
+  );
+  expect(modelsResponse.ok()).toBe(true);
+  const models = await modelsResponse.json() as Array<{ id: string }>;
+  expect(models.length).toBeGreaterThan(0);
+
+  const employeeResponses = await Promise.all(
+    ["Analyst", "Facilitator"].map((role) =>
+      page.request.post("/api/employees", {
+        data: {
+          name: `Diagnostics ${role} ${suffix}`,
+          identity: `You are the ${role.toLowerCase()} in a diagnostics test.`,
+          providerCredentialId: provider!.id,
+          modelId: models[0].id,
+          skillIds: [],
+          fallbackTargets: [],
+          active: true
+        }
+      })
+    )
+  );
+  employeeResponses.forEach((response) => {
+    expect(response.ok()).toBe(true);
+  });
+  const employees = await Promise.all(
+    employeeResponses.map((response) =>
+      response.json() as Promise<{ id: string }>
+    )
+  );
+  const conversationResponse = await page.request.post("/api/conversations", {
+    data: {
+      title: `Diagnostics Conversation ${suffix}`,
+      memberIds: employees.map((employee) => employee.id)
+    }
+  });
+  expect(conversationResponse.ok()).toBe(true);
+  const conversation = await conversationResponse.json() as {
+    id: string;
+    title: string;
+  };
+  const discussionTitle = `Diagnostics Discussion ${suffix}`;
+  const discussionResponse = await page.request.post(
+    `/api/conversations/${conversation.id}/discussions`,
+    {
+      data: {
+        title: discussionTitle,
+        mode: "solution",
+        language: "en",
+        maxRounds: 3,
+        participants: [
+          { employeeId: employees[0].id, role: "analyst" },
+          { employeeId: employees[1].id, role: "facilitator" }
+        ],
+        facilitatorId: employees[1].id
+      }
+    }
+  );
+  expect(discussionResponse.ok()).toBe(true);
+  const discussion = await discussionResponse.json() as {
+    discussion: { id: string };
+  };
+  const actionTitle = `Diagnostics recovery ${suffix}`;
+  const createTaskResponse = await page.request.post(
+    `/api/conversations/${conversation.id}/tasks`,
+    {
+      data: {
+        title: actionTitle,
+        goal: "slow request",
+        assigneeIds: [employees[0].id]
+      }
+    }
+  );
+  expect(createTaskResponse.ok()).toBe(true);
+  const actionTask = await createTaskResponse.json() as { id: string };
+
   await page.goto("/diagnostics");
   await expect(
     page.getByRole("heading", { name: "Diagnostics", exact: true })
@@ -614,47 +703,59 @@ test("shows a redacted diagnostics surface on desktop and mobile", async ({
     )
   ).toBe(true);
 
-  const workspace = await page.request
-    .get("/api/workspace")
-    .then((response) => response.json()) as {
-    conversations: Array<{ id: string; title: string }>;
-    tasks: Array<{ id: string; conversationId: string }>;
-    discussions: Array<{
-      id: string;
-      conversationId: string;
-      title: string;
-    }>;
-  };
-  const conversation = workspace.conversations[0];
-  const task = workspace.tasks.find(
-    (item) => item.conversationId === conversation.id
-  );
-  const discussion = workspace.discussions.find(
-    (item) => item.conversationId === conversation.id
-  );
-  expect(task).toBeTruthy();
-  expect(discussion).toBeTruthy();
-
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto(
     `/?${new URLSearchParams({
       conversation: conversation.id,
-      task: task!.id
+      task: actionTask.id
     })}`
   );
   await expect(
     page.getByRole("heading", { name: conversation.title })
   ).toBeVisible();
-  await expect(page.locator(`#task-${task!.id}`)).toBeInViewport();
+  await expect(page.locator(`#task-${actionTask.id}`)).toBeInViewport();
 
   await page.goto(
     `/?${new URLSearchParams({
       view: "discussion",
       conversation: conversation.id,
-      discussion: discussion!.id
+      discussion: discussion.discussion.id
     })}`
   );
   await expect(
-    page.getByRole("heading", { name: discussion!.title })
+    page.getByRole("heading", { name: discussionTitle })
   ).toBeVisible();
+  const startResponse = await page.request.post(
+    `/api/tasks/${actionTask.id}/run`,
+    {
+      headers: { "idempotency-key": crypto.randomUUID() },
+      data: {}
+    }
+  );
+  expect(startResponse.ok()).toBe(true);
+
+  await page.goto("/diagnostics");
+  const stopAction = page.getByRole("button", {
+    name: `Stop: ${actionTitle}`
+  });
+  await expect(stopAction).toBeVisible({ timeout: 30_000 });
+  await stopAction.focus();
+  await page.keyboard.press("Enter");
+  await page.reload();
+
+  const retryAction = page.getByRole("button", {
+    name: `Retry: ${actionTitle}`
+  });
+  await expect(retryAction).toBeVisible({ timeout: 30_000 });
+  await retryAction.click();
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: `Stop: ${actionTitle}` })
+  ).toBeVisible({ timeout: 30_000 });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth
+    )
+  ).toBe(true);
 });

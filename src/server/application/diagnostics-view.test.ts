@@ -43,6 +43,7 @@ describe("Diagnostics view", () => {
     view = buildDiagnosticsView(state, clock);
     expect(view.providers[0]).toMatchObject({
       status: "unknown",
+      validationStatus: "validated",
       lastValidatedAt: provider.lastValidatedAt
     });
 
@@ -154,6 +155,7 @@ describe("Diagnostics view", () => {
     state.providerAttempts.push(
       createFixtureProviderAttempt({
         id: "attempt-failure-1",
+        runId: "run-active",
         status: "failed",
         errorKind: "timeout",
         errorCode: "provider_timeout",
@@ -162,9 +164,11 @@ describe("Diagnostics view", () => {
       }),
       createFixtureProviderAttempt({
         id: "attempt-failure-2",
+        runId: "run-active",
         status: "ambiguous",
         errorKind: "unknown",
         errorCode: "provider_ambiguous",
+        targetOrder: 1,
         usage: { source: "unknown" },
         startedAt: "2026-09-16T11:59:00.000Z"
       })
@@ -177,14 +181,25 @@ describe("Diagnostics view", () => {
       expect.objectContaining({
         id: "run-active",
         conversationTitle: conversation.title,
-        taskTitle: "Diagnose runtime"
+        taskTitle: "Diagnose runtime",
+        actions: [
+          {
+            kind: "stop",
+            method: "POST",
+            href: "/api/tasks/task-diagnostics/stop"
+          }
+        ]
       })
     );
     expect(view.discussions).toContainEqual(
       expect.objectContaining({
         id: discussion.id,
         status: "interrupted",
-        reason: "provider_timeout"
+        reason: "provider_timeout",
+        actions: expect.arrayContaining([
+          expect.objectContaining({ kind: "retry" }),
+          expect.objectContaining({ kind: "cancel" })
+        ])
       })
     );
     expect(view.failures).toContainEqual(
@@ -192,16 +207,105 @@ describe("Diagnostics view", () => {
         provider: "openai",
         modelId: "test-model",
         count: 2,
+        attemptIds: ["attempt-failure-2", "attempt-failure-1"],
+        runIds: ["run-active"],
         statuses: expect.arrayContaining(["ambiguous", "failed"]),
+        failureKinds: expect.arrayContaining(["timeout", "ambiguous"]),
+        usedFallback: true,
         errorKinds: expect.arrayContaining(["timeout", "unknown"]),
         errorCodes: expect.arrayContaining([
           "provider_timeout",
           "provider_ambiguous"
-        ])
+        ]),
+        runId: "run-active",
+        taskId: "task-diagnostics",
+        href: expect.stringContaining("task=task-diagnostics")
       })
     );
     expect(serialized).not.toContain("encryptedCredential");
     expect(serialized).not.toContain("test-api-key");
+  });
+
+  it("offers only valid recovery commands for failed and interrupted Runs", () => {
+    const state = createFixtureState();
+    const conversation = state.conversations[0];
+    state.tasks.push({
+      id: "task-recovery",
+      workspaceId: state.workspace.id,
+      conversationId: conversation.id,
+      title: "Recover failed work",
+      goal: "Retry the failed Task Run.",
+      assigneeIds: [state.employees[0].id],
+      status: "in_progress",
+      history: [],
+      createdAt: state.workspace.createdAt,
+      updatedAt: state.workspace.updatedAt
+    });
+    state.runs.push(
+      {
+        id: "run-task-failed",
+        workspaceId: state.workspace.id,
+        conversationId: conversation.id,
+        taskId: "task-recovery",
+        triggerMessageId: "message-task-failed",
+        memberSnapshot: [state.employees[0].id],
+        status: "failed",
+        errorCode: "provider_timeout",
+        createdAt: "2026-09-16T11:50:00.000Z",
+        startedAt: "2026-09-16T11:50:00.000Z",
+        completedAt: "2026-09-16T11:51:00.000Z"
+      },
+      {
+        id: "run-interrupted",
+        workspaceId: state.workspace.id,
+        conversationId: conversation.id,
+        triggerMessageId: "message-interrupted",
+        memberSnapshot: [state.employees[1].id],
+        status: "interrupted",
+        createdAt: "2026-09-16T11:40:00.000Z",
+        startedAt: "2026-09-16T11:40:00.000Z",
+        completedAt: "2026-09-16T11:41:00.000Z"
+      }
+    );
+
+    const view = buildDiagnosticsView(state, clock);
+    const taskRun = view.runs.recoverable.find(
+      (run) => run.id === "run-task-failed"
+    );
+    const interruptedRun = view.runs.recoverable.find(
+      (run) => run.id === "run-interrupted"
+    );
+
+    expect(taskRun?.actions).toEqual([
+      {
+        kind: "retry",
+        method: "POST",
+        href: "/api/tasks/task-recovery/run"
+      }
+    ]);
+    expect(interruptedRun?.actions).toEqual([
+      {
+        kind: "resume",
+        method: "POST",
+        href: "/api/runs/run-interrupted/resume"
+      }
+    ]);
+
+    state.runEvents.push({
+      id: "event-tool-started",
+      workspaceId: state.workspace.id,
+      runId: "run-interrupted",
+      sequence: 1,
+      type: "tool_started",
+      payload: { messageId: "message-tool" },
+      createdAt: "2026-09-16T11:40:30.000Z"
+    });
+    const blockedView = buildDiagnosticsView(state, clock);
+    expect(
+      blockedView.runs.recoverable.find(
+        (run) => run.id === "run-interrupted"
+      )
+    ).toBeUndefined();
   });
 
   it("bounds provider evidence and failure groups to the latest 50 attempts", () => {

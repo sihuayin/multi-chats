@@ -23,7 +23,7 @@ export type DiscussionAction =
   | "confirm"
   | "cancel";
 
-function availableActions(
+export function availableDiscussionActions(
   discussion: Discussion,
   hasBrief: boolean
 ): DiscussionAction[] {
@@ -326,7 +326,7 @@ export function buildDiscussionView(
           }
         : undefined
     },
-    availableActions: availableActions(
+    availableActions: availableDiscussionActions(
       discussion,
       Boolean(latestBrief)
     )

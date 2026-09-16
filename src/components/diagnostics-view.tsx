@@ -3,18 +3,26 @@
 import {
   Activity,
   AlertTriangle,
+  CircleStop,
   Clock3,
   LoaderCircle,
+  RotateCcw,
   RefreshCw,
   Server,
-  UsersRound
+  UsersRound,
+  X
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { toast } from "sonner";
 import { useI18n } from "@/components/i18n-provider";
 import { PageHeader } from "@/components/page-header";
+import { useWorkspace } from "@/components/workspace-provider";
 import { apiRequest } from "@/lib/api";
 import type {
+  DiagnosticsCommand,
+  DiagnosticsCommandKind,
+  DiagnosticsFailureKind,
   DiagnosticsHealth,
   DiagnosticsRun,
   DiagnosticsView
@@ -29,14 +37,19 @@ function statusKey(status: string): TranslationKey {
   return `status.${status}` as TranslationKey;
 }
 
-function runHref(run: DiagnosticsRun): string {
-  const query = new URLSearchParams({ conversation: run.conversationId });
-  if (run.taskId) query.set("task", run.taskId);
-  if (run.discussionId) {
-    query.set("view", "discussion");
-    query.set("discussion", run.discussionId);
-  }
-  return `/?${query.toString()}`;
+function commandKey(kind: DiagnosticsCommandKind): TranslationKey {
+  return `diagnostics.action.${kind}`;
+}
+
+const actionIcons = {
+  cancel: <X size={13} />,
+  stop: <CircleStop size={13} />,
+  resume: <RotateCcw size={13} />,
+  retry: <RefreshCw size={13} />
+} satisfies Record<DiagnosticsCommandKind, ReactNode>;
+
+function failureKey(kind: DiagnosticsFailureKind): TranslationKey {
+  return `diagnostics.failure.${kind}`;
 }
 
 function formatTime(value: string | undefined): string {
@@ -53,11 +66,104 @@ function formatCost(micros: number | null, currency?: string): string {
   return `${currency ?? "USD"} ${(micros / 1_000_000).toFixed(4)}`;
 }
 
+function ActionButtons({
+  actions,
+  resourceLabel,
+  busyAction,
+  onAction
+}: {
+  actions: DiagnosticsCommand[];
+  resourceLabel: string;
+  busyAction: string | null;
+  onAction: (action: DiagnosticsCommand) => void;
+}) {
+  const { t } = useI18n();
+  if (actions.length === 0) return null;
+  return (
+    <div className="diagnostics-actions">
+      {actions.map((action) => {
+        const label = t(commandKey(action.kind));
+        const busy = busyAction === action.href;
+        return (
+          <button
+            key={`${action.kind}:${action.href}`}
+            type="button"
+            className={
+              action.kind === "cancel"
+                ? "button danger"
+                : "button quiet"
+            }
+            aria-label={`${label}: ${resourceLabel}`}
+            disabled={busyAction !== null}
+            onClick={() => onAction(action)}
+          >
+            {busy ? (
+              <LoaderCircle className="spin" size={13} />
+            ) : (
+              actionIcons[action.kind]
+            )}
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function RunListItem({
+  run,
+  busyAction,
+  onAction
+}: {
+  run: DiagnosticsRun;
+  busyAction: string | null;
+  onAction: (action: DiagnosticsCommand) => void;
+}) {
+  const { t } = useI18n();
+  const label =
+    run.taskTitle ?? run.discussionTitle ?? run.conversationTitle;
+  return (
+    <article className="diagnostics-list-item">
+      <div>
+        <strong>{label}</strong>
+        <small>
+          {run.conversationTitle}
+          {run.errorCode ? ` · ${run.errorCode}` : ""}
+        </small>
+      </div>
+      <span className={`status-pill ${run.status}`}>
+        {t(statusKey(run.status))}
+      </span>
+      <Link
+        href={run.href}
+        aria-label={`${t("diagnostics.openConversation")}: ${label}`}
+      >
+        {t("diagnostics.openConversation")}
+      </Link>
+      {run.pendingApprovalCount > 0 ? (
+        <small>
+          {t("diagnostics.pendingApprovals", {
+            count: run.pendingApprovalCount
+          })}
+        </small>
+      ) : null}
+      <ActionButtons
+        actions={run.actions}
+        resourceLabel={label}
+        busyAction={busyAction}
+        onAction={onAction}
+      />
+    </article>
+  );
+}
+
 export function DiagnosticsWorkspace() {
   const { t } = useI18n();
+  const { refresh: refreshWorkspace } = useWorkspace();
   const [view, setView] = useState<DiagnosticsView | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [busyAction, setBusyAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -97,6 +203,32 @@ export function DiagnosticsWorkspace() {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
       setRefreshing(false);
+    }
+  }
+
+  async function execute(action: DiagnosticsCommand) {
+    setBusyAction(action.href);
+    setError(null);
+    try {
+      await apiRequest(action.href, {
+        method: action.method,
+        ...(action.method === "POST"
+          ? {
+              body: "{}",
+              headers: { "idempotency-key": crypto.randomUUID() }
+            }
+          : {})
+      });
+      await refresh();
+      await refreshWorkspace();
+      toast.success(t("diagnostics.actionApplied"));
+    } catch (nextError) {
+      const message =
+        nextError instanceof Error ? nextError.message : String(nextError);
+      setError(message);
+      toast.error(message);
+    } finally {
+      setBusyAction(null);
     }
   }
 
@@ -213,7 +345,7 @@ export function DiagnosticsWorkspace() {
                           ? t("diagnostics.lastValidated", {
                               time: formatTime(provider.lastValidatedAt)
                             })
-                          : t("diagnostics.unavailable")}
+                          : t("diagnostics.validationUnknown")}
                     </small>
                   </article>
                 ))}
@@ -230,32 +362,38 @@ export function DiagnosticsWorkspace() {
               </div>
               <div className="diagnostics-list">
                 {[...view.runs.active, ...view.runs.queued].map((run) => (
-                  <article key={run.id} className="diagnostics-list-item">
-                    <div>
-                      <strong>{run.taskTitle ?? run.discussionTitle ?? run.conversationTitle}</strong>
-                      <small>
-                        {run.conversationTitle}
-                        {run.errorCode ? ` · ${run.errorCode}` : ""}
-                      </small>
-                    </div>
-                    <span className={`status-pill ${run.status}`}>
-                      {t(statusKey(run.status))}
-                    </span>
-                    <Link
-                      href={runHref(run)}
-                      aria-label={`${t("diagnostics.openConversation")}: ${
-                        run.taskTitle ??
-                        run.discussionTitle ??
-                        run.conversationTitle
-                      }`}
-                    >
-                      {t("diagnostics.openConversation")}
-                    </Link>
-                  </article>
+                  <RunListItem
+                    key={run.id}
+                    run={run}
+                    busyAction={busyAction}
+                    onAction={(action) => void execute(action)}
+                  />
                 ))}
                 {activeWork === 0 ? (
                   <p className="diagnostics-empty">
                     {t("diagnostics.noActiveRuns")}
+                  </p>
+                ) : null}
+              </div>
+            </section>
+
+            <section className="panel diagnostics-panel">
+              <div className="panel-title">
+                <RotateCcw size={17} />
+                <h2>{t("diagnostics.recovery")}</h2>
+              </div>
+              <div className="diagnostics-list">
+                {view.runs.recoverable.map((run) => (
+                  <RunListItem
+                    key={run.id}
+                    run={run}
+                    busyAction={busyAction}
+                    onAction={(action) => void execute(action)}
+                  />
+                ))}
+                {view.runs.recoverable.length === 0 ? (
+                  <p className="diagnostics-empty">
+                    {t("diagnostics.noRecoverableRuns")}
                   </p>
                 ) : null}
               </div>
@@ -286,6 +424,18 @@ export function DiagnosticsWorkspace() {
                       {discussion.costBudgetState}
                       {discussion.reason ? ` · ${discussion.reason}` : ""}
                     </small>
+                    <Link
+                      href={discussion.href}
+                      aria-label={`${t("diagnostics.openDiscussion")}: ${discussion.title}`}
+                    >
+                      {t("diagnostics.openDiscussion")}
+                    </Link>
+                    <ActionButtons
+                      actions={discussion.actions}
+                      resourceLabel={discussion.title}
+                      busyAction={busyAction}
+                      onAction={(action) => void execute(action)}
+                    />
                   </article>
                 ))}
                 {view.discussions.length === 0 ? (
@@ -353,6 +503,19 @@ export function DiagnosticsWorkspace() {
                         {t("chat.attempts", { count: failure.count })} ·{" "}
                         {failure.statuses.join(", ")}
                       </small>
+                      <small>
+                        {failure.failureKinds
+                          .map((kind) => t(failureKey(kind)))
+                          .join(" · ")}
+                      </small>
+                      {failure.usedFallback ? (
+                        <small>{t("diagnostics.failure.fallback")}</small>
+                      ) : null}
+                      <small>
+                        {t("diagnostics.latestAttempt", {
+                          id: failure.latestAttemptId
+                        })}
+                      </small>
                       {[...failure.errorKinds, ...failure.errorCodes].length >
                       0 ? (
                         <small>
@@ -364,6 +527,14 @@ export function DiagnosticsWorkspace() {
                       ) : null}
                     </div>
                     <time>{formatTime(failure.lastOccurredAt)}</time>
+                    {failure.href ? (
+                      <Link
+                        href={failure.href}
+                        aria-label={`${t("diagnostics.openAffectedWork")}: ${failure.provider} / ${failure.modelId}`}
+                      >
+                        {t("diagnostics.openAffectedWork")}
+                      </Link>
+                    ) : null}
                   </article>
                 ))}
                 {view.failures.length === 0 ? (

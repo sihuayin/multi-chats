@@ -118,8 +118,19 @@ describe("diagnostics view", () => {
     const state = createFixtureState();
     const provider = state.providers[0];
     state.workspace.workerHeartbeatAt = new Date().toISOString();
+    state.runs.push({
+      id: "run-diagnostics",
+      workspaceId: state.workspace.id,
+      conversationId: state.conversations[0].id,
+      triggerMessageId: "message-diagnostics",
+      memberSnapshot: [state.employees[0].id],
+      status: "running",
+      createdAt: new Date().toISOString(),
+      startedAt: new Date().toISOString()
+    });
     state.providerAttempts.push({
       id: "attempt-diagnostics",
+      runId: "run-diagnostics",
       workspaceId: state.workspace.id,
       purpose: "conversation",
       provider: provider.provider,
@@ -140,9 +151,32 @@ describe("diagnostics view", () => {
       ["diagnostics"]
     );
     const body = await response.text();
+    const payload = JSON.parse(body) as {
+      runs: {
+        active: Array<{
+          id: string;
+          actions: Array<{ kind: string; method: string; href: string }>;
+        }>;
+      };
+      failures: Array<{
+        latestAttemptId: string;
+        failureKinds: string[];
+        href: string;
+      }>;
+    };
 
     expect(response.status).toBe(200);
     expect(body).toContain("provider_timeout");
+    expect(payload.runs.active[0].actions).toContainEqual({
+      kind: "cancel",
+      method: "DELETE",
+      href: "/api/runs/run-diagnostics"
+    });
+    expect(payload.failures[0]).toMatchObject({
+      latestAttemptId: "attempt-diagnostics",
+      failureKinds: ["timeout"],
+      href: expect.stringContaining("conversation=")
+    });
     expect(body).not.toContain("encryptedCredential");
     expect(body).not.toContain("test-api-key");
   });

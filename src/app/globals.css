@@ -1687,6 +1687,19 @@ label textarea {
   grid-column: 1 / -1;
 }
 
+.diagnostics-actions {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.diagnostics-actions .button {
+  min-height: 28px;
+  padding: 0 8px;
+  font-size: 9.5px;
+}
+
 .diagnostics-list-item a {
   color: var(--accent-strong);
   font-size: 10px;
