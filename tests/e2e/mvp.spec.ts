@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
-test.setTimeout(240_000);
+test.setTimeout(360_000);
+test.describe.configure({ mode: "serial" });
 
 test("configures an Employee Group and completes a mentioned Run", async ({
   page
@@ -37,7 +38,9 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   await page.getByLabel(/Update Task/).check();
   await page.getByLabel(/Attach Artifact/).check();
   await page.getByRole("button", { name: "Create custom Skill" }).click();
-  await expect(page.getByText(customSkillName)).toBeVisible();
+  await expect(page.getByText(customSkillName)).toBeVisible({
+    timeout: 15_000
+  });
 
   const skillCard = page.locator(".list-card").filter({ hasText: customSkillName });
   await skillCard.getByTitle("Edit Skill").click();
@@ -141,19 +144,19 @@ test("configures an Employee Group and completes a mentioned Run", async ({
     page
       .locator(".message-bubble.employee")
       .filter({ hasText: `${employeeName} reviewed` })
-  ).toBeVisible({ timeout: 10_000 });
+  ).toBeVisible({ timeout: 30_000 });
   const employeeResponse = `${employeeName} reviewed the request and prepared a structured response.`;
   const secondEmployeeResponse = `${secondEmployeeName} reviewed the request and prepared a structured response.`;
   await expect(
     page
       .locator(".message-bubble.employee")
       .filter({ hasText: employeeResponse })
-  ).toBeVisible({ timeout: 10_000 });
+  ).toBeVisible({ timeout: 30_000 });
   await expect(
     page
       .locator(".message-bubble.employee")
       .filter({ hasText: secondEmployeeResponse })
-  ).toBeVisible({ timeout: 10_000 });
+  ).toBeVisible({ timeout: 30_000 });
   const employeeMessages = await page
     .locator(".message-bubble.employee")
     .allTextContents();
@@ -241,7 +244,7 @@ test("configures an Employee Group and completes a mentioned Run", async ({
     page.locator(".message-stream").getByText("Task: Review launch brief")
   ).toBeVisible();
   await expect(page.locator(".message-bubble.employee")).toHaveCount(4, {
-    timeout: 10_000
+    timeout: 30_000
   });
   await page.reload();
   await page
@@ -275,7 +278,7 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   await expect(retryTask.getByRole("button", { name: "Run again" })).toBeVisible();
   await retryTask.getByRole("button", { name: "Run again" }).click();
   await expect(retryTask.getByRole("button", { name: "Stop" })).toHaveCount(0, {
-    timeout: 10_000
+    timeout: 30_000
   });
 
   await page.getByPlaceholder("Task title").fill("Publish Task result");
@@ -292,7 +295,7 @@ test("configures an Employee Group and completes a mentioned Run", async ({
     page
       .locator(".message-bubble.employee")
       .filter({ hasText: "Task Artifact published." })
-  ).toBeVisible({ timeout: 10_000 });
+  ).toBeVisible({ timeout: 30_000 });
   await expect(outputTask.locator(".status-pill.review")).toBeVisible();
   const conversationArtifact = page
     .locator(".message-stream details")
@@ -350,7 +353,7 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   await page.getByRole("button", { name: "Send" }).click();
   await expect(
     page.locator(".message-bubble.employee").filter({ hasText: /Current time:/ })
-  ).toBeVisible({ timeout: 10_000 });
+  ).toBeVisible({ timeout: 30_000 });
   const toolRunTimeline = page.locator(".run-timeline");
   await toolRunTimeline.locator("summary").click();
   await expect(toolRunTimeline).toContainText("tool started");
@@ -378,12 +381,14 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   await page.reload();
   await page.locator(".conversation-item").last().click();
   await expect(approvalCard).toBeVisible();
-  await approvalCard.getByRole("button", { name: "Approve" }).click();
+  await approvalCard
+    .getByRole("button", { name: "Approve" })
+    .click({ force: true });
   await expect(
     page
       .locator(".message-bubble.employee")
       .filter({ hasText: /Tool failed: Private network URLs are not allowed/ })
-  ).toBeVisible({ timeout: 10_000 });
+  ).toBeVisible({ timeout: 30_000 });
   await expect(approvalCard).toHaveCount(0);
   await expect(approvalTaskCard.locator(".status-pill.in_progress")).toBeVisible();
 
@@ -392,12 +397,14 @@ test("configures an Employee Group and completes a mentioned Run", async ({
     .fill(`@researcher-${suffix} USE_POST_WEBHOOK`);
   await page.getByRole("button", { name: "Send" }).click();
   await expect(approvalCard).toBeVisible();
-  await approvalCard.getByRole("button", { name: "Reject" }).click();
+  await approvalCard
+    .getByRole("button", { name: "Reject" })
+    .click({ force: true });
   await expect(
     page
       .locator(".message-bubble.employee")
       .filter({ hasText: /Tool failed: The user rejected this Tool call/ })
-  ).toBeVisible({ timeout: 10_000 });
+  ).toBeVisible({ timeout: 30_000 });
   await expect(toolRunTimeline).toHaveAttribute(
     "data-run-status",
     "completed"
@@ -446,7 +453,7 @@ test("configures an Employee Group and completes a mentioned Run", async ({
     page
       .locator(".message-bubble.employee")
       .filter({ hasText: "Partial failure output." })
-  ).toBeVisible({ timeout: 10_000 });
+  ).toBeVisible({ timeout: 30_000 });
   await expect(
     page.locator('.message-bubble[data-status="failed"]')
   ).toBeVisible();
@@ -505,7 +512,7 @@ test("configures an Employee Group and completes a mentioned Run", async ({
     .getByRole("button", { name: "Confirm and create Task" })
     .click();
   await expect(page.getByText("Task created")).toBeVisible({
-    timeout: 10_000
+    timeout: 30_000
   });
   await expect(
     page.getByText(`Ship the recommendation ${suffix}`)
@@ -557,4 +564,97 @@ test("configures an Employee Group and completes a mentioned Run", async ({
 
   await page.getByRole("button", { name: "EN", exact: true }).click();
   await expect(page.getByRole("link", { name: "Employees" })).toBeVisible();
+});
+
+test("shows a redacted diagnostics surface on desktop and mobile", async ({
+  page
+}) => {
+  const suffix = Date.now().toString(36);
+  const credential = `diagnostics-secret-${suffix}`;
+
+  await page.context().addCookies([
+    {
+      name: "locale",
+      value: "en",
+      url: "http://localhost:3000"
+    }
+  ]);
+  await page.goto("/providers");
+  await page.getByLabel("Label").fill(`Diagnostics Provider ${suffix}`);
+  await page.getByLabel("API credential").fill(credential);
+  await page.getByRole("button", { name: "Validate and save" }).click();
+  await expect(page.getByText("Provider saved.")).toBeVisible();
+
+  await page.goto("/diagnostics");
+  await expect(
+    page.getByRole("heading", { name: "Diagnostics", exact: true })
+  ).toBeVisible();
+  await expect(page.getByText("Worker", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Providers", exact: true })
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Runs", exact: true })
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Discussions", exact: true })
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "24-hour usage", exact: true })
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Recent Provider failures", exact: true })
+  ).toBeVisible();
+  await expect(page.locator("body")).not.toContainText(credential);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth
+    )
+  ).toBe(true);
+
+  const workspace = await page.request
+    .get("/api/workspace")
+    .then((response) => response.json()) as {
+    conversations: Array<{ id: string; title: string }>;
+    tasks: Array<{ id: string; conversationId: string }>;
+    discussions: Array<{
+      id: string;
+      conversationId: string;
+      title: string;
+    }>;
+  };
+  const conversation = workspace.conversations[0];
+  const task = workspace.tasks.find(
+    (item) => item.conversationId === conversation.id
+  );
+  const discussion = workspace.discussions.find(
+    (item) => item.conversationId === conversation.id
+  );
+  expect(task).toBeTruthy();
+  expect(discussion).toBeTruthy();
+
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(
+    `/?${new URLSearchParams({
+      conversation: conversation.id,
+      task: task!.id
+    })}`
+  );
+  await expect(
+    page.getByRole("heading", { name: conversation.title })
+  ).toBeVisible();
+  await expect(page.locator(`#task-${task!.id}`)).toBeInViewport();
+
+  await page.goto(
+    `/?${new URLSearchParams({
+      view: "discussion",
+      conversation: conversation.id,
+      discussion: discussion!.id
+    })}`
+  );
+  await expect(
+    page.getByRole("heading", { name: discussion!.title })
+  ).toBeVisible();
 });

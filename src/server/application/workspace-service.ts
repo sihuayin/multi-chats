@@ -24,6 +24,8 @@ import { ApiError, notFound } from "@/server/application/errors";
 import { transitionTask } from "@/server/application/task-ledger";
 import { createDraftTask } from "@/server/application/task-factory";
 import { availableTaskActions } from "@/server/application/task-actions";
+import { buildDiagnosticsView } from "@/server/application/diagnostics-view";
+import type { DiagnosticsView } from "@/lib/diagnostics-view";
 import {
   createTaskArtifact,
   updateTaskArtifact
@@ -46,7 +48,10 @@ function publicProvider(provider: ProviderCredential): PublicProvider {
     provider: provider.provider,
     label: provider.label,
     createdAt: provider.createdAt,
-    updatedAt: provider.updatedAt
+    updatedAt: provider.updatedAt,
+    ...(provider.lastValidatedAt
+      ? { lastValidatedAt: provider.lastValidatedAt }
+      : {})
   };
   return { ...rest, configured: true };
 }
@@ -85,6 +90,10 @@ export class WorkspaceService {
     }));
   }
 
+  async getDiagnosticsView(): Promise<DiagnosticsView> {
+    return this.store.read((state) => buildDiagnosticsView(state));
+  }
+
   async updateWorkspace(input: unknown): Promise<WorkspaceView> {
     const parsed = workspacePatchSchema.parse(input);
     await this.store.update((state) => {
@@ -115,6 +124,7 @@ export class WorkspaceService {
         provider: parsed.provider,
         label: parsed.label,
         encryptedCredential: this.cipher.encrypt(parsed.credential),
+        lastValidatedAt: timestamp,
         createdAt: timestamp,
         updatedAt: timestamp
       };
@@ -136,7 +146,8 @@ export class WorkspaceService {
       provider.provider = parsed.provider;
       provider.label = parsed.label;
       provider.encryptedCredential = this.cipher.encrypt(parsed.credential);
-      provider.updatedAt = now();
+      provider.lastValidatedAt = now();
+      provider.updatedAt = provider.lastValidatedAt;
       state.workspace.updatedAt = provider.updatedAt;
       return publicProvider(provider);
     });

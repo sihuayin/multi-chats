@@ -44,6 +44,7 @@ export function createFixtureState(): AppState {
     provider: "openai",
     label: "Test provider",
     encryptedCredential: cipher.encrypt("test-api-key"),
+    lastValidatedAt: now,
     createdAt: now,
     updatedAt: now
   });

@@ -271,6 +271,10 @@ async function handleApiRoute(
     return json(await workspace.getWorkspaceView());
   }
 
+  if (request.method === "GET" && resource === "diagnostics") {
+    return json(await workspace.getDiagnosticsView());
+  }
+
   if (request.method === "PATCH" && resource === "workspace") {
     return json(await workspace.updateWorkspace(await body(request)));
   }

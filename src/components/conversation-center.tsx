@@ -6,8 +6,18 @@ import { ChatWorkspace } from "@/components/chat-workspace";
 import { DiscussionWorkspace } from "@/components/discussion-workspace";
 import styles from "./conversation-center.module.css";
 
-export function ConversationCenter() {
-  const [view, setView] = useState<"chat" | "discussion">("chat");
+export function ConversationCenter({
+  initialView = "chat",
+  conversationId,
+  taskId,
+  discussionId
+}: {
+  initialView?: "chat" | "discussion";
+  conversationId?: string;
+  taskId?: string;
+  discussionId?: string;
+}) {
+  const [view, setView] = useState<"chat" | "discussion">(initialView);
 
   return (
     <div className={`${styles.shell} conversation-center`}>
@@ -43,7 +53,10 @@ export function ConversationCenter() {
         aria-labelledby="chat-tab"
         hidden={view !== "chat"}
       >
-        <ChatWorkspace />
+        <ChatWorkspace
+          initialConversationId={conversationId}
+          initialTaskId={taskId}
+        />
       </div>
       <div
         id="discussion-panel"
@@ -51,7 +64,12 @@ export function ConversationCenter() {
         aria-labelledby="discussion-tab"
         hidden={view !== "discussion"}
       >
-        {view === "discussion" ? <DiscussionWorkspace /> : null}
+        {view === "discussion" ? (
+          <DiscussionWorkspace
+            initialConversationId={conversationId}
+            initialDiscussionId={discussionId}
+          />
+        ) : null}
       </div>
     </div>
   );

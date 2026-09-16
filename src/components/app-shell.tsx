@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Activity,
   Boxes,
   Bot,
   Braces,
@@ -28,7 +29,8 @@ const navItems: Array<{
   { href: "/groups", label: "nav.groups", icon: UsersRound },
   { href: "/skills", label: "nav.skills", icon: Braces },
   { href: "/tools", label: "nav.tools", icon: Wrench },
-  { href: "/providers", label: "nav.providers", icon: KeyRound }
+  { href: "/providers", label: "nav.providers", icon: KeyRound },
+  { href: "/diagnostics", label: "nav.diagnostics", icon: Activity }
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -46,7 +48,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     >
       <aside className="app-sidebar">
         <div className="brand">
-          <span className="brand-mark">
+          <span className="brand-mark" aria-hidden="true">
             <Boxes size={18} />
           </span>
           <div>
@@ -66,6 +68,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 key={item.href}
                 href={item.href}
                 className={active ? "nav-item active" : "nav-item"}
+                aria-current={active ? "page" : undefined}
               >
                 <Icon size={17} />
                 <span>{t(item.label)}</span>
@@ -77,13 +80,17 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="language-switch" aria-label={t("common.language")}>
             <Languages size={14} />
             <button
+              type="button"
               className={locale === "zh" ? "active" : ""}
+              aria-pressed={locale === "zh"}
               onClick={() => setLocale("zh")}
             >
               中文
             </button>
             <button
+              type="button"
               className={locale === "en" ? "active" : ""}
+              aria-pressed={locale === "en"}
               onClick={() => setLocale("en")}
             >
               EN

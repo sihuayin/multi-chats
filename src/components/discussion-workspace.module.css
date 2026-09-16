@@ -1,17 +1,17 @@
 .shell {
   display: grid;
-  grid-template-columns: 244px minmax(0, 1fr);
+  grid-template-columns: 236px minmax(0, 1fr);
   min-height: calc(100vh - 0px);
-  background: var(--surface);
+  background: var(--background);
 }
 
 .rail {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 18px;
-  padding: 22px 16px;
-  background: #edf2f3;
+  gap: 16px;
+  padding: 18px 14px;
+  background: var(--paper);
   border-right: 1px solid var(--line);
 }
 
@@ -25,17 +25,18 @@
 .eyebrow,
 .sectionLabel,
 .briefMeta {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.06em;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 
 .railHeader strong {
-  font-family: var(--display);
-  font-size: 23px;
+  font-family: var(--sans);
+  font-size: 15px;
+  font-weight: 650;
 }
 
 .discussionList {
@@ -46,40 +47,45 @@
 .discussionList button {
   display: grid;
   gap: 3px;
-  padding: 11px 12px;
+  padding: 9px 10px;
   text-align: left;
   background: transparent;
   border: 1px solid transparent;
   border-radius: 7px;
   cursor: pointer;
+  transition:
+    background 150ms ease-out,
+    border-color 150ms ease-out,
+    transform 150ms ease-out;
 }
 
 .discussionList button.selected {
-  background: white;
-  border-color: var(--line);
-  box-shadow: 3px 0 0 var(--accent);
+  background: rgb(16 163 127 / 9%);
+  border-color: rgb(16 163 127 / 20%);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .discussionList button span {
   overflow: hidden;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: 11.5px;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .discussionList button small,
 .discussionList p {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--muted-foreground);
+  font-family: var(--mono);
+  font-size: 9px;
 }
 
 .field {
   display: grid;
   gap: 6px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 620;
 }
 
 .field input,
@@ -89,31 +95,32 @@
   min-height: 38px;
   padding: 8px 10px;
   color: var(--ink);
-  background: white;
-  border: 1px solid var(--line);
+  background: #121212;
+  border: 1px solid rgb(255 255 255 / 11%);
   border-radius: 6px;
 }
 
 .center {
   min-width: 0;
-  padding: 24px;
+  padding: 24px 22px 44px;
 }
 
 .setup {
   max-width: 860px;
   margin: 5vh auto 0;
-  padding: 26px;
+  padding: 22px;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 9px;
-  box-shadow: var(--shadow);
+  border-radius: 8px;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 2%);
 }
 
 .setup h1,
 .header h1 {
   margin: 5px 0 8px;
-  font-family: var(--display);
-  font-size: clamp(25px, 3vw, 38px);
+  font-family: var(--sans);
+  font-size: clamp(25px, 3vw, 34px);
+  font-weight: 680;
   line-height: 1.08;
 }
 
@@ -136,10 +143,10 @@
   grid-template-columns: auto minmax(0, 1fr) 126px;
   gap: 8px;
   align-items: center;
-  padding: 10px;
-  background: var(--paper);
+  padding: 9px;
+  background: #111;
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: 6px;
 }
 
 .participantConfig strong {
@@ -151,9 +158,9 @@
 .participantConfig select {
   min-height: 34px;
   padding: 5px 7px;
-  background: white;
-  border: 1px solid var(--line);
-  border-radius: 5px;
+  background: #151515;
+  border: 1px solid rgb(255 255 255 / 11%);
+  border-radius: 6px;
 }
 
 .primary,
@@ -163,25 +170,25 @@
   align-items: center;
   justify-content: center;
   gap: 7px;
-  min-height: 38px;
-  padding: 0 13px;
-  font-size: 12px;
-  font-weight: 750;
-  background: white;
-  border: 1px solid var(--line);
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 11.5px;
+  font-weight: 650;
+  background: #1b1b1b;
+  border: 1px solid rgb(255 255 255 / 8%);
   border-radius: 6px;
   cursor: pointer;
 }
 
 .primary {
-  color: white;
-  background: var(--accent);
-  border-color: var(--accent);
+  color: var(--primary-foreground);
+  background: var(--primary);
+  border-color: var(--primary);
 }
 
 .secondary:hover,
 .commandRow button:hover {
-  background: var(--accent-soft);
+  background: #232323;
 }
 
 .danger {
@@ -198,14 +205,14 @@
   align-items: flex-end;
   justify-content: space-between;
   gap: 20px;
-  padding-bottom: 17px;
+  padding-bottom: 16px;
   border-bottom: 1px solid var(--line);
 }
 
 .header p {
   margin: 0;
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--muted-foreground);
+  font-size: 11px;
 }
 
 .commandRow {
@@ -218,9 +225,9 @@
 .workbench {
   display: grid;
   grid-template-columns: 230px minmax(0, 1fr) 310px;
-  gap: 18px;
+  gap: 16px;
   align-items: start;
-  margin-top: 18px;
+  margin-top: 16px;
 }
 
 .participants,
@@ -247,22 +254,23 @@
 
 .participants article {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
+  grid-template-columns: 32px minmax(0, 1fr);
   gap: 9px;
-  padding-bottom: 10px;
+  padding-bottom: 9px;
   border-bottom: 1px solid var(--line);
 }
 
 .participants article > span {
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   color: var(--accent-strong);
   font-family: var(--mono);
   font-size: 9px;
   font-weight: 800;
   background: var(--accent-soft);
+  border: 1px solid rgb(16 163 127 / 20%);
   border-radius: 6px;
 }
 
@@ -274,7 +282,7 @@
 .participants small,
 .participants p {
   margin: 0;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 10px;
 }
 
@@ -286,7 +294,7 @@
   display: flex;
   gap: 1px;
   overflow-x: auto;
-  background: var(--line);
+  background: #202020;
   border: 1px solid var(--line);
   border-radius: 8px 8px 0 0;
 }
@@ -295,11 +303,12 @@
   display: grid;
   flex: 1 0 130px;
   gap: 2px;
-  padding: 11px 12px;
+  padding: 10px 11px;
   text-align: left;
-  background: var(--paper);
+  background: #121212;
   border: 0;
   cursor: pointer;
+  transition: background 150ms ease-out;
 }
 
 .tabs button span {
@@ -310,21 +319,21 @@
 }
 
 .tabs button small {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 9px;
 }
 
 .tabs button.activeTab {
-  background: white;
-  box-shadow: inset 0 -3px 0 var(--accent);
+  background: #1a1a1a;
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 .stageBody {
   display: grid;
   gap: 12px;
   min-height: 300px;
-  padding: 18px;
-  background: white;
+  padding: 16px;
+  background: #151515;
   border: 1px solid var(--line);
   border-top: 0;
   border-radius: 0 0 8px 8px;
@@ -345,14 +354,15 @@
 
 .stageBody article span,
 .stageBody article small {
-  color: var(--muted);
+  color: var(--muted-foreground);
+  font-family: var(--mono);
   font-size: 10px;
 }
 
 .stageBody p {
   margin: 0;
-  color: #445258;
-  font-size: 13px;
+  color: #c7c7c7;
+  font-size: 12px;
   line-height: 1.55;
 }
 
@@ -362,7 +372,7 @@
 
 .brief {
   padding: 15px;
-  background: #f8fbfc;
+  background: #111;
   border: 1px solid var(--line);
   border-radius: 8px;
 }
@@ -375,11 +385,19 @@
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
   gap: 8px;
-  padding: 11px;
-  background: white;
+  padding: 10px;
+  background: #151515;
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: 6px;
   cursor: pointer;
+  transition:
+    background 150ms ease-out,
+    border-color 150ms ease-out;
+}
+
+.option:hover {
+  background: #1b1b1b;
+  border-color: rgb(255 255 255 / 14%);
 }
 
 .option strong {
@@ -388,7 +406,7 @@
 
 .option p {
   margin: 3px 0 0;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 10px;
   line-height: 1.45;
 }
@@ -399,6 +417,7 @@
   padding: 12px;
   color: var(--success);
   background: var(--success-soft);
+  border: 1px solid rgb(91 214 169 / 18%);
   border-radius: 7px;
 }
 
@@ -411,7 +430,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 12px;
 }
 
@@ -426,7 +445,7 @@
   padding: 8px 11px;
   color: var(--accent-strong);
   font-size: 11px;
-  background: white;
+  background: #171717;
   border: 1px solid var(--line);
   border-radius: 999px;
   box-shadow: var(--shadow);
@@ -438,6 +457,7 @@
   color: var(--danger);
   font-size: 12px;
   background: var(--danger-soft);
+  border: 1px solid rgb(240 113 113 / 20%);
   border-radius: 7px;
 }
 

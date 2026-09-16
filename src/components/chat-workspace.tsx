@@ -148,10 +148,18 @@ function ApprovalActions({
   );
 }
 
-export function ChatWorkspace() {
+export function ChatWorkspace({
+  initialConversationId,
+  initialTaskId
+}: {
+  initialConversationId?: string;
+  initialTaskId?: string;
+} = {}) {
   const { data, refresh } = useWorkspace();
   const { t } = useI18n();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(
+    initialConversationId ?? null
+  );
   const [message, setMessage] = useState("");
   const [groupChoice, setGroupChoice] = useState("");
   const [taskTitle, setTaskTitle] = useState("");
@@ -173,6 +181,7 @@ export function ChatWorkspace() {
   const [error, setError] = useState<string | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const focusedTaskRef = useRef<string | null>(null);
 
   const conversations = useMemo(
     () => data?.conversations ?? [],
@@ -231,6 +240,23 @@ export function ChatWorkspace() {
       (data?.tasks ?? []).filter((task) => task.conversationId === selected?.id),
     [data?.tasks, selected?.id]
   );
+
+  useEffect(() => {
+    if (
+      !initialTaskId ||
+      focusedTaskRef.current === initialTaskId ||
+      !tasks.some((task) => task.id === initialTaskId)
+    ) {
+      return;
+    }
+    focusedTaskRef.current = initialTaskId;
+    window.requestAnimationFrame(() => {
+      document
+        .getElementById(`task-${initialTaskId}`)
+        ?.scrollIntoView({ block: "center" });
+    });
+  }, [initialTaskId, tasks]);
+
   const conversationRuns = useMemo(
     () => (data?.runs ?? []).filter((run) => run.conversationId === selected?.id),
     [data?.runs, selected?.id]
@@ -1052,7 +1078,11 @@ export function ChatWorkspace() {
                 artifact.ownerType === "task" && artifact.ownerId === task.id
             );
             return (
-              <article key={task.id} className="task-card">
+              <article
+                key={task.id}
+                id={`task-${task.id}`}
+                className="task-card"
+              >
                 <div className="task-card-header">
                   <strong>{task.title}</strong>
                   <span className={`status-pill ${displayedStatus}`}>

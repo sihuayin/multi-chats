@@ -13,7 +13,7 @@ function Command({
     <CommandPrimitive
       data-slot="command"
       className={cn(
-        "flex size-full flex-col overflow-hidden rounded-md bg-[var(--popover)] text-[var(--popover-foreground)]",
+        "flex size-full flex-col overflow-hidden rounded-md border border-[var(--border)] bg-[var(--popover)] text-[var(--popover-foreground)]",
         className
       )}
       {...props}
@@ -28,7 +28,7 @@ function CommandInput({
   return (
     <div
       data-slot="command-input-wrapper"
-      className="flex h-10 items-center gap-2 border-b px-3"
+      className="flex h-10 items-center gap-2 border-b border-[var(--border)] px-3"
     >
       <Search className="size-4 shrink-0 opacity-50" />
       <CommandPrimitive.Input
@@ -95,7 +95,7 @@ function CommandItem({
     <CommandPrimitive.Item
       data-slot="command-item"
       className={cn(
-        "relative flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-2 text-sm outline-none data-[selected=true]:bg-[var(--accent)] data-[selected=true]:text-[var(--accent-foreground)] data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50",
+        "relative flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-2 text-sm outline-none data-[selected=true]:bg-[var(--accent-soft)] data-[selected=true]:text-[var(--accent-strong)] data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50",
         className
       )}
       {...props}

@@ -58,6 +58,7 @@ describe("provider configuration", () => {
     expect(created).not.toHaveProperty("encryptedCredential");
     const persisted = store.snapshot().providers[0];
     expect(persisted.encryptedCredential).not.toContain("secret-key");
+    expect(persisted.lastValidatedAt).toBe(persisted.createdAt);
     expect(
       (await service.getWorkspaceView()).providers[0]
     ).not.toHaveProperty("encryptedCredential");
@@ -93,6 +94,7 @@ describe("provider configuration", () => {
 
     const persisted = store.snapshot().providers[0];
     expect(persisted.label).toBe("Rotated");
+    expect(persisted.lastValidatedAt).toBe(persisted.updatedAt);
     expect(cipher.decrypt(persisted.encryptedCredential)).toBe("second-key");
     expect(registry.validations).toEqual(["first-key", "second-key"]);
   });

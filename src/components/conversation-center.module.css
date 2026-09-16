@@ -4,44 +4,52 @@
 
 .switch {
   position: sticky;
-  top: 12px;
+  top: 10px;
   z-index: 20;
   display: flex;
   width: fit-content;
-  gap: 3px;
-  margin: 12px auto;
-  padding: 4px;
-  background: rgb(255 255 255 / 92%);
+  gap: 2px;
+  margin: 10px auto;
+  padding: 3px;
+  background: rgb(20 20 20 / 92%);
   border: 1px solid var(--line);
   border-radius: 8px;
   box-shadow: var(--shadow);
-  backdrop-filter: blur(10px);
+  backdrop-filter: blur(16px);
 }
 
 .switch button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: 32px;
-  padding: 0 10px;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 750;
+  min-height: 30px;
+  padding: 0 11px;
+  color: var(--muted-foreground);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   background: transparent;
-  border: 0;
-  border-radius: 5px;
+  border: 1px solid transparent;
+  border-radius: 6px;
   cursor: pointer;
+  transition:
+    background 150ms ease-out,
+    border-color 150ms ease-out,
+    color 150ms ease-out;
 }
 
 .switch button.active {
-  color: white;
-  background: var(--accent);
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border-color: rgb(16 163 127 / 20%);
 }
 
 @media (max-width: 760px) {
   .switch {
     position: sticky;
     top: 8px;
-    margin: 8px 8px -50px auto;
+    margin: 8px 8px -48px auto;
   }
 }

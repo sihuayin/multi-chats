@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { MemoryStore } from "@/server/store/memory-store";
 import { setStoreForTests } from "@/server/store";
+import { setServicesForTests } from "@/server/application/services";
 import { createInitialState } from "@/server/store/initial-state";
 import { handleApiRequest } from "@/server/http/router";
 import {
@@ -109,5 +110,40 @@ describe("workspace view", () => {
       task.id
     );
     expect(view.runs.find((item) => item.id === run.id)?.taskId).toBe(task.id);
+  });
+});
+
+describe("diagnostics view", () => {
+  it("returns a redacted operational projection", async () => {
+    const state = createFixtureState();
+    const provider = state.providers[0];
+    state.workspace.workerHeartbeatAt = new Date().toISOString();
+    state.providerAttempts.push({
+      id: "attempt-diagnostics",
+      workspaceId: state.workspace.id,
+      purpose: "conversation",
+      provider: provider.provider,
+      modelId: state.employees[0].modelId,
+      targetOrder: 0,
+      attempt: 1,
+      status: "failed",
+      errorKind: "timeout",
+      errorCode: "provider_timeout",
+      usage: { source: "unknown" },
+      startedAt: new Date().toISOString()
+    });
+    setStoreForTests(new MemoryStore(state));
+    setServicesForTests(undefined);
+
+    const response = await handleApiRequest(
+      new Request("http://localhost/api/diagnostics"),
+      ["diagnostics"]
+    );
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(body).toContain("provider_timeout");
+    expect(body).not.toContain("encryptedCredential");
+    expect(body).not.toContain("test-api-key");
   });
 });

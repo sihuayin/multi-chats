@@ -27,6 +27,7 @@ export type ProviderCredential = {
   provider: ProviderId;
   label: string;
   encryptedCredential: string;
+  lastValidatedAt?: IsoDate;
   createdAt: IsoDate;
   updatedAt: IsoDate;
 };

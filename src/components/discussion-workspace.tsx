@@ -377,11 +377,21 @@ function statusVariant(status: string) {
   return "outline" as const;
 }
 
-export function DiscussionWorkspace() {
+export function DiscussionWorkspace({
+  initialConversationId = "",
+  initialDiscussionId = ""
+}: {
+  initialConversationId?: string;
+  initialDiscussionId?: string;
+} = {}) {
   const { t } = useI18n();
   const { data, refresh } = useWorkspace();
-  const [selectedConversationId, setSelectedConversationId] = useState("");
-  const [selectedDiscussionId, setSelectedDiscussionId] = useState("");
+  const [selectedConversationId, setSelectedConversationId] = useState(
+    initialConversationId
+  );
+  const [selectedDiscussionId, setSelectedDiscussionId] = useState(
+    initialDiscussionId
+  );
   const [loadedView, setLoadedView] = useState<DiscussionView | null>(null);
   const [roundDetail, setRoundDetail] = useState<RoundDetail | null>(null);
   const [selectedRoundId, setSelectedRoundId] = useState("");
