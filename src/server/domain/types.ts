@@ -366,6 +366,8 @@ export type TaskStatus =
 
 export type TaskAction =
   | "start"
+  | "stop"
+  | "resume_run"
   | "block"
   | "resume"
   | "review"

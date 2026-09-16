@@ -31,13 +31,14 @@ describe("availableTaskActions", () => {
       id: "run-active",
       workspaceId: state.workspace.id,
       conversationId: draft.conversationId,
+      taskId: draft.id,
       triggerMessageId: "message-active",
       memberSnapshot: draft.assigneeIds,
       status: "running",
       createdAt: state.workspace.createdAt
     });
 
-    expect(availableTaskActions(state, draft)).toEqual(["cancel"]);
+    expect(availableTaskActions(state, draft)).toEqual(["stop", "cancel"]);
   });
 
   it("does not offer start for ineligible assignees", () => {
@@ -51,20 +52,85 @@ describe("availableTaskActions", () => {
     const state = createFixtureState();
 
     expect(availableTaskActions(state, task({ status: "in_progress" }))).toEqual([
+      "start",
       "block",
       "review",
       "cancel"
     ]);
     expect(availableTaskActions(state, task({ status: "blocked" }))).toEqual([
+      "start",
       "resume",
       "review",
       "cancel"
     ]);
     expect(availableTaskActions(state, task({ status: "review" }))).toEqual([
+      "start",
       "return_to_work",
       "complete",
       "cancel"
     ]);
     expect(availableTaskActions(state, task({ status: "completed" }))).toEqual([]);
+  });
+
+  it("offers resume for an interrupted Task Run and start again after settlement", () => {
+    const state = createFixtureState();
+    const draft = task({ status: "in_progress" });
+    state.runs.push({
+      id: "run-interrupted",
+      workspaceId: state.workspace.id,
+      conversationId: draft.conversationId,
+      taskId: draft.id,
+      triggerMessageId: "message-interrupted",
+      memberSnapshot: draft.assigneeIds,
+      status: "interrupted",
+      createdAt: state.workspace.createdAt
+    });
+
+    expect(availableTaskActions(state, draft)).toEqual([
+      "resume_run",
+      "block",
+      "review",
+      "cancel"
+    ]);
+
+    state.runs[0].status = "completed";
+    expect(availableTaskActions(state, draft)).toEqual([
+      "start",
+      "block",
+      "review",
+      "cancel"
+    ]);
+  });
+
+  it("does not offer resume while another Conversation Run is active", () => {
+    const state = createFixtureState();
+    const draft = task({ status: "in_progress" });
+    state.runs.push(
+      {
+        id: "run-interrupted",
+        workspaceId: state.workspace.id,
+        conversationId: draft.conversationId,
+        taskId: draft.id,
+        triggerMessageId: "message-interrupted",
+        memberSnapshot: draft.assigneeIds,
+        status: "interrupted",
+        createdAt: state.workspace.createdAt
+      },
+      {
+        id: "run-active",
+        workspaceId: state.workspace.id,
+        conversationId: draft.conversationId,
+        triggerMessageId: "message-active",
+        memberSnapshot: draft.assigneeIds,
+        status: "running",
+        createdAt: state.workspace.createdAt
+      }
+    );
+
+    expect(availableTaskActions(state, draft)).toEqual([
+      "block",
+      "review",
+      "cancel"
+    ]);
   });
 });

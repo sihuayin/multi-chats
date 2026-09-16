@@ -538,6 +538,40 @@ async function handleApiRoute(
           }
         );
       }
+      if (request.method === "POST" && id && child === "stop") {
+        return idempotent(
+          request,
+          `${id}:stop:${request.headers.get("idempotency-key") ?? ""}`,
+          async () => {
+            emptyCommandSchema.parse(await body(request));
+            return json(await runs.stopTask(id));
+          }
+        );
+      }
+      if (request.method === "POST" && id && child === "resume") {
+        return idempotent(
+          request,
+          `${id}:resume:${request.headers.get("idempotency-key") ?? ""}`,
+          async () => {
+            emptyCommandSchema.parse(await body(request));
+            const result = await runs.resumeTask(id);
+            if (!process.env.DATABASE_URL) {
+              void runs.processRun(result.run.id);
+            }
+            return json(result, { status: 202 });
+          }
+        );
+      }
+      if (request.method === "POST" && id && child === "cancel") {
+        return idempotent(
+          request,
+          `${id}:cancel:${request.headers.get("idempotency-key") ?? ""}`,
+          async () => {
+            emptyCommandSchema.parse(await body(request));
+            return json(await runs.cancelTask(id));
+          }
+        );
+      }
       if (request.method === "POST" && id && child === "artifacts") {
         return json(await workspace.createArtifact(id, await body(request)), {
           status: 201

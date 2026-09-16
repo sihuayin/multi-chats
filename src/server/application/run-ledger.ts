@@ -1,5 +1,15 @@
 import type { AppState, Run, RunEvent } from "@/server/domain/types";
 
+const activeRunStatuses = new Set<Run["status"]>([
+  "queued",
+  "running",
+  "waiting_approval"
+]);
+
+export function isActiveRun(run: Run): boolean {
+  return activeRunStatuses.has(run.status);
+}
+
 export type RunEventFactory = {
   id?: () => string;
   now?: () => string;

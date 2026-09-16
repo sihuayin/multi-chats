@@ -1,4 +1,5 @@
 import type { AppState, Task, TaskAction } from "@/server/domain/types";
+import { isActiveRun } from "@/server/application/run-ledger";
 
 type TaskActionState = Pick<
   AppState,
@@ -25,11 +26,28 @@ export function availableTaskActions(
   const activeRun = state.runs.some(
     (run) =>
       run.conversationId === task.conversationId &&
-      ["queued", "running", "waiting_approval"].includes(run.status)
+      isActiveRun(run)
   );
+  const taskRuns = state.runs.filter((run) => run.taskId === task.id);
+  const latestTaskRun = taskRuns.at(-1);
+  const activeTaskRun = taskRuns.find((run) =>
+    isActiveRun(run)
+  );
+  const taskIsTerminal =
+    task.status === "completed" || task.status === "cancelled";
 
-  if (task.status === "draft" && !activeRun && assigneesAreEligible) {
+  if (
+    !taskIsTerminal &&
+    !activeRun &&
+    assigneesAreEligible &&
+    latestTaskRun?.status !== "interrupted"
+  ) {
     actions.push("start");
+  }
+  if (activeTaskRun) {
+    actions.push("stop");
+  } else if (!activeRun && latestTaskRun?.status === "interrupted") {
+    actions.push("resume_run");
   }
   if (task.status === "in_progress") {
     actions.push("block", "review");
@@ -38,7 +56,7 @@ export function availableTaskActions(
   } else if (task.status === "review") {
     actions.push("return_to_work", "complete");
   }
-  if (task.status !== "completed" && task.status !== "cancelled") {
+  if (!taskIsTerminal) {
     actions.push("cancel");
   }
   return actions;

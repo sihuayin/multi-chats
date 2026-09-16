@@ -259,6 +259,23 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   await taskCard.getByRole("button", { name: "Complete" }).click();
   await expect(taskCard.locator(".status-pill.completed")).toBeVisible();
 
+  await page.getByPlaceholder("Task title").fill("Stop and retry");
+  await page
+    .getByPlaceholder("Goal and expected result")
+    .fill("Stop this Run and deliberately start it again.");
+  await page.getByLabel(secondEmployeeName).check();
+  await page.getByRole("button", { name: "Add Task" }).click();
+  const retryTask = page.locator(".task-card").filter({
+    hasText: "Stop and retry"
+  });
+  await retryTask.getByRole("button", { name: "Start" }).click();
+  await retryTask.getByRole("button", { name: "Stop" }).click();
+  await expect(retryTask.getByRole("button", { name: "Run again" })).toBeVisible();
+  await retryTask.getByRole("button", { name: "Run again" }).click();
+  await expect(retryTask.getByRole("button", { name: "Stop" })).toHaveCount(0, {
+    timeout: 10_000
+  });
+
   await page.getByPlaceholder("Task title").fill("Cancel this task");
   await page
     .getByPlaceholder("Goal and expected result")
@@ -269,6 +286,8 @@ test("configures an Employee Group and completes a mentioned Run", async ({
     hasText: "Cancel this task"
   });
   await expect(cancelledTask).toContainText(secondEmployeeName);
+  await cancelledTask.getByRole("button", { name: "Start" }).click();
+  await expect(cancelledTask.locator(".status-pill.in_progress")).toBeVisible();
   await cancelledTask.getByRole("button", { name: "Cancel" }).click();
   await expect(cancelledTask.locator(".status-pill.cancelled")).toBeVisible();
 

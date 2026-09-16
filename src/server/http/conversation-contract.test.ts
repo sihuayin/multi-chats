@@ -278,4 +278,177 @@ describe("Conversation HTTP and SSE contract", () => {
       expect.arrayContaining(["tool_started", "tool_completed"])
     );
   });
+
+  it("stops, resumes, retries, and cancels Task Runs", async () => {
+    const { store } = setupContractServices();
+    const conversationId = "30000000-0000-4000-8000-000000000001";
+    const task = await getServices().workspace.createTask(conversationId, {
+      title: "Recoverable Task",
+      goal: "Exercise Task Run recovery.",
+      assigneeIds: ["20000000-0000-4000-8000-000000000001"]
+    });
+    const command = (taskId: string, name: string, key: string) =>
+      new Request(`http://localhost/api/tasks/${taskId}/${name}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": key
+        },
+        body: "{}"
+      });
+
+    const firstStart = await handleApiRequest(
+      command(task.id, "run", "recovery-start-one"),
+      ["tasks", task.id, "run"]
+    );
+    const firstRun = (await firstStart.json()) as { run: { id: string } };
+    const stopped = await handleApiRequest(
+      command(task.id, "stop", "recovery-stop"),
+      ["tasks", task.id, "stop"]
+    );
+    expect(stopped.status).toBe(200);
+    await expect(stopped.json()).resolves.toMatchObject({
+      task: { id: task.id, status: "in_progress" },
+      run: { id: firstRun.run.id, status: "cancelled" }
+    });
+
+    const secondStart = await handleApiRequest(
+      command(task.id, "run", "recovery-start-two"),
+      ["tasks", task.id, "run"]
+    );
+    expect(secondStart.status).toBe(202);
+    const secondRun = (await secondStart.json()) as { run: { id: string } };
+    expect(secondRun.run.id).not.toBe(firstRun.run.id);
+
+    await store.update((state) => {
+      const run = state.runs.find((item) => item.id === secondRun.run.id);
+      if (!run) throw new Error("Expected Task Run");
+      run.status = "interrupted";
+    });
+    const resumed = await handleApiRequest(
+      command(task.id, "resume", "recovery-resume"),
+      ["tasks", task.id, "resume"]
+    );
+    expect(resumed.status).toBe(202);
+    await expect(resumed.json()).resolves.toMatchObject({
+      task: { id: task.id, status: "in_progress" },
+      run: { id: secondRun.run.id, status: "queued" }
+    });
+    await getServices().runs.processRun(secondRun.run.id);
+
+    const secondTask = await getServices().workspace.createTask(conversationId, {
+      title: "Cancel Task Run",
+      goal: "Cancel the active Run with the Task.",
+      assigneeIds: ["20000000-0000-4000-8000-000000000001"]
+    });
+    const startedForCancel = await handleApiRequest(
+      command(secondTask.id, "run", "cancel-start"),
+      ["tasks", secondTask.id, "run"]
+    );
+    const cancelledRun = (await startedForCancel.json()) as {
+      run: { id: string };
+    };
+    const cancelled = await handleApiRequest(
+      command(secondTask.id, "cancel", "cancel-task"),
+      ["tasks", secondTask.id, "cancel"]
+    );
+    expect(cancelled.status).toBe(200);
+    await expect(cancelled.json()).resolves.toMatchObject({
+      task: { id: secondTask.id, status: "cancelled" },
+      run: { id: cancelledRun.run.id, status: "cancelled" }
+    });
+  });
+
+  it("does not resume interrupted Task Runs while active or terminal", async () => {
+    const { store } = setupContractServices();
+    const conversationId = "30000000-0000-4000-8000-000000000001";
+    const firstTask = await getServices().workspace.createTask(conversationId, {
+      title: "Interrupted Task",
+      goal: "Remain interrupted until recovery is safe.",
+      assigneeIds: ["20000000-0000-4000-8000-000000000001"]
+    });
+    const firstStart = await handleApiRequest(
+      new Request(`http://localhost/api/tasks/${firstTask.id}/run`, {
+        method: "POST",
+        headers: { "idempotency-key": "interrupted-start" },
+        body: "{}"
+      }),
+      ["tasks", firstTask.id, "run"]
+    );
+    const interrupted = (await firstStart.json()) as { run: { id: string } };
+    await store.update((state) => {
+      state.runs.find((run) => run.id === interrupted.run.id)!.status =
+        "interrupted";
+    });
+
+    const secondTask = await getServices().workspace.createTask(conversationId, {
+      title: "Active Task",
+      goal: "Keep the Conversation busy.",
+      assigneeIds: ["20000000-0000-4000-8000-000000000002"]
+    });
+    await handleApiRequest(
+      new Request(`http://localhost/api/tasks/${secondTask.id}/run`, {
+        method: "POST",
+        headers: { "idempotency-key": "active-start" },
+        body: "{}"
+      }),
+      ["tasks", secondTask.id, "run"]
+    );
+
+    const blockedResume = await handleApiRequest(
+      new Request(`http://localhost/api/tasks/${firstTask.id}/resume`, {
+        method: "POST",
+        headers: { "idempotency-key": "blocked-resume" },
+        body: "{}"
+      }),
+      ["tasks", firstTask.id, "resume"]
+    );
+    expect(blockedResume.status).toBe(409);
+    await expect(blockedResume.json()).resolves.toMatchObject({
+      code: "active_run"
+    });
+    expect(
+      await store.read(
+        (state) =>
+          state.runs.find((run) => run.id === interrupted.run.id)?.status
+      )
+    ).toBe("interrupted");
+
+    await handleApiRequest(
+      new Request(`http://localhost/api/tasks/${secondTask.id}/stop`, {
+        method: "POST",
+        headers: { "idempotency-key": "active-stop" },
+        body: "{}"
+      }),
+      ["tasks", secondTask.id, "stop"]
+    );
+    const cancelled = await handleApiRequest(
+      new Request(`http://localhost/api/tasks/${firstTask.id}/cancel`, {
+        method: "POST",
+        headers: { "idempotency-key": "terminal-cancel" },
+        body: "{}"
+      }),
+      ["tasks", firstTask.id, "cancel"]
+    );
+    expect(cancelled.status).toBe(200);
+
+    const terminalResume = await handleApiRequest(
+      new Request(`http://localhost/api/tasks/${firstTask.id}/resume`, {
+        method: "POST",
+        headers: { "idempotency-key": "terminal-resume" },
+        body: "{}"
+      }),
+      ["tasks", firstTask.id, "resume"]
+    );
+    expect(terminalResume.status).toBe(409);
+    await expect(terminalResume.json()).resolves.toMatchObject({
+      code: "task_not_resumable"
+    });
+    expect(
+      await store.read(
+        (state) =>
+          state.runs.find((run) => run.id === interrupted.run.id)?.status
+      )
+    ).toBe("interrupted");
+  });
 });

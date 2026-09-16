@@ -104,7 +104,7 @@ describe("workspace view", () => {
     );
     expect(
       view.tasks.find((item) => item.id === task.id)?.availableActions
-    ).toEqual(["block", "review", "cancel"]);
+    ).toEqual(["stop", "block", "review", "cancel"]);
     expect(view.messages.find((item) => item.id === message.id)?.taskId).toBe(
       task.id
     );

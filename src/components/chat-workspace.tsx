@@ -461,11 +461,14 @@ export function ChatWorkspace() {
     }
   }
 
-  async function startTask(task: Task) {
+  async function runTaskCommand(
+    task: Task,
+    command: "run" | "stop" | "resume" | "cancel"
+  ) {
     setBusy(true);
     setError(null);
     try {
-      await apiRequest(`/api/tasks/${task.id}/run`, {
+      await apiRequest(`/api/tasks/${task.id}/${command}`, {
         method: "POST",
         headers: { "idempotency-key": crypto.randomUUID() }
       });
@@ -1036,11 +1039,33 @@ export function ChatWorkspace() {
                   {task.availableActions.includes("start") ? (
                     <button
                       className="button quiet"
-                      onClick={() => startTask(task)}
+                      onClick={() => runTaskCommand(task, "run")}
                       disabled={busy}
                     >
                       <Play size={14} />
-                      {t("chat.start")}
+                      {task.status === "draft"
+                        ? t("chat.start")
+                        : t("chat.startAgain")}
+                    </button>
+                  ) : null}
+                  {task.availableActions.includes("stop") ? (
+                    <button
+                      className="button quiet"
+                      onClick={() => runTaskCommand(task, "stop")}
+                      disabled={busy}
+                    >
+                      <CircleStop size={14} />
+                      {t("chat.stop")}
+                    </button>
+                  ) : null}
+                  {task.availableActions.includes("resume_run") ? (
+                    <button
+                      className="button quiet"
+                      onClick={() => runTaskCommand(task, "resume")}
+                      disabled={busy}
+                    >
+                      <RotateCcw size={14} />
+                      {t("chat.resumeRun")}
                     </button>
                   ) : null}
                   {task.status === "draft" &&
@@ -1104,7 +1129,8 @@ export function ChatWorkspace() {
                   {task.availableActions.includes("cancel") ? (
                     <button
                       className="button quiet danger-text"
-                      onClick={() => updateTask(task, "cancelled")}
+                      onClick={() => runTaskCommand(task, "cancel")}
+                      disabled={busy}
                     >
                       <Ban size={14} />
                       {t("chat.cancel")}

@@ -13,6 +13,7 @@ import type {
   ProviderId,
   Run,
   RunEvent,
+  Task,
   ToolDefinition
 } from "@/server/domain/types";
 import type {
@@ -71,7 +72,10 @@ import {
 import { DISCUSSION_PROMPT_PROFILE_VERSION } from "@/server/application/discussion-prompts";
 import { parseDiscussionTurnPayload } from "@/server/application/discussion-turn-payload";
 import { ApiError, notFound } from "@/server/application/errors";
-import { appendEvent } from "@/server/application/run-ledger";
+import {
+  appendEvent,
+  isActiveRun
+} from "@/server/application/run-ledger";
 import {
   settleRun,
   type RunSettlementResult
@@ -105,6 +109,16 @@ export type StartPhaseRunResult = {
 export type StartTaskResult = {
   message: Message;
   run: Run;
+};
+
+export type TaskRunRecoveryResult = {
+  task: Task;
+  run: Run;
+};
+
+export type TaskCancellationResult = {
+  task: Task;
+  run?: Run;
 };
 
 type ToolCallContext = {
@@ -367,7 +381,7 @@ function createRun(
   const activeRun = state.runs.find(
     (run) =>
       run.conversationId === input.conversationId &&
-      ["queued", "running", "waiting_approval"].includes(run.status)
+      isActiveRun(run)
   );
   if (activeRun) {
     throw new ApiError(
@@ -707,10 +721,12 @@ export class ConversationRunService {
     const result = await this.store.update((state) => {
       const task = state.tasks.find((item) => item.id === taskId);
       if (!task) notFound("Task");
-      if (task.status !== "draft") {
+      if (
+        !["draft", "in_progress", "blocked", "review"].includes(task.status)
+      ) {
         throw new ApiError(
           409,
-          "Only draft Tasks can start a Run",
+          "Completed or cancelled Tasks cannot start a Run",
           "task_not_startable"
         );
       }
@@ -766,7 +782,20 @@ export class ConversationRunService {
         memberSnapshot: assignees.map((employee) => employee.id),
         taskId: task.id
       });
-      const historyEntry = transitionTask(task, "in_progress", "user");
+      const continueExistingWork = task.status === "in_progress";
+      const historyEntry =
+        continueExistingWork
+          ? {
+              status: "in_progress" as const,
+              at: timestamp,
+              actorId: "user",
+              action: "run_started"
+            }
+          : transitionTask(task, "in_progress", "user");
+      if (continueExistingWork) {
+        task.history.push(historyEntry);
+        task.updatedAt = historyEntry.at;
+      }
       historyEntry.runId = run.id;
       return { message, run };
     });
@@ -778,6 +807,138 @@ export class ConversationRunService {
       memberIds: result.run.memberSnapshot
     });
     return result;
+  }
+
+  async stopTask(taskId: string): Promise<TaskRunRecoveryResult> {
+    const activeRun = await this.store.read((state) => {
+      const task = state.tasks.find((item) => item.id === taskId);
+      if (!task) notFound("Task");
+      return (
+        state.runs.find(
+          (run) =>
+            run.taskId === task.id &&
+            isActiveRun(run)
+        ) ?? null
+      );
+    });
+    if (!activeRun) {
+      throw new ApiError(
+        409,
+        "Task has no active Run to stop",
+        "task_run_not_active"
+      );
+    }
+    await this.cancelRun(activeRun.id);
+    const result = await this.store.read((state) => ({
+      task: structuredClone(
+        state.tasks.find((item) => item.id === taskId)!
+      ),
+      run: structuredClone(
+        state.runs.find((item) => item.id === activeRun.id)!
+      )
+    }));
+    return result;
+  }
+
+  async resumeTask(taskId: string): Promise<TaskRunRecoveryResult> {
+    const latestRun = await this.store.read((state) => {
+      const task = state.tasks.find((item) => item.id === taskId);
+      if (!task) notFound("Task");
+      return structuredClone(
+        state.runs.filter((run) => run.taskId === task.id).at(-1) ?? null
+      );
+    });
+    if (!latestRun || latestRun.status !== "interrupted") {
+      throw new ApiError(
+        409,
+        "Task has no interrupted Run to resume",
+        "task_run_not_interrupted"
+      );
+    }
+    await this.resumeRun(latestRun.id, {
+      validate: (state, run) => {
+        const task = state.tasks.find((item) => item.id === taskId);
+        if (!task) notFound("Task");
+        if (task.status === "completed" || task.status === "cancelled") {
+          throw new ApiError(
+            409,
+            "Completed or cancelled Tasks cannot resume a Run",
+            "task_not_resumable"
+          );
+        }
+        if (run.taskId !== task.id) {
+          throw new ApiError(
+            409,
+            "Run does not belong to this Task",
+            "task_run_mismatch"
+          );
+        }
+      }
+    });
+    const result = await this.store.update((state) => {
+      const task = state.tasks.find((item) => item.id === taskId);
+      if (!task) notFound("Task");
+      if (task.status === "completed" || task.status === "cancelled") {
+        throw new ApiError(
+          409,
+          "Completed or cancelled Tasks cannot resume a Run",
+          "task_not_resumable"
+        );
+      }
+      if (task.status !== "in_progress") {
+        transitionTask(task, "in_progress", "user");
+      }
+      const run = state.runs.find((item) => item.id === latestRun.id);
+      if (!run) notFound("Run");
+      state.workspace.updatedAt = now();
+      return {
+        task: structuredClone(task),
+        run: structuredClone(run)
+      };
+    });
+    return result;
+  }
+
+  async cancelTask(taskId: string): Promise<TaskCancellationResult> {
+    const activeRun = await this.store.read((state) => {
+      const task = state.tasks.find((item) => item.id === taskId);
+      if (!task) notFound("Task");
+      return (
+        state.runs.find(
+          (run) =>
+            run.taskId === task.id &&
+            isActiveRun(run)
+        ) ?? null
+      );
+    });
+    if (activeRun) {
+      await this.cancelRun(activeRun.id);
+    }
+    return this.store.update((state) => {
+      const task = state.tasks.find((item) => item.id === taskId);
+      if (!task) notFound("Task");
+      if (task.status === "cancelled") {
+        return {
+          task: structuredClone(task),
+          run: activeRun
+            ? structuredClone(
+                state.runs.find((item) => item.id === activeRun.id)
+              )
+            : undefined
+        };
+      }
+      const historyEntry = transitionTask(task, "cancelled", "user");
+      if (activeRun) historyEntry.runId = activeRun.id;
+      state.workspace.updatedAt = task.updatedAt;
+      return {
+        task: structuredClone(task),
+        run: activeRun
+          ? structuredClone(
+              state.runs.find((item) => item.id === activeRun.id)
+            )
+          : undefined
+      };
+    });
   }
 
   async startPhaseRun(
@@ -1061,7 +1222,12 @@ export class ConversationRunService {
     return cancelled.run;
   }
 
-  async resumeRun(runId: string): Promise<Run> {
+  async resumeRun(
+    runId: string,
+    options: {
+      validate?: (state: AppState, run: Run) => void;
+    } = {}
+  ): Promise<Run> {
     return this.store.update((state) => {
       const run = state.runs.find((item) => item.id === runId);
       if (!run) notFound("Run");
@@ -1070,6 +1236,20 @@ export class ConversationRunService {
           409,
           "Only interrupted Runs can be resumed",
           "run_resume"
+        );
+      }
+      options.validate?.(state, run);
+      const activeRun = state.runs.find(
+        (item) =>
+          item.id !== run.id &&
+          item.conversationId === run.conversationId &&
+          isActiveRun(item)
+      );
+      if (activeRun) {
+        throw new ApiError(
+          409,
+          "This Conversation already has an active Run",
+          "active_run"
         );
       }
       const completedMessageIds = new Set(
@@ -1085,6 +1265,11 @@ export class ConversationRunService {
         (message) =>
           message.runId === runId &&
           message.authorType !== "user" &&
+          !(
+            message.authorType === "system" &&
+            message.id === run.triggerMessageId &&
+            message.taskId === run.taskId
+          ) &&
           message.content.trim().length > 0 &&
           !completedMessageIds.has(message.id)
       );
