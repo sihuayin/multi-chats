@@ -80,6 +80,12 @@ export const PROVIDER_SMOKE_SCENARIO_SPECS: readonly ProviderSmokeScenarioSpec[]
   }));
 
 export type ProviderFamily = "openai_compatible" | "anthropic" | "google";
+export const PROVIDER_SMOKE_COVERAGE_PROFILES = [
+  "standard",
+  "network_constrained"
+] as const;
+export type ProviderSmokeCoverageProfile =
+  (typeof PROVIDER_SMOKE_COVERAGE_PROFILES)[number];
 
 export const PROVIDER_FAMILIES: Record<ProviderId, ProviderFamily> = {
   openai: "openai_compatible",
@@ -96,6 +102,17 @@ export const REQUIRED_PROVIDER_SMOKE_FAMILIES: readonly ProviderFamily[] = [
   "openai_compatible",
   "anthropic"
 ];
+
+export const NETWORK_CONSTRAINED_PROVIDER_SMOKE_TARGETS = {
+  primary: {
+    provider: "deepseek",
+    modelId: "deepseek-v4-flash"
+  },
+  fallback: {
+    provider: "deepseek",
+    modelId: "deepseek-v4-pro"
+  }
+} as const;
 
 export const DEFAULT_PROVIDER_SMOKE_LIMITS: ProviderSmokeLimits = {
   maxTotalTokens: 20_000,
@@ -134,6 +151,7 @@ export type ProviderSmokeTarget = {
 
 export type ProviderSmokeRunConfig = {
   enabled: true;
+  coverageProfile: ProviderSmokeCoverageProfile;
   targets: [ProviderSmokeTarget, ...ProviderSmokeTarget[]];
   limits: ProviderSmokeLimits;
   pricing: ProviderSmokePricing;
@@ -205,6 +223,22 @@ function resolveTarget(
   };
 }
 
+function coverageProfile(
+  env: ProviderSmokeEnvironment
+): ProviderSmokeCoverageProfile {
+  const value = env.SMOKE_COVERAGE_PROFILE?.trim() || "standard";
+  if (
+    PROVIDER_SMOKE_COVERAGE_PROFILES.includes(
+      value as ProviderSmokeCoverageProfile
+    )
+  ) {
+    return value as ProviderSmokeCoverageProfile;
+  }
+  throw new ProviderSmokeConfigError(
+    "SMOKE_COVERAGE_PROFILE must be standard or network_constrained"
+  );
+}
+
 /**
  * Resolve the opt-in Provider smoke matrix from the environment. Nothing
  * runs without an explicit opt-in, so the default test command never needs
@@ -222,6 +256,7 @@ export function resolveProviderSmokeConfig(
   }
   const primary = resolveTarget(env, "primary");
   const fallback = resolveTarget(env, "fallback");
+  const profile = coverageProfile(env);
   if (!primary) {
     throw new ProviderSmokeConfigError(
       "SMOKE_PRIMARY_PROVIDER, SMOKE_PRIMARY_MODEL, and SMOKE_PRIMARY_API_KEY are required when PROVIDER_SMOKE is set"
@@ -231,10 +266,27 @@ export function resolveProviderSmokeConfig(
     ProviderSmokeTarget,
     ...ProviderSmokeTarget[]
   ];
+  if (profile === "network_constrained") {
+    if (
+      !fallback ||
+      primary.provider !==
+        NETWORK_CONSTRAINED_PROVIDER_SMOKE_TARGETS.primary.provider ||
+      primary.modelId !==
+        NETWORK_CONSTRAINED_PROVIDER_SMOKE_TARGETS.primary.modelId ||
+      fallback.provider !==
+        NETWORK_CONSTRAINED_PROVIDER_SMOKE_TARGETS.fallback.provider ||
+      fallback.modelId !==
+        NETWORK_CONSTRAINED_PROVIDER_SMOKE_TARGETS.fallback.modelId
+    ) {
+      throw new ProviderSmokeConfigError(
+        "The network_constrained profile requires deepseek-v4-flash primary and deepseek-v4-pro fallback"
+      );
+    }
+  }
   // A single configured credential still proves the contracts, but any run
   // that configures more than one target must cover every required family, so
   // one Provider outage cannot hide a broken adapter behind another.
-  if (targets.length > 1) {
+  if (profile === "standard" && targets.length > 1) {
     const families = new Set(
       targets.map((target) => PROVIDER_FAMILIES[target.provider])
     );
@@ -252,6 +304,7 @@ export function resolveProviderSmokeConfig(
   const evidenceLink = env.SMOKE_EVIDENCE_LINK?.trim();
   return {
     enabled: true,
+    coverageProfile: profile,
     targets,
     limits: {
       maxTotalTokens: positiveInteger(
@@ -317,6 +370,7 @@ export type ProviderSmokeScenarioResult = {
 
 export type ProviderSmokeReport = {
   matrixVersion: typeof PROVIDER_SMOKE_MATRIX_VERSION;
+  coverageProfile: ProviderSmokeCoverageProfile;
   enabled: true;
   startedAt: IsoDate;
   completedAt: IsoDate;
@@ -494,6 +548,7 @@ export async function runProviderSmokeMatrix(input: {
   };
   return {
     matrixVersion: PROVIDER_SMOKE_MATRIX_VERSION,
+    coverageProfile: config.coverageProfile,
     enabled: true,
     startedAt,
     completedAt: input.clock(),
@@ -537,6 +592,11 @@ function assertUsage(value: ModelUsage, scenario: ProviderSmokeScenario): void {
 export function validateProviderSmokeReport(report: ProviderSmokeReport): void {
   if (report.matrixVersion !== PROVIDER_SMOKE_MATRIX_VERSION) {
     throw new Error("Provider smoke report uses an unsupported matrix version");
+  }
+  if (
+    !PROVIDER_SMOKE_COVERAGE_PROFILES.includes(report.coverageProfile)
+  ) {
+    throw new Error("Provider smoke report uses an unsupported coverage profile");
   }
   const byScenario = new Map(
     report.scenarios.map((scenario) => [scenario.scenario, scenario])

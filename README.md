@@ -73,22 +73,41 @@ restore, service restarts, and deployment logs. Set `VERIFY_COMPOSE_START=1` to
 build and start the Compose project as part of the run. Without
 `VERIFY_COMPOSE_PROJECT`, only the HTTP health and active-Run checks run.
 
-`verify:provider-smoke` is opt-in and never part of the default commands. It
-proves the production Provider adapters against the reliable Discussion
-contracts — structured output, usage capture, context pressure, compression,
-retry, failover, cancellation, and Brief generation — and prints a redacted
-report with its release-gate evidence:
+The unified real-Provider release gate is opt-in and never part of the default
+commands. It runs the production-adapter smoke matrix and evaluates the
+Discussion-quality report in one command:
 
 ```bash
 PROVIDER_SMOKE=1 \
+RELEASE_GATE_PROFILE=network_constrained \
+DEEPSEEK_API_KEY=... \
+SMOKE_QUALITY_REPORT_PATH=.data/discussion-quality.json \
+SMOKE_EVIDENCE_LINK=artifact://release-gate/42 \
+npm run verify:release-gate
+```
+
+`network_constrained` is the default profile and fixes primary/fallback to
+`deepseek-v4-flash` and `deepseek-v4-pro`. Its report records
+`crossFamilyFailoverVerified: false`, marks Anthropic and Google as unverified,
+and cannot be represented as equivalent to the standard profile.
+The quality report must contain exactly three deterministic runs covering all
+four corpus modes.
+
+The standard profile requires explicit targets and a fallback covering both the
+OpenAI-compatible and Anthropic families:
+
+```bash
+PROVIDER_SMOKE=1 \
+RELEASE_GATE_PROFILE=standard \
 SMOKE_PRIMARY_PROVIDER=openai \
 SMOKE_PRIMARY_MODEL=gpt-4o-mini \
 SMOKE_PRIMARY_API_KEY=... \
 SMOKE_FALLBACK_PROVIDER=anthropic \
 SMOKE_FALLBACK_MODEL=claude-3-5-haiku \
 SMOKE_FALLBACK_API_KEY=... \
-SMOKE_EVIDENCE_LINK=ci://provider-smoke/42 \
-npm run verify:provider-smoke
+SMOKE_QUALITY_REPORT_PATH=.data/discussion-quality.json \
+SMOKE_EVIDENCE_LINK=artifact://release-gate/42 \
+npm run verify:release-gate
 ```
 
 Set `SMOKE_MAX_TOTAL_TOKENS`, `SMOKE_MAX_COST_MICROS`, and
@@ -103,10 +122,11 @@ broken adapter.
 
 When a proxy is required, set the standard `HTTPS_PROXY`/`HTTP_PROXY`
 variables for the process: the smoke matrix drives the same production
-adapters as the app, so it needs no smoke-specific proxy setting. Paste the
-printed `gate` object into the `realProvider` field of the discussion-quality
-report that `npm run verify:discussion-quality` consumes to make the smoke run
-part of the release gate.
+adapters as the app, so it needs no smoke-specific proxy setting.
+
+`verify:provider-smoke` and `verify:discussion-quality` remain available for
+focused diagnostics. Normal CI never sets `PROVIDER_SMOKE`, so both the unified
+gate and its network calls remain skipped by default.
 
 Backup and restore work for either storage backend:
 

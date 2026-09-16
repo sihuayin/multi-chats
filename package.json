@@ -17,6 +17,7 @@
     "verify:deployment": "tsx scripts/verify-deployment.ts",
     "verify:discussion-quality": "tsx scripts/verify-discussion-quality.ts",
     "verify:provider-smoke": "tsx scripts/verify-provider-smoke.ts",
+    "verify:release-gate": "tsx scripts/verify-release-gate.ts",
     "verify:acceptance": "npm run verify:app && npm run verify:deployment",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:backup": "tsx scripts/backup.ts",

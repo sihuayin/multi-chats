@@ -103,6 +103,7 @@ describe("Provider smoke configuration", () => {
   it("resolves targets and bounded limits from the environment", () => {
     expect(config()).toMatchObject({
       enabled: true,
+      coverageProfile: "standard",
       targets: [
         { role: "primary", provider: "openai", modelId: "gpt-4o-mini" },
         { role: "fallback", provider: "anthropic", modelId: "claude-3-5-haiku" }
@@ -113,6 +114,51 @@ describe("Provider smoke configuration", () => {
         timeoutMs: 30_000
       }
     });
+  });
+
+  it("resolves the network-constrained DeepSeek profile", () => {
+    expect(
+      resolveProviderSmokeConfig({
+        PROVIDER_SMOKE: "1",
+        SMOKE_COVERAGE_PROFILE: "network_constrained",
+        SMOKE_PRIMARY_PROVIDER: "deepseek",
+        SMOKE_PRIMARY_MODEL: "deepseek-v4-flash",
+        SMOKE_PRIMARY_API_KEY: "test-key-primary",
+        SMOKE_FALLBACK_PROVIDER: "deepseek",
+        SMOKE_FALLBACK_MODEL: "deepseek-v4-pro",
+        SMOKE_FALLBACK_API_KEY: "test-key-fallback"
+      })
+    ).toMatchObject({
+      enabled: true,
+      coverageProfile: "network_constrained",
+      targets: [
+        {
+          role: "primary",
+          provider: "deepseek",
+          modelId: "deepseek-v4-flash"
+        },
+        {
+          role: "fallback",
+          provider: "deepseek",
+          modelId: "deepseek-v4-pro"
+        }
+      ]
+    });
+  });
+
+  it("rejects a network-constrained profile outside the approved targets", () => {
+    expect(() =>
+      resolveProviderSmokeConfig({
+        PROVIDER_SMOKE: "1",
+        SMOKE_COVERAGE_PROFILE: "network_constrained",
+        SMOKE_PRIMARY_PROVIDER: "openai",
+        SMOKE_PRIMARY_MODEL: "gpt-4o-mini",
+        SMOKE_PRIMARY_API_KEY: "test-key-primary",
+        SMOKE_FALLBACK_PROVIDER: "deepseek",
+        SMOKE_FALLBACK_MODEL: "deepseek-v4-pro",
+        SMOKE_FALLBACK_API_KEY: "test-key-fallback"
+      })
+    ).toThrow(/deepseek-v4-flash/);
   });
 
   it("rejects a non-numeric cap", () => {
@@ -168,6 +214,7 @@ describe("Provider smoke matrix", () => {
     const result = await runProviderSmokeMatrix({
       config: {
         enabled: true,
+        coverageProfile: "standard",
         targets: [
           {
             role: "primary",

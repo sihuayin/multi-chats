@@ -103,6 +103,7 @@ export const DISCUSSION_QUALITY_CORPUS: readonly QualityCorpusScenario[] = [
 
 export const DISCUSSION_QUALITY_HARD_THRESHOLD = 0.8;
 export const DISCUSSION_QUALITY_TREND_VARIANCE = 0.005;
+export const DISCUSSION_QUALITY_RELEASE_REPEAT_COUNT = 3;
 
 type ScoreMap = Record<QualityDimension, number>;
 
@@ -184,6 +185,22 @@ export type DiscussionQualityGateResult = QualityRunsAggregate & {
   passed: boolean;
   evidenceLinks: string[];
   gateFailures: string[];
+};
+
+export type DiscussionQualityReport = {
+  deterministicRuns: DiscussionQualityResult[][];
+  evidenceLinks?: string[];
+  realProvider?: DiscussionQualityGateInput["realProvider"];
+};
+
+export type DiscussionQualityReportEvaluation = {
+  result: DiscussionQualityGateResult;
+  contractVersions: {
+    promptProfiles: string[];
+    briefSchemas: number[];
+    compressionSchemas: number[];
+    evidenceProtocols: string[];
+  };
 };
 
 export function validateQualityResults(
@@ -651,6 +668,91 @@ export function evaluateQualityGate(
     passed: gateFailures.length === 0,
     evidenceLinks,
     gateFailures
+  };
+}
+
+export function evaluateDiscussionQualityReport(
+  report: DiscussionQualityReport,
+  options: { requireReleaseRepeatCount?: boolean } = {}
+): DiscussionQualityReportEvaluation {
+  if (
+    !Array.isArray(report.deterministicRuns) ||
+    report.deterministicRuns.length === 0
+  ) {
+    throw new Error("Quality report must contain at least one deterministic run.");
+  }
+  const deterministicResults = report.deterministicRuns.flat();
+  validateQualityResults(deterministicResults);
+  const scenarioIds = new Set(
+    deterministicResults.map((result) => result.scenarioId)
+  );
+  for (const scenario of DISCUSSION_QUALITY_CORPUS) {
+    if (!scenarioIds.has(scenario.id)) {
+      throw new Error(`Quality report is missing corpus scenario ${scenario.id}.`);
+    }
+  }
+  if (options.requireReleaseRepeatCount) {
+    if (
+      report.deterministicRuns.length !==
+      DISCUSSION_QUALITY_RELEASE_REPEAT_COUNT
+    ) {
+      throw new Error(
+        `Release quality evidence must contain ${DISCUSSION_QUALITY_RELEASE_REPEAT_COUNT} runs.`
+      );
+    }
+    for (const [index, run] of report.deterministicRuns.entries()) {
+      const runScenarioIds = new Set(
+        run.map((result) => result.scenarioId)
+      );
+      if (runScenarioIds.size !== DISCUSSION_QUALITY_CORPUS.length) {
+        throw new Error(
+          `Release quality run ${index + 1} must cover every corpus mode.`
+        );
+      }
+    }
+    for (const scenario of DISCUSSION_QUALITY_CORPUS) {
+      const occurrences = deterministicResults.filter(
+        (result) => result.scenarioId === scenario.id
+      ).length;
+      if (occurrences !== DISCUSSION_QUALITY_RELEASE_REPEAT_COUNT) {
+        throw new Error(
+          `Release quality evidence must run ${scenario.id} exactly ${DISCUSSION_QUALITY_RELEASE_REPEAT_COUNT} times.`
+        );
+      }
+    }
+  }
+  return {
+    result: evaluateQualityGate(report),
+    contractVersions: {
+      promptProfiles: [
+        ...new Set(
+          deterministicResults.map(
+            (result) => result.contractVersions.promptProfile
+          )
+        )
+      ],
+      briefSchemas: [
+        ...new Set(
+          deterministicResults
+            .map((result) => result.contractVersions.briefSchema)
+            .filter((value): value is number => value !== undefined)
+        )
+      ],
+      compressionSchemas: [
+        ...new Set(
+          deterministicResults.flatMap(
+            (result) => result.contractVersions.compressionSchemas
+          )
+        )
+      ],
+      evidenceProtocols: [
+        ...new Set(
+          deterministicResults.map(
+            (result) => result.contractVersions.evidenceProtocol
+          )
+        )
+      ]
+    }
   };
 }
 

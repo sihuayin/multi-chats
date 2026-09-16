@@ -1,6 +1,7 @@
 import { createModelGateway } from "@/server/adapters/model/model-gateway";
 import { resolveModelContext } from "@/server/adapters/model/provider-registry";
 import {
+  assertProviderSmokeReportOmitsCredentials,
   providerSmokeGateInput,
   redactProviderSmokeReport,
   resolveProviderSmokeConfig,
@@ -50,6 +51,10 @@ export async function verifyProviderSmokeMatrix(input: {
     input.dependencies ?? defaultDependencies()
   );
   const redacted = redactProviderSmokeReport(report);
+  assertProviderSmokeReportOmitsCredentials(
+    redacted,
+    config.targets.map((target) => target.credential)
+  );
   validateProviderSmokeReport(redacted);
   return {
     status: report.passed ? "passed" : "failed",

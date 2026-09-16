@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   DISCUSSION_QUALITY_CORPUS,
+  DISCUSSION_QUALITY_RELEASE_REPEAT_COUNT,
   DISCUSSION_QUALITY_RUBRIC_VERSION,
   evaluateDiscussionQuality,
+  evaluateDiscussionQualityReport,
   evaluateQualityGate,
   evaluateQualityRuns,
   redactQualityEvidence,
@@ -267,6 +269,33 @@ describe("Discussion quality evaluation", () => {
 
     expect(result.passed).toBe(true);
     expect(result.gateFailures).toEqual([]);
+  });
+
+  it("enforces the three-run release repeat policy", () => {
+    const base = evaluateDiscussionQuality(sample());
+    const run = DISCUSSION_QUALITY_CORPUS.map((scenario) => ({
+      ...base,
+      scenarioId: scenario.id,
+      mode: scenario.mode
+    }));
+    const report = {
+      deterministicRuns: Array.from(
+        { length: DISCUSSION_QUALITY_RELEASE_REPEAT_COUNT },
+        () => structuredClone(run)
+      ),
+      evidenceLinks: ["ci://discussion-quality"]
+    };
+    expect(
+      evaluateDiscussionQualityReport(report, {
+        requireReleaseRepeatCount: true
+      }).result.passed
+    ).toBe(true);
+    expect(() =>
+      evaluateDiscussionQualityReport(
+        { ...report, deterministicRuns: [run] },
+        { requireReleaseRepeatCount: true }
+      )
+    ).toThrow(/must contain 3 runs/);
   });
 
   it("rejects results from an old rubric or a mismatched corpus scenario", () => {

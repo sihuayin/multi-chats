@@ -136,6 +136,14 @@ _Avoid_: Test case, fixture
 The redacted, versioned evidence a Provider smoke matrix emits: each Smoke scenario's status, attempts with Provider, model, outcome, usage, and cost, its artifact links, the totals, and the token and cost caps it stayed within.
 _Avoid_: Test log, results file
 
+**Real-Provider release gate**:
+The opt-in workflow that runs the Provider smoke matrix against production adapters, evaluates the Discussion-quality corpus report, and publishes one redacted release-gate result.
+_Avoid_: Provider test suite, CI job
+
+**Coverage profile**:
+The declared scope of a real-Provider release run. The standard profile verifies OpenAI-compatible and Anthropic cross-family failover; the network-constrained profile verifies DeepSeek target switching but not cross-family failover.
+_Avoid_: Provider mode, environment preset
+
 **Approval**:
 A user decision required before an employee invokes a side-effecting tool.
 _Avoid_: Permission, confirmation
