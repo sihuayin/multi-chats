@@ -277,6 +277,7 @@ export type Message = {
   id: string;
   workspaceId: string;
   conversationId: string;
+  taskId?: string;
   discussionId?: string;
   discussionTurnId?: string;
   authorType: "user" | "employee" | "system";
@@ -302,6 +303,7 @@ export type Run = {
   workspaceId: string;
   conversationId: string;
   triggerMessageId: string;
+  taskId?: string;
   requestId?: string;
   discussionId?: string;
   discussionRound?: number;
@@ -378,6 +380,7 @@ export type Task = {
     actorId: string;
     action?: string;
     artifactId?: string;
+    runId?: string;
   }>;
   createdAt: IsoDate;
   updatedAt: IsoDate;

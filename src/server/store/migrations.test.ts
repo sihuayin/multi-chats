@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { migrateAppState } from "@/server/store/migrations";
 import { createInitialState } from "@/server/store/initial-state";
 import {
+  addFixtureTaskRunCorrelation,
   createFixtureDiscussion,
   createFixtureState
 } from "@/server/test-support/fixtures";
@@ -50,6 +51,114 @@ describe("AppState migrations", () => {
 
     expect(migrated).toEqual(current);
     expect(migrateAppState(structuredClone(migrated))).toEqual(current);
+  });
+
+  it("accepts optional Task, Run, and Message correlations", () => {
+    const state = createFixtureState();
+    const { task, message, run } = addFixtureTaskRunCorrelation(state);
+
+    const migrated = migrateAppState(structuredClone(state));
+    const migratedAgain = migrateAppState(structuredClone(migrated));
+
+    expect(migrated.tasks[0].history[1].runId).toBe(run.id);
+    expect(migrated.messages[0].taskId).toBe(task.id);
+    expect(migrated.runs[0].taskId).toBe(task.id);
+    expect(migrated.schemaVersion).toBe(4);
+    expect(migratedAgain).toEqual(migrated);
+  });
+
+  it("rejects dangling or cross-Conversation Task correlations", () => {
+    const cases = [
+      {
+        mutate(state: ReturnType<typeof createFixtureState>) {
+          state.messages.push({
+            id: "message-task-dangling",
+            workspaceId: state.workspace.id,
+            conversationId: state.conversations[0].id,
+            taskId: "missing-task",
+            authorType: "system",
+            authorId: "user",
+            content: "Dangling Task reference.",
+            status: "complete",
+            createdAt: state.workspace.createdAt,
+            updatedAt: state.workspace.updatedAt
+          });
+        },
+        message: "Workspace Message Task correlation is invalid"
+      },
+      {
+        mutate(state: ReturnType<typeof createFixtureState>) {
+          const { message } = addFixtureTaskRunCorrelation(state);
+          message.runId = "missing-run";
+        },
+        message: "Workspace Message Run correlation is invalid"
+      },
+      {
+        mutate(state: ReturnType<typeof createFixtureState>) {
+          addFixtureTaskRunCorrelation(state).message.runId = undefined;
+        },
+        message: "Workspace Run Task correlation is invalid"
+      },
+      {
+        mutate(state: ReturnType<typeof createFixtureState>) {
+          state.tasks.push({
+            id: "task-other-conversation",
+            workspaceId: state.workspace.id,
+            conversationId: "conversation-other",
+            title: "Other Conversation",
+            goal: "Remain outside the correlation.",
+            assigneeIds: [state.employees[0].id],
+            status: "draft",
+            history: [],
+            createdAt: state.workspace.createdAt,
+            updatedAt: state.workspace.updatedAt
+          });
+          state.messages.push({
+            id: "message-task-mismatch",
+            workspaceId: state.workspace.id,
+            conversationId: state.conversations[0].id,
+            taskId: "task-other-conversation",
+            authorType: "system",
+            authorId: "user",
+            content: "Mismatched Task conversation.",
+            status: "complete",
+            createdAt: state.workspace.createdAt,
+            updatedAt: state.workspace.updatedAt
+          });
+        },
+        message: "Workspace Message Task correlation is invalid"
+      },
+      {
+        mutate(state: ReturnType<typeof createFixtureState>) {
+          state.tasks.push({
+            id: "task-history",
+            workspaceId: state.workspace.id,
+            conversationId: state.conversations[0].id,
+            title: "History",
+            goal: "Reference a valid Run from history.",
+            assigneeIds: [state.employees[0].id],
+            status: "in_progress",
+            history: [
+              {
+                status: "in_progress",
+                at: state.workspace.updatedAt,
+                actorId: "user",
+                runId: "missing-run"
+              }
+            ],
+            createdAt: state.workspace.createdAt,
+            updatedAt: state.workspace.updatedAt
+          });
+        },
+        message: "Workspace Task Run correlation is invalid"
+      }
+    ];
+
+    for (const testCase of cases) {
+      const state = createFixtureState();
+      testCase.mutate(state);
+      expect(() => migrateAppState(state)).toThrow(testCase.message);
+    }
   });
 
   it("migrates v2 state to the runtime contract ledgers", () => {

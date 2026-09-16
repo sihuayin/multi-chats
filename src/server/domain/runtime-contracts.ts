@@ -231,6 +231,17 @@ function requireReference(
   }
 }
 
+function optionalIdentifier(
+  value: unknown,
+  message: string
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(message);
+  }
+  return value;
+}
+
 function discussionIndex(state: Record<string, unknown>): {
   discussionIds: Set<string>;
   roundDiscussionIds: Map<string, string>;
@@ -317,6 +328,33 @@ export function validateRuntimeContracts(
   const taskIds = ids(state.tasks);
   const artifactIds = ids(state.artifacts);
   const runIds = ids(state.runs);
+  const tasksById = new Map(
+    records(state.tasks).map((task) => [
+      String(task.id),
+      task as { id: string; conversationId?: string }
+    ])
+  );
+  const messagesById = new Map(
+    records(state.messages).map((message) => [
+      String(message.id),
+      message as {
+        id: string;
+        conversationId?: string;
+        runId?: string;
+        taskId?: string;
+      }
+    ])
+  );
+  const runsById = new Map(
+    records(state.runs).map((run) => [
+      String(run.id),
+      run as {
+        id: string;
+        conversationId?: string;
+        taskId?: string;
+      }
+    ])
+  );
   const attemptIds = ids(parsedValues.get("providerAttempts"));
   const attemptsById = new Map(
     (parsedValues.get("providerAttempts") ?? []).map((attempt) => [
@@ -327,6 +365,88 @@ export function validateRuntimeContracts(
   const evidenceIds = ids(parsedValues.get("evidenceReferences"));
   const compressionIds = ids(parsedValues.get("discussionCompressions"));
   const pricingIds = ids(parsedValues.get("modelPricing"));
+
+  for (const message of records(state.messages)) {
+    const taskId = optionalIdentifier(
+      message.taskId,
+      "Workspace Message Task correlation is invalid"
+    );
+    if (!taskId) continue;
+    const task = tasksById.get(taskId);
+    if (
+      !task ||
+      task.conversationId !== message.conversationId
+    ) {
+      throw new Error("Workspace Message Task correlation is invalid");
+    }
+    const runId = optionalIdentifier(
+      message.runId,
+      "Workspace Message Task correlation is invalid"
+    );
+    if (runId === undefined) continue;
+    const run = runsById.get(runId);
+    if (
+      !run ||
+      run.conversationId !== message.conversationId ||
+      run.taskId !== taskId
+    ) {
+      throw new Error("Workspace Message Run correlation is invalid");
+    }
+  }
+
+  for (const run of records(state.runs)) {
+    const taskId = optionalIdentifier(
+      run.taskId,
+      "Workspace Run Task correlation is invalid"
+    );
+    if (!taskId) continue;
+    const task = tasksById.get(taskId);
+    if (
+      !task ||
+      task.conversationId !== run.conversationId ||
+      run.discussionId !== undefined
+    ) {
+      throw new Error("Workspace Run Task correlation is invalid");
+    }
+    const triggerMessageId = optionalIdentifier(
+      run.triggerMessageId,
+      "Workspace Run Task correlation is invalid"
+    );
+    const triggerMessage = triggerMessageId
+      ? messagesById.get(triggerMessageId)
+      : undefined;
+    if (
+      !triggerMessage ||
+      triggerMessage.conversationId !== run.conversationId ||
+      triggerMessage.taskId !== taskId ||
+      triggerMessage.runId !== run.id
+    ) {
+      throw new Error("Workspace Run Task correlation is invalid");
+    }
+  }
+
+  for (const task of records(state.tasks)) {
+    if (!Array.isArray(task.history)) continue;
+    for (const value of task.history) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new Error("Workspace Task Run correlation is invalid");
+      }
+      const entry = value as Record<string, unknown>;
+      const runId = optionalIdentifier(
+        entry.runId,
+        "Workspace Task Run correlation is invalid"
+      );
+      if (!runId) continue;
+      const run = runsById.get(runId);
+      if (
+        !run ||
+        run.taskId !== task.id ||
+        run.conversationId !== task.conversationId
+      ) {
+        throw new Error("Workspace Task Run correlation is invalid");
+      }
+    }
+  }
 
   for (const attempt of parsedValues.get("providerAttempts") ?? []) {
     const record = attempt as Record<string, unknown>;

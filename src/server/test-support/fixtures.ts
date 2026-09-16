@@ -10,8 +10,11 @@ import type {
   DiscussionRoundPhase,
   DiscussionTurnPayload,
   Employee,
+  Message,
   ModelPricing,
-  ProviderAttempt
+  ProviderAttempt,
+  Run,
+  Task
 } from "@/server/domain/types";
 import type { DiscussionBrief } from "@/server/application/discussion-brief";
 import { AesCredentialCipher } from "@/server/security/credential-cipher";
@@ -168,6 +171,66 @@ export function createFixtureDiscussion(
     startedAt: now,
     updatedAt: now
   };
+}
+
+export function addFixtureTaskRunCorrelation(state: AppState): {
+  task: Task;
+  message: Message;
+  run: Run;
+} {
+  const now = "2026-03-01T00:00:00.000Z";
+  const task: Task = {
+    id: "task-correlated",
+    workspaceId: state.workspace.id,
+    conversationId: state.conversations[0].id,
+    title: "Correlated Task",
+    goal: "Preserve explicit Task Run provenance.",
+    assigneeIds: [state.employees[0].id],
+    status: "in_progress",
+    history: [
+      {
+        status: "draft",
+        at: now,
+        actorId: "user"
+      },
+      {
+        status: "in_progress",
+        at: now,
+        actorId: "user",
+        runId: "run-correlated"
+      }
+    ],
+    createdAt: now,
+    updatedAt: now
+  };
+  const message: Message = {
+    id: "message-task-trigger",
+    workspaceId: state.workspace.id,
+    conversationId: task.conversationId,
+    taskId: task.id,
+    authorType: "system",
+    authorId: "user",
+    content: "Task started.",
+    runId: "run-correlated",
+    status: "complete",
+    createdAt: now,
+    updatedAt: now
+  };
+  const run: Run = {
+    id: "run-correlated",
+    workspaceId: state.workspace.id,
+    conversationId: task.conversationId,
+    taskId: task.id,
+    triggerMessageId: message.id,
+    memberSnapshot: [state.employees[0].id],
+    status: "running",
+    createdAt: now,
+    startedAt: now
+  };
+  state.tasks.push(task);
+  state.messages.push(message);
+  state.runs.push(run);
+  return { task, message, run };
 }
 
 export function createFixtureModelPricing(

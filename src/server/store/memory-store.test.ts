@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createFixtureDiscussion, createFixtureState } from "@/server/test-support/fixtures";
+import {
+  createFixtureDiscussion,
+  createFixtureState,
+  addFixtureTaskRunCorrelation
+} from "@/server/test-support/fixtures";
 import { MemoryStore } from "@/server/store/memory-store";
 
 describe("MemoryStore runtime contracts", () => {
@@ -186,5 +190,19 @@ describe("MemoryStore runtime contracts", () => {
     expect(
       await store.read((current) => current.employees[0].fallbackTargets)
     ).toEqual(employee.fallbackTargets);
+  });
+
+  it("round-trips optional Task, Run, and Message correlations", async () => {
+    const state = createFixtureState();
+    const { task, message, run } = addFixtureTaskRunCorrelation(state);
+    const store = new MemoryStore(state);
+
+    expect(
+      await store.read((current) => ({
+        task: current.tasks.find((item) => item.id === task.id),
+        message: current.messages.find((item) => item.id === message.id),
+        run: current.runs.find((item) => item.id === run.id)
+      }))
+    ).toEqual({ task, message, run });
   });
 });

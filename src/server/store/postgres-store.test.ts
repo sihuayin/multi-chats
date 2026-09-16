@@ -145,4 +145,133 @@ describeWithDatabase("PostgresStore", () => {
       });
     }
   });
+
+  it("round-trips optional Task, Run, and Message correlations", async () => {
+    await store.migrate();
+    const suffix = randomUUID();
+    const providerId = `provider-${suffix}`;
+    const employeeId = `employee-${suffix}`;
+    const conversationId = `conversation-${suffix}`;
+    const taskId = `task-${suffix}`;
+    const messageId = `message-${suffix}`;
+    const runId = `run-${suffix}`;
+    const now = new Date().toISOString();
+
+    await store.update((state) => {
+      state.providers.push({
+        id: providerId,
+        workspaceId: state.workspace.id,
+        provider: "openai",
+        label: `Correlation provider ${suffix}`,
+        encryptedCredential: "test-credential",
+        createdAt: now,
+        updatedAt: now
+      });
+      state.employees.push({
+        id: employeeId,
+        workspaceId: state.workspace.id,
+        name: `Correlation Employee ${suffix}`,
+        identity: "Test correlation persistence.",
+        providerCredentialId: providerId,
+        modelId: "test-model",
+        skillIds: [],
+        active: true,
+        createdAt: now,
+        updatedAt: now
+      });
+      state.conversations.push({
+        id: conversationId,
+        workspaceId: state.workspace.id,
+        title: `Correlation Conversation ${suffix}`,
+        memberIds: [employeeId],
+        createdAt: now,
+        updatedAt: now
+      });
+      state.tasks.push({
+        id: taskId,
+        workspaceId: state.workspace.id,
+        conversationId,
+        title: "Correlated Task",
+        goal: "Preserve PostgreSQL correlation.",
+        assigneeIds: [employeeId],
+        status: "in_progress",
+        history: [
+          {
+            status: "in_progress",
+            at: now,
+            actorId: "user",
+            runId
+          }
+        ],
+        createdAt: now,
+        updatedAt: now
+      });
+      state.messages.push({
+        id: messageId,
+        workspaceId: state.workspace.id,
+        conversationId,
+        taskId,
+        authorType: "system",
+        authorId: "user",
+        content: "Task started.",
+        runId,
+        status: "complete",
+        createdAt: now,
+        updatedAt: now
+      });
+      state.runs.push({
+        id: runId,
+        workspaceId: state.workspace.id,
+        conversationId,
+        taskId,
+        triggerMessageId: messageId,
+        memberSnapshot: [employeeId],
+        status: "running",
+        createdAt: now,
+        startedAt: now
+      });
+    });
+
+    try {
+      expect(
+        await store.read((state) => ({
+          task: state.tasks.find((item) => item.id === taskId),
+          message: state.messages.find((item) => item.id === messageId),
+          run: state.runs.find((item) => item.id === runId)
+        }))
+      ).toMatchObject({
+        task: {
+          id: taskId,
+          history: [{ runId }]
+        },
+        message: {
+          id: messageId,
+          taskId,
+          runId
+        },
+        run: {
+          id: runId,
+          taskId,
+          triggerMessageId: messageId
+        }
+      });
+    } finally {
+      await store.update((state) => {
+        state.providers = state.providers.filter(
+          (item) => item.id !== providerId
+        );
+        state.employees = state.employees.filter(
+          (item) => item.id !== employeeId
+        );
+        state.conversations = state.conversations.filter(
+          (item) => item.id !== conversationId
+        );
+        state.tasks = state.tasks.filter((item) => item.id !== taskId);
+        state.messages = state.messages.filter(
+          (item) => item.id !== messageId
+        );
+        state.runs = state.runs.filter((item) => item.id !== runId);
+      });
+    }
+  });
 });

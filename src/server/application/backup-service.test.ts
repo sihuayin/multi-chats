@@ -11,7 +11,8 @@ import { createInitialState } from "@/server/store/initial-state";
 import { SqliteStore } from "@/server/store/sqlite-store";
 import {
   createFixtureDiscussion,
-  createFixtureState
+  createFixtureState,
+  addFixtureTaskRunCorrelation
 } from "@/server/test-support/fixtures";
 
 const directories: string[] = [];
@@ -250,6 +251,7 @@ describe("Workspace backup and restore", () => {
       version: "1",
       createdAt: state.workspace.createdAt
     });
+    const { task, message, run } = addFixtureTaskRunCorrelation(state);
 
     const backup = JSON.stringify(state);
     await restoreWorkspaceBackup(store, backup);
@@ -262,6 +264,13 @@ describe("Workspace backup and restore", () => {
     );
     expect(await store.read((restored) => restored.employees[0].fallbackTargets))
       .toEqual(employee.fallbackTargets);
+    expect(
+      await store.read((restored) => ({
+        task: restored.tasks.find((item) => item.id === task.id),
+        message: restored.messages.find((item) => item.id === message.id),
+        run: restored.runs.find((item) => item.id === run.id)
+      }))
+    ).toEqual({ task, message, run });
 
     const invalid = structuredClone(state) as unknown as {
       providerAttempts: Array<Record<string, unknown>>;

@@ -5,7 +5,11 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { createInitialState } from "@/server/store/initial-state";
 import { SqliteStore } from "@/server/store/sqlite-store";
-import { createFixtureDiscussion } from "@/server/test-support/fixtures";
+import {
+  createFixtureDiscussion,
+  createFixtureState,
+  addFixtureTaskRunCorrelation
+} from "@/server/test-support/fixtures";
 
 const directories: string[] = [];
 
@@ -200,5 +204,31 @@ describe("SqliteStore", () => {
       ownerId: "task-legacy"
     });
     expect(persisted.artifacts[0]).not.toHaveProperty("taskId");
+  });
+
+  it("round-trips optional Task, Run, and Message correlations", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "multi-chats-sqlite-"));
+    directories.push(directory);
+    const path = join(directory, "state.sqlite");
+    const first = new SqliteStore(path);
+    const state = createFixtureState();
+    const { task, message, run } = addFixtureTaskRunCorrelation(state);
+
+    await first.update((current) => {
+      current.tasks.push(task);
+      current.messages.push(message);
+      current.runs.push(run);
+    });
+    await first.close();
+
+    const second = new SqliteStore(path);
+    expect(
+      await second.read((current) => ({
+        task: current.tasks.find((item) => item.id === task.id),
+        message: current.messages.find((item) => item.id === message.id),
+        run: current.runs.find((item) => item.id === run.id)
+      }))
+    ).toEqual({ task, message, run });
+    await second.close();
   });
 });

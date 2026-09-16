@@ -91,6 +91,14 @@ function stringField(
   return field;
 }
 
+function optionalStringField(
+  value: Record<string, unknown>,
+  key: string
+): void {
+  const field = value[key];
+  if (field !== undefined && (typeof field !== "string" || !field)) invalid();
+}
+
 function stringArrayField(
   value: Record<string, unknown>,
   key: string
@@ -162,12 +170,15 @@ function validateState(candidate: Record<string, unknown>): void {
     stringField(message, "conversationId");
     stringField(message, "authorId");
     stringField(message, "content");
+    optionalStringField(message, "taskId");
+    optionalStringField(message, "runId");
     if (!messageAuthors.has(stringField(message, "authorType"))) invalid();
     if (!messageStatuses.has(stringField(message, "status"))) invalid();
   });
   workspaceRecords("runs").forEach((run) => {
     stringField(run, "conversationId");
     stringField(run, "triggerMessageId");
+    optionalStringField(run, "taskId");
     stringArrayField(run, "memberSnapshot");
     if (!runStatuses.has(stringField(run, "status"))) invalid();
   });
@@ -184,6 +195,9 @@ function validateState(candidate: Record<string, unknown>): void {
     stringArrayField(task, "assigneeIds");
     if (!taskStatuses.has(stringField(task, "status"))) invalid();
     if (!Array.isArray(task.history)) invalid();
+    task.history.forEach((value) => {
+      optionalStringField(record(value), "runId");
+    });
   });
   workspaceRecords("artifacts").forEach((artifact) => {
     if (
