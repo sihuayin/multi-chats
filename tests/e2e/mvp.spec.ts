@@ -34,6 +34,8 @@ test("configures an Employee Group and completes a mentioned Run", async ({
     .fill("Check every claim and report uncertainty.");
   await page.getByLabel(/Fetch URL/).check();
   await page.getByLabel(/Post webhook/).check();
+  await page.getByLabel(/Update Task/).check();
+  await page.getByLabel(/Attach Artifact/).check();
   await page.getByRole("button", { name: "Create custom Skill" }).click();
   await expect(page.getByText(customSkillName)).toBeVisible();
 
@@ -275,6 +277,35 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   await expect(retryTask.getByRole("button", { name: "Stop" })).toHaveCount(0, {
     timeout: 10_000
   });
+
+  await page.getByPlaceholder("Task title").fill("Publish Task result");
+  await page
+    .getByPlaceholder("Goal and expected result")
+    .fill("PUBLISH_TASK_ARTIFACT");
+  await page.getByLabel(employeeName).check();
+  await page.getByRole("button", { name: "Add Task" }).click();
+  const outputTask = page.locator(".task-card").filter({
+    hasText: "Publish Task result"
+  });
+  await outputTask.getByRole("button", { name: "Start" }).click();
+  await expect(
+    page
+      .locator(".message-bubble.employee")
+      .filter({ hasText: "Task Artifact published." })
+  ).toBeVisible({ timeout: 10_000 });
+  await expect(outputTask.locator(".status-pill.review")).toBeVisible();
+  const conversationArtifact = page
+    .locator(".message-stream details")
+    .filter({ hasText: "Task result" });
+  await conversationArtifact.locator("summary").click();
+  await expect(conversationArtifact).toContainText('"complete": true');
+  const outputArtifact = outputTask.locator("details").filter({
+    hasText: "Task result"
+  });
+  await outputArtifact.locator("summary").click();
+  await expect(outputArtifact).toContainText('"complete": true');
+  await outputTask.getByRole("button", { name: "Complete" }).click();
+  await expect(outputTask.locator(".status-pill.completed")).toBeVisible();
 
   await page.getByPlaceholder("Task title").fill("Cancel this task");
   await page

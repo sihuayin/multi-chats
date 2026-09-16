@@ -242,6 +242,17 @@ function optionalIdentifier(
   return value;
 }
 
+function runCorrelatesWithTask(
+  run: { conversationId?: string; taskId?: string } | undefined,
+  task: { id: string; conversationId?: string }
+): boolean {
+  return Boolean(
+    run &&
+      run.conversationId === task.conversationId &&
+      (run.taskId === undefined || run.taskId === task.id)
+  );
+}
+
 function discussionIndex(state: Record<string, unknown>): {
   discussionIds: Set<string>;
   roundDiscussionIds: Map<string, string>;
@@ -351,6 +362,7 @@ export function validateRuntimeContracts(
       run as {
         id: string;
         conversationId?: string;
+        discussionId?: string;
         taskId?: string;
       }
     ])
@@ -440,11 +452,42 @@ export function validateRuntimeContracts(
       const run = runsById.get(runId);
       if (
         !run ||
-        run.taskId !== task.id ||
-        run.conversationId !== task.conversationId
+        !runCorrelatesWithTask(run, {
+          id: String(task.id),
+          conversationId:
+            typeof task.conversationId === "string"
+              ? task.conversationId
+              : undefined
+        })
       ) {
         throw new Error("Workspace Task Run correlation is invalid");
       }
+    }
+  }
+
+  for (const artifact of records(state.artifacts)) {
+    const runId = optionalIdentifier(
+      artifact.runId,
+      "Workspace Artifact Run correlation is invalid"
+    );
+    if (!runId) continue;
+    const run = runsById.get(runId);
+    const task =
+      artifact.ownerType === "task"
+        ? tasksById.get(String(artifact.ownerId))
+        : undefined;
+    const validOwnerRun =
+      run &&
+      ((artifact.ownerType === "task" &&
+        task &&
+        runCorrelatesWithTask(run, {
+          id: String(artifact.ownerId),
+          conversationId: task.conversationId
+        })) ||
+        (artifact.ownerType === "discussion" &&
+          run.discussionId === artifact.ownerId));
+    if (!validOwnerRun) {
+      throw new Error("Workspace Artifact Run correlation is invalid");
     }
   }
 

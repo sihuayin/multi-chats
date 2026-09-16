@@ -402,6 +402,7 @@ export type Artifact = {
   workspaceId: string;
   ownerType: "task" | "discussion";
   ownerId: string;
+  runId?: string;
   type: ArtifactType;
   name: string;
   content: string;

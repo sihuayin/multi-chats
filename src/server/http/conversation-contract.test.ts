@@ -11,6 +11,7 @@ import { AesCredentialCipher } from "@/server/security/credential-cipher";
 import { ConversationRunService } from "@/server/application/conversation-run-service";
 import { DiscussionOrchestrator } from "@/server/application/discussion-orchestrator";
 import { FakeModelGateway } from "@/server/adapters/model/model-gateway";
+import type { ModelGateway } from "@/server/application/model-gateway";
 
 const originalModelMode = process.env.MODEL_MODE;
 const originalDatabaseUrl = process.env.DATABASE_URL;
@@ -23,15 +24,18 @@ afterEach(() => {
   else process.env.DATABASE_URL = originalDatabaseUrl;
 });
 
-function setupContractServices() {
+function setupContractServices(
+  initialState = createFixtureState(),
+  gateway: ModelGateway = new FakeModelGateway()
+) {
   process.env.MODEL_MODE = "fake";
   process.env.DATABASE_URL = "postgres://contract-test";
-  const store = new MemoryStore(createFixtureState());
+  const store = new MemoryStore(initialState);
   setStoreForTests(store);
   const runService = new ConversationRunService(
     store,
     new AesCredentialCipher(TEST_KEY),
-    new FakeModelGateway()
+    gateway
   );
   setServicesForTests({
     workspace: getServices().workspace,
@@ -450,5 +454,176 @@ describe("Conversation HTTP and SSE contract", () => {
           state.runs.find((run) => run.id === interrupted.run.id)?.status
       )
     ).toBe("interrupted");
+  });
+
+  it("publishes Task-owned Artifacts and moves the Task to review", async () => {
+    const state = createFixtureState();
+    const skillId = "40000000-0000-4000-8000-000000000009";
+    state.skills.push({
+      id: skillId,
+      workspaceId: state.workspace.id,
+      name: "Task publisher",
+      description: "Publishes Task Artifacts.",
+      instructions: "Attach the result and move the Task to review.",
+      inputs: ["result"],
+      outputs: ["artifact"],
+      toolNames: ["update_task", "attach_artifact"],
+      builtIn: false,
+      createdAt: state.workspace.createdAt,
+      updatedAt: state.workspace.updatedAt
+    });
+    state.employees[0].skillIds.push(skillId);
+    const gateway: ModelGateway = {
+      async *run(request) {
+        const updateTask = request.tools.find(
+          (tool) => tool.name === "update_task"
+        );
+        const attachArtifact = request.tools.find(
+          (tool) => tool.name === "attach_artifact"
+        );
+        if (!updateTask || !attachArtifact) {
+          throw new Error("Task Artifact Tools were not available");
+        }
+        const taskId = request.prompt.match(/^Task ([^ ]+) "/m)?.[1];
+        if (!taskId) throw new Error("Task context was not provided");
+        await attachArtifact.execute("task-output-artifact", {
+          taskId,
+          type: "json",
+          name: "Task result",
+          content: JSON.stringify({ complete: true })
+        });
+        await updateTask.execute("task-output-review", {
+          taskId,
+          status: "review"
+        });
+        yield { type: "text_delta", delta: "Task Artifact published." };
+        yield { type: "text_completed", text: "Task Artifact published." };
+      }
+    };
+    const { store } = setupContractServices(state, gateway);
+    const task = await getServices().workspace.createTask(
+      state.conversations[0].id,
+      {
+        title: "Publish Task result",
+        goal: "Produce a durable output.",
+        assigneeIds: [state.employees[0].id]
+      }
+    );
+    const startedResponse = await handleApiRequest(
+      new Request(`http://localhost/api/tasks/${task.id}/run`, {
+        method: "POST",
+        headers: { "idempotency-key": "publish-task-artifact" },
+        body: "{}"
+      }),
+      ["tasks", task.id, "run"]
+    );
+    const started = (await startedResponse.json()) as { run: { id: string } };
+
+    await getServices().runs.processRun(started.run.id);
+
+    const persisted = await store.read((current) => ({
+      task: current.tasks.find((item) => item.id === task.id),
+      run: current.runs.find((item) => item.id === started.run.id),
+      artifact: current.artifacts.find((item) => item.ownerId === task.id),
+      events: current.runEvents.filter(
+        (event) => event.runId === started.run.id
+      ),
+      messages: current.messages.filter(
+        (message) => message.runId === started.run.id
+      )
+    }));
+    expect(persisted.task?.status).toBe("review");
+    expect(persisted.artifact).toMatchObject({
+      ownerType: "task",
+      ownerId: task.id,
+      runId: started.run.id,
+      type: "json",
+      name: "Task result"
+    });
+    expect(persisted.task?.history).toContainEqual(
+      expect.objectContaining({
+        action: "artifact_created",
+        artifactId: persisted.artifact?.id,
+        runId: started.run.id
+      })
+    );
+    expect(
+      persisted.events.some((event) => event.type === "artifact_created")
+    ).toBe(true);
+    expect(
+      persisted.messages.some((message) =>
+        message.content.includes('"complete":true')
+      )
+    ).toBe(false);
+  });
+
+  it("preserves prior Task context and Artifacts after a failed Task Run", async () => {
+    const { store } = setupContractServices();
+    const task = await getServices().workspace.createTask(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        title: "Fail without losing history",
+        goal: "FAIL_MODEL",
+        assigneeIds: ["20000000-0000-4000-8000-000000000001"]
+      }
+    );
+    const artifact = await getServices().workspace.createArtifact(
+      task.id,
+      {
+        type: "text",
+        name: "Existing result",
+        content: "Keep this Artifact."
+      },
+      "user"
+    );
+    await handleApiRequest(
+      new Request(
+        "http://localhost/api/conversations/30000000-0000-4000-8000-000000000001/messages",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ content: "Keep this context." })
+        }
+      ),
+      ["conversations", "30000000-0000-4000-8000-000000000001", "messages"]
+    );
+
+    const startedResponse = await handleApiRequest(
+      new Request(`http://localhost/api/tasks/${task.id}/run`, {
+        method: "POST",
+        headers: { "idempotency-key": "failed-task-run" },
+        body: "{}"
+      }),
+      ["tasks", task.id, "run"]
+    );
+    const started = (await startedResponse.json()) as { run: { id: string } };
+    const failed = await getServices().runs.processRun(started.run.id);
+
+    const persisted = await store.read((current) => ({
+      task: current.tasks.find((item) => item.id === task.id),
+      artifacts: current.artifacts.filter((item) => item.ownerId === task.id),
+      messages: current.messages.filter(
+        (message) =>
+          message.conversationId === task.conversationId
+      )
+    }));
+    expect(failed.status).toBe("failed");
+    expect(persisted.task?.status).toBe("in_progress");
+    expect(persisted.task?.history.map((entry) => entry.status)).toEqual([
+      "draft",
+      "draft",
+      "in_progress"
+    ]);
+    expect(persisted.artifacts).toEqual([artifact]);
+    expect(
+      persisted.messages.some(
+        (message) => message.content === "Keep this context."
+      )
+    ).toBe(true);
+    expect(
+      persisted.messages.some((message) =>
+        message.content.includes("Partial failure output.")
+      )
+    ).toBe(true);
   });
 });

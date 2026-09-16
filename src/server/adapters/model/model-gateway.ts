@@ -31,7 +31,10 @@ export class FakeModelGateway implements ModelGateway {
         .find((message) => message.role === "user")?.content ??
       [...request.prompt.matchAll(/^User: (.+)$/gm)].at(-1)?.[1] ??
       request.prompt;
-    if (latestUserContent.includes("FAIL_MODEL")) {
+    if (
+      latestUserContent.includes("FAIL_MODEL") ||
+      request.prompt.includes("FAIL_MODEL")
+    ) {
       yield { type: "text_delta", delta: "Partial failure output." };
       yield {
         type: "error",
@@ -100,6 +103,70 @@ export class FakeModelGateway implements ModelGateway {
       const text = result.isError
         ? `Tool failed: ${result.content}`
         : `Tool completed: ${result.content}`;
+      yield { type: "text_delta", delta: text };
+      yield { type: "text_completed", text };
+      return;
+    }
+    if (request.prompt.includes("PUBLISH_TASK_ARTIFACT")) {
+      const taskId = request.prompt.match(/^Task ([^ ]+) "/m)?.[1];
+      const updateTask = request.tools.find(
+        (tool) => tool.name === "update_task"
+      );
+      const attachArtifact = request.tools.find(
+        (tool) => tool.name === "attach_artifact"
+      );
+      if (!taskId || !updateTask || !attachArtifact) {
+        yield {
+          type: "error",
+          message: "Task Artifact Tools are unavailable",
+          kind: "terminal"
+        };
+        return;
+      }
+      yield {
+        type: "tool_started",
+        toolCallId: "fake-task-artifact",
+        toolName: attachArtifact.name,
+        args: {
+          taskId,
+          type: "json",
+          name: "Task result",
+          content: JSON.stringify({ complete: true })
+        }
+      };
+      const artifactResult = await attachArtifact.execute("fake-task-artifact", {
+        taskId,
+        type: "json",
+        name: "Task result",
+        content: JSON.stringify({ complete: true })
+      });
+      yield {
+        type: "tool_completed",
+        toolCallId: "fake-task-artifact",
+        toolName: attachArtifact.name,
+        result: artifactResult.content,
+        isError: Boolean(artifactResult.isError),
+        errorKind: artifactResult.errorKind
+      };
+      yield {
+        type: "tool_started",
+        toolCallId: "fake-task-review",
+        toolName: updateTask.name,
+        args: { taskId, status: "review" }
+      };
+      const updateResult = await updateTask.execute("fake-task-review", {
+        taskId,
+        status: "review"
+      });
+      yield {
+        type: "tool_completed",
+        toolCallId: "fake-task-review",
+        toolName: updateTask.name,
+        result: updateResult.content,
+        isError: Boolean(updateResult.isError),
+        errorKind: updateResult.errorKind
+      };
+      const text = "Task Artifact published.";
       yield { type: "text_delta", delta: text };
       yield { type: "text_completed", text };
       return;

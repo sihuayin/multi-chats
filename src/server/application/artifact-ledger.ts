@@ -26,7 +26,8 @@ function recordArtifactChange(
   artifactId: string,
   actorId: string,
   action: "artifact_created" | "artifact_updated",
-  timestamp: string
+  timestamp: string,
+  runId?: string
 ): void {
   const task = findTask(state, taskId);
   task.history.push({
@@ -34,7 +35,8 @@ function recordArtifactChange(
     at: timestamp,
     actorId,
     action,
-    artifactId
+    artifactId,
+    runId
   });
   task.updatedAt = timestamp;
   state.workspace.updatedAt = timestamp;
@@ -44,7 +46,8 @@ export function createTaskArtifact(
   state: AppState,
   taskId: string,
   input: unknown,
-  actorId: string
+  actorId: string,
+  options: { runId?: string } = {}
 ): Artifact {
   const parsed = artifactInputSchema.parse(input);
   const task = findTask(state, taskId);
@@ -55,6 +58,7 @@ export function createTaskArtifact(
     workspaceId: state.workspace.id,
     ownerType: "task",
     ownerId: task.id,
+    ...(options.runId ? { runId: options.runId } : {}),
     ...parsed,
     createdAt: timestamp,
     updatedAt: timestamp
@@ -66,7 +70,8 @@ export function createTaskArtifact(
     artifact.id,
     actorId,
     "artifact_created",
-    timestamp
+    timestamp,
+    options.runId
   );
   return artifact;
 }

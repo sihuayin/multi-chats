@@ -252,6 +252,18 @@ describe("Workspace backup and restore", () => {
       createdAt: state.workspace.createdAt
     });
     const { task, message, run } = addFixtureTaskRunCorrelation(state);
+    state.artifacts.push({
+      id: "artifact-correlated",
+      workspaceId: state.workspace.id,
+      ownerType: "task",
+      ownerId: task.id,
+      runId: run.id,
+      type: "json",
+      name: "Task result",
+      content: JSON.stringify({ complete: true }),
+      createdAt: state.workspace.createdAt,
+      updatedAt: state.workspace.updatedAt
+    });
 
     const backup = JSON.stringify(state);
     await restoreWorkspaceBackup(store, backup);
@@ -268,9 +280,19 @@ describe("Workspace backup and restore", () => {
       await store.read((restored) => ({
         task: restored.tasks.find((item) => item.id === task.id),
         message: restored.messages.find((item) => item.id === message.id),
-        run: restored.runs.find((item) => item.id === run.id)
+        run: restored.runs.find((item) => item.id === run.id),
+        artifact: restored.artifacts.find(
+          (item) => item.id === "artifact-correlated"
+        )
       }))
-    ).toEqual({ task, message, run });
+    ).toEqual({
+      task,
+      message,
+      run,
+      artifact: state.artifacts.find(
+        (item) => item.id === "artifact-correlated"
+      )
+    });
 
     const invalid = structuredClone(state) as unknown as {
       providerAttempts: Array<Record<string, unknown>>;

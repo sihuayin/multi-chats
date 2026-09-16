@@ -207,6 +207,7 @@ function validateState(candidate: Record<string, unknown>): void {
       invalid();
     }
     stringField(artifact, "ownerId");
+    optionalStringField(artifact, "runId");
     if (!isArtifactType(artifact.type)) invalid();
     stringField(artifact, "name");
     stringField(artifact, "content");

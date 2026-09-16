@@ -286,7 +286,8 @@ export class RegisteredToolGateway implements ToolGateway {
             name: args.name,
             content: args.content
           },
-          context.employeeId
+          context.employeeId,
+          { runId: context.runId }
         );
         appendEvent(state, run, "artifact_created", {
           taskId,

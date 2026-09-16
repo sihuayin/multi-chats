@@ -3053,7 +3053,7 @@ describe("ConversationRun", () => {
       instructions: "Attach each requested result to the assigned Task.",
       inputs: ["result"],
       outputs: ["artifact"],
-      toolNames: ["attach_artifact"],
+      toolNames: ["update_task", "attach_artifact"],
       builtIn: false,
       createdAt: state.workspace.createdAt,
       updatedAt: state.workspace.updatedAt
@@ -3091,6 +3091,14 @@ describe("ConversationRun", () => {
             content
           });
         }
+        const updateTask = request.tools.find(
+          (item) => item.name === "update_task"
+        );
+        if (!updateTask) throw new Error("update_task Tool was not available");
+        await updateTask.execute("task-review", {
+          taskId: task.id,
+          status: "review"
+        });
         yield { type: "text_delta", delta: "Artifacts published." };
         yield { type: "text_completed", text: "Artifacts published." };
       }
@@ -3100,44 +3108,46 @@ describe("ConversationRun", () => {
       new AesCredentialCipher(TEST_KEY),
       gateway
     );
-    const started = await runs.startTurn(
-      "30000000-0000-4000-8000-000000000001",
-      { content: "@alice publish the results" }
-    );
+    const started = await runs.startTask(task.id);
 
-    await runs.processRun(started.run!.id);
+    await runs.processRun(started.run.id);
 
     const persisted = await store.read((current) => ({
       artifacts: current.artifacts.map((artifact) => ({
         type: artifact.type,
         name: artifact.name,
         ownerType: artifact.ownerType,
-        ownerId: artifact.ownerId
+        ownerId: artifact.ownerId,
+        runId: artifact.runId
       })),
       actions:
         current.tasks
           .find((item) => item.id === task.id)
           ?.history.filter((entry) => entry.action === "artifact_created")
-          .map((entry) => entry.actorId) ?? []
+          .map((entry) => entry.actorId) ?? [],
+      status: current.tasks.find((item) => item.id === task.id)?.status
     }));
     expect(persisted.artifacts).toEqual([
       {
         type: "text",
         name: "Notes",
         ownerType: "task",
-        ownerId: task.id
+        ownerId: task.id,
+        runId: started.run.id
       },
       {
         type: "markdown",
         name: "Brief",
         ownerType: "task",
-        ownerId: task.id
+        ownerId: task.id,
+        runId: started.run.id
       },
       {
         type: "json",
         name: "Metrics",
         ownerType: "task",
-        ownerId: task.id
+        ownerId: task.id,
+        runId: started.run.id
       }
     ]);
     expect(persisted.actions).toEqual([
@@ -3145,8 +3155,9 @@ describe("ConversationRun", () => {
       "20000000-0000-4000-8000-000000000001",
       "20000000-0000-4000-8000-000000000001"
     ]);
+    expect(persisted.status).toBe("review");
     expect(
-      (await runs.listRunEvents(started.run!.id)).filter(
+      (await runs.listRunEvents(started.run.id)).filter(
         (event) => event.type === "artifact_created"
       )
     ).toHaveLength(3);

@@ -56,6 +56,18 @@ describe("AppState migrations", () => {
   it("accepts optional Task, Run, and Message correlations", () => {
     const state = createFixtureState();
     const { task, message, run } = addFixtureTaskRunCorrelation(state);
+    state.artifacts.push({
+      id: "artifact-correlated",
+      workspaceId: state.workspace.id,
+      ownerType: "task",
+      ownerId: task.id,
+      runId: run.id,
+      type: "json",
+      name: "Task result",
+      content: JSON.stringify({ complete: true }),
+      createdAt: state.workspace.createdAt,
+      updatedAt: state.workspace.updatedAt
+    });
 
     const migrated = migrateAppState(structuredClone(state));
     const migratedAgain = migrateAppState(structuredClone(migrated));
@@ -63,6 +75,7 @@ describe("AppState migrations", () => {
     expect(migrated.tasks[0].history[1].runId).toBe(run.id);
     expect(migrated.messages[0].taskId).toBe(task.id);
     expect(migrated.runs[0].taskId).toBe(task.id);
+    expect(migrated.artifacts[0].runId).toBe(run.id);
     expect(migrated.schemaVersion).toBe(4);
     expect(migratedAgain).toEqual(migrated);
   });
@@ -151,6 +164,24 @@ describe("AppState migrations", () => {
           });
         },
         message: "Workspace Task Run correlation is invalid"
+      },
+      {
+        mutate(state: ReturnType<typeof createFixtureState>) {
+          const { task } = addFixtureTaskRunCorrelation(state);
+          state.artifacts.push({
+            id: "artifact-invalid-run",
+            workspaceId: state.workspace.id,
+            ownerType: "task",
+            ownerId: task.id,
+            runId: "missing-run",
+            type: "text",
+            name: "Invalid provenance",
+            content: "Invalid",
+            createdAt: state.workspace.createdAt,
+            updatedAt: state.workspace.updatedAt
+          });
+        },
+        message: "Workspace Artifact Run correlation is invalid"
       }
     ];
 

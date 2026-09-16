@@ -310,6 +310,22 @@ export function ChatWorkspace() {
     ];
   }, [data?.employees, mentionState, selected, t]);
 
+  function messageArtifacts(messageId: string): Artifact[] {
+    const artifactIds = new Set(
+      (data?.runEvents ?? [])
+        .filter(
+          (event) =>
+            event.type === "artifact_created" &&
+            event.payload.messageId === messageId
+        )
+        .map((event) => String(event.payload.artifactId ?? ""))
+        .filter(Boolean)
+    );
+    return (data?.artifacts ?? []).filter((artifact) =>
+      artifactIds.has(artifact.id)
+    );
+  }
+
   async function createConversation() {
     const group =
       groupChoice === "ad-hoc"
@@ -755,28 +771,47 @@ export function ChatWorkspace() {
                   {latestRun.error}
                 </div>
               ) : null}
-              {messages.map((item) => (
-                <article
-                  key={item.id}
-                  className={`message-bubble ${item.authorType}`}
-                  data-status={item.status}
-                >
-                  <div className="message-meta">
-                    <strong>
-                      {item.authorType === "user"
-                        ? t("chat.you")
-                        : data?.employees.find(
-                            (employee) => employee.id === item.authorId
-                          )?.name ?? t("chat.employee")}
-                    </strong>
-                    <time>{new Date(item.createdAt).toLocaleTimeString()}</time>
-                    {item.status === "streaming" ? (
-                      <LoaderCircle className="spin" size={13} />
+              {messages.map((item) => {
+                const artifacts = messageArtifacts(item.id);
+                return (
+                  <article
+                    key={item.id}
+                    className={`message-bubble ${item.authorType}`}
+                    data-status={item.status}
+                  >
+                    <div className="message-meta">
+                      <strong>
+                        {item.authorType === "user"
+                          ? t("chat.you")
+                          : data?.employees.find(
+                              (employee) => employee.id === item.authorId
+                            )?.name ?? t("chat.employee")}
+                      </strong>
+                      <time>{new Date(item.createdAt).toLocaleTimeString()}</time>
+                      {item.status === "streaming" ? (
+                        <LoaderCircle className="spin" size={13} />
+                      ) : null}
+                    </div>
+                    <p>
+                      {item.content || (item.status === "streaming" ? "..." : "")}
+                    </p>
+                    {artifacts.length > 0 ? (
+                      <div className="artifact-list message-artifacts">
+                        {artifacts.map((artifact) => (
+                          <details key={artifact.id}>
+                            <summary>
+                              <MessageIcon artifact={artifact} />
+                              {artifact.name}
+                              <span>{t(artifactTypeKey(artifact.type))}</span>
+                            </summary>
+                            <ArtifactContent artifact={artifact} />
+                          </details>
+                        ))}
+                      </div>
                     ) : null}
-                  </div>
-                  <p>{item.content || (item.status === "streaming" ? "..." : "")}</p>
-                </article>
-              ))}
+                  </article>
+                );
+              })}
               {messages.length === 0 ? (
                 <div className="empty-state compact">
                   <MessageSquarePlus size={22} />
@@ -1163,7 +1198,12 @@ export function ChatWorkspace() {
                         <summary>
                           <MessageIcon artifact={artifact} />
                           {artifact.name}
-                          <span>{t(artifactTypeKey(artifact.type))}</span>
+                          <span>
+                            {t(artifactTypeKey(artifact.type))}
+                            {artifact.runId
+                              ? ` · Run ${artifact.runId.slice(0, 8)}`
+                              : ""}
+                          </span>
                         </summary>
                         <ArtifactContent artifact={artifact} />
                         <div className="artifact-actions">
