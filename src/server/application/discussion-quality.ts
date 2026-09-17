@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import type {
   AppState,
   Discussion,
-  DiscussionMode
+  DiscussionMode,
+  ModelUsage
 } from "@/server/domain/types";
 import type { DiscussionBrief } from "@/server/application/discussion-brief";
 import { DISCUSSION_BRIEF_SCHEMA_VERSION } from "@/server/application/discussion-brief";
@@ -189,12 +190,18 @@ export type DiscussionQualityGateResult = QualityRunsAggregate & {
 
 export type DiscussionQualityReport = {
   deterministicRuns: DiscussionQualityResult[][];
+  totals?: {
+    attempts: number;
+    usage: ModelUsage;
+    estimatedCostMicros: number | null;
+  };
   evidenceLinks?: string[];
   realProvider?: DiscussionQualityGateInput["realProvider"];
 };
 
 export type DiscussionQualityReportEvaluation = {
   result: DiscussionQualityGateResult;
+  totals?: DiscussionQualityReport["totals"];
   contractVersions: {
     promptProfiles: string[];
     briefSchemas: number[];
@@ -723,6 +730,7 @@ export function evaluateDiscussionQualityReport(
   }
   return {
     result: evaluateQualityGate(report),
+    ...(report.totals ? { totals: report.totals } : {}),
     contractVersions: {
       promptProfiles: [
         ...new Set(

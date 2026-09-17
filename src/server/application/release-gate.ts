@@ -11,6 +11,7 @@ import {
 } from "@/server/application/provider-smoke";
 import type {
   DiscussionQualityGateResult,
+  DiscussionQualityReport,
   DiscussionQualityReportEvaluation
 } from "@/server/application/discussion-quality";
 
@@ -63,6 +64,7 @@ export type ReleaseGateReport = {
   evidenceLink: string;
   limits: ProviderSmokeReport["limits"];
   smoke: ProviderSmokeReport;
+  qualityTotals?: DiscussionQualityReport["totals"];
   quality: DiscussionQualityGateResult;
   followUpRequirements: ReleaseGateFollowUp[];
 };
@@ -284,6 +286,7 @@ export function buildReleaseGateReport(input: {
     evidenceLink: input.evidenceLink,
     limits: input.smoke.limits,
     smoke: input.smoke,
+    ...(input.quality.totals ? { qualityTotals: input.quality.totals } : {}),
     quality: input.quality.result,
     followUpRequirements
   };

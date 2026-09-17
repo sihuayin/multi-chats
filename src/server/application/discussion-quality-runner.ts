@@ -1,6 +1,9 @@
 import { parseDiscussionBrief } from "@/server/application/discussion-brief";
 import { ConversationRunService } from "@/server/application/conversation-run-service";
-import type { ModelContext } from "@/server/application/discussion-context";
+import {
+  DEFAULT_MAX_OUTPUT_TOKENS,
+  type ModelContext
+} from "@/server/application/discussion-context";
 import { DiscussionOrchestrator } from "@/server/application/discussion-orchestrator";
 import type { ModelGateway } from "@/server/application/model-gateway";
 import {
@@ -213,7 +216,10 @@ export async function runDiscussionQualityCorpusAgainstProviders(
         const context = dependencies.modelContext(input);
         return {
           ...context,
-          maxOutputTokens: Math.min(context.maxOutputTokens ?? 800, 800)
+          maxOutputTokens: Math.min(
+            context.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+            DEFAULT_MAX_OUTPUT_TOKENS
+          )
         };
       },
       providerTimeoutMs: config.limits.timeoutMs
@@ -297,8 +303,18 @@ export async function runDiscussionQualityCorpusAgainstProviders(
     deterministicRuns.push(results);
   }
 
+  const attempts = store.snapshot().providerAttempts;
+  const estimatedCostMicros = attempts.reduce(
+    (total, attempt) => total + (attempt.estimatedCostMicros ?? 0),
+    0
+  );
   return {
     deterministicRuns,
+    totals: {
+      attempts: attempts.length,
+      usage: sumModelUsage(attempts.map((attempt) => attempt.usage)),
+      estimatedCostMicros
+    },
     evidenceLinks: [
       config.evidenceLink ?? "artifact://discussion-quality/local"
     ]

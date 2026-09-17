@@ -38,9 +38,12 @@ describe("Discussion quality corpus runner", () => {
     ]);
     expect(report.evidenceLinks).toEqual(["ci://provider-smoke/1"]);
     expect(JSON.stringify(report)).not.toContain("test-key-primary");
-    expect(gateway.requests.every((request) => request.maxOutputTokens === 800)).toBe(
-      true
-    );
+    expect(
+      gateway.requests.every((request) => request.maxOutputTokens === 4_096)
+    ).toBe(true);
+    expect(report.totals?.attempts).toBeGreaterThan(0);
+    expect(report.totals?.usage.totalTokens).toBeGreaterThan(0);
+    expect(report.totals?.estimatedCostMicros).toBeGreaterThan(0);
   }, 120_000);
 
   it("records a failed phase and continues the remaining corpus", async () => {
