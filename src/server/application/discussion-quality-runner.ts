@@ -189,7 +189,6 @@ export async function runDiscussionQualityCorpusAgainstProviders(
         const context = dependencies.modelContext(input);
         return {
           ...context,
-          contextWindow: Math.min(context.contextWindow, 16_000),
           maxOutputTokens: Math.min(context.maxOutputTokens, 800)
         };
       },
