@@ -81,7 +81,6 @@ Discussion-quality report in one command:
 PROVIDER_SMOKE=1 \
 RELEASE_GATE_PROFILE=network_constrained \
 DEEPSEEK_API_KEY=... \
-SMOKE_QUALITY_REPORT_PATH=.data/discussion-quality.json \
 SMOKE_EVIDENCE_LINK=artifact://release-gate/42 \
 npm run verify:release-gate
 ```
@@ -90,8 +89,10 @@ npm run verify:release-gate
 `deepseek-v4-flash` and `deepseek-v4-pro`. Its report records
 `crossFamilyFailoverVerified: false`, marks Anthropic and Google as unverified,
 and cannot be represented as equivalent to the standard profile.
-The quality report must contain exactly three deterministic runs covering all
-four corpus modes.
+The command runs the Discussion-quality corpus automatically: four modes,
+three repeats each. Set `SMOKE_QUALITY_REPORT_PATH` only to evaluate an
+operator-produced report instead; that report must contain exactly three
+deterministic runs covering all four corpus modes.
 
 The standard profile requires explicit targets and a fallback covering both the
 OpenAI-compatible and Anthropic families:
@@ -105,7 +106,6 @@ SMOKE_PRIMARY_API_KEY=... \
 SMOKE_FALLBACK_PROVIDER=anthropic \
 SMOKE_FALLBACK_MODEL=claude-3-5-haiku \
 SMOKE_FALLBACK_API_KEY=... \
-SMOKE_QUALITY_REPORT_PATH=.data/discussion-quality.json \
 SMOKE_EVIDENCE_LINK=artifact://release-gate/42 \
 npm run verify:release-gate
 ```

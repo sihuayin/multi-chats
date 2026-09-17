@@ -162,20 +162,23 @@ describe("real-provider release gate", () => {
     });
   });
 
-  it("requires evidence and quality-report controls when enabled", () => {
+  it("requires evidence and can run quality without a prebuilt report", () => {
     expect(() =>
       resolveReleaseGateConfig({
         PROVIDER_SMOKE: "1",
         DEEPSEEK_API_KEY: "deepseek-key"
       })
     ).toThrow(/SMOKE_EVIDENCE_LINK/);
-    expect(() =>
+    expect(
       resolveReleaseGateConfig({
         PROVIDER_SMOKE: "1",
         DEEPSEEK_API_KEY: "deepseek-key",
         SMOKE_EVIDENCE_LINK: "artifact://release-gate/network"
       })
-    ).toThrow(/SMOKE_QUALITY_REPORT_PATH/);
+    ).toMatchObject({
+      enabled: true,
+      profile: "network_constrained"
+    });
   });
 
   it("marks network-constrained coverage as non-equivalent and explicit", async () => {

@@ -24,7 +24,7 @@ export type ReleaseGateConfig =
       enabled: true;
       profile: ReleaseGateProfile;
       providerEnvironment: ProviderSmokeEnvironment;
-      qualityReportPath: string;
+      qualityReportPath?: string;
       evidenceLink: string;
     };
 
@@ -101,11 +101,6 @@ export function resolveReleaseGateConfig(
     throw new Error("SMOKE_EVIDENCE_LINK is required for release evidence.");
   }
   const qualityReportPath = env.SMOKE_QUALITY_REPORT_PATH?.trim();
-  if (!qualityReportPath) {
-    throw new Error(
-      "SMOKE_QUALITY_REPORT_PATH is required to evaluate the Discussion-quality gate."
-    );
-  }
   if (selected === "standard") {
     return {
       enabled: true,
@@ -115,7 +110,7 @@ export function resolveReleaseGateConfig(
         SMOKE_COVERAGE_PROFILE: "standard",
         SMOKE_EVIDENCE_LINK: evidenceLink
       },
-      qualityReportPath,
+      ...(qualityReportPath ? { qualityReportPath } : {}),
       evidenceLink
     };
   }
@@ -153,7 +148,7 @@ export function resolveReleaseGateConfig(
           : {}),
       SMOKE_EVIDENCE_LINK: evidenceLink
     },
-    qualityReportPath,
+    ...(qualityReportPath ? { qualityReportPath } : {}),
     evidenceLink
   };
 }

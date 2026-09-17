@@ -2,12 +2,17 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { evaluateDiscussionQualityReport } from "@/server/application/discussion-quality";
+import { runDiscussionQualityCorpusAgainstProviders } from "@/server/application/discussion-quality-runner";
+import { resolveProviderSmokeConfig } from "@/server/application/provider-smoke";
 import {
   buildReleaseGateReport,
   resolveReleaseGateConfig,
   validateReleaseGateReport
 } from "@/server/application/release-gate";
 import { verifyProviderSmokeMatrix } from "@/server/application/provider-smoke-verification";
+import { createModelGateway } from "@/server/adapters/model/model-gateway";
+import { resolveModelContext } from "@/server/adapters/model/provider-registry";
+import { createCredentialCipher } from "@/server/security/credential-cipher";
 
 function loadEnvironmentFiles(): void {
   for (const path of [
@@ -63,12 +68,31 @@ async function main(): Promise<void> {
   if (smoke.status === "skipped" || !smoke.report) {
     throw new Error(smoke.message);
   }
-  const qualityReport = JSON.parse(
-    await readFile(config.qualityReportPath, "utf8")
-  );
-  const quality = evaluateDiscussionQualityReport(qualityReport, {
-    requireReleaseRepeatCount: true
-  });
+  const quality = config.qualityReportPath
+    ? evaluateDiscussionQualityReport(
+        JSON.parse(await readFile(config.qualityReportPath, "utf8")),
+        { requireReleaseRepeatCount: true }
+      )
+    : await (async () => {
+        const providerConfig = resolveProviderSmokeConfig(
+          config.providerEnvironment
+        );
+        if (!providerConfig.enabled) {
+          throw new Error("Provider configuration is required for quality corpus.");
+        }
+        const qualityReport = await runDiscussionQualityCorpusAgainstProviders(
+          providerConfig,
+          {
+            gateway: createModelGateway(),
+            cipher: createCredentialCipher(),
+            modelContext: ({ provider, modelId }) =>
+              resolveModelContext(provider, modelId)
+          }
+        );
+        return evaluateDiscussionQualityReport(qualityReport, {
+          requireReleaseRepeatCount: true
+        });
+      })();
   const report = buildReleaseGateReport({
     profile: config.profile,
     smoke: smoke.report,
