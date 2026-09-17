@@ -185,7 +185,13 @@ export async function runDiscussionQualityCorpusAgainstProviders(
     dependencies.cipher,
     dependencies.gateway,
     {
-      modelContext: dependencies.modelContext,
+      modelContext: (input) => {
+        const context = dependencies.modelContext(input);
+        return {
+          ...context,
+          maxOutputTokens: Math.min(context.maxOutputTokens, 1_500)
+        };
+      },
       providerTimeoutMs: config.limits.timeoutMs
     }
   );
