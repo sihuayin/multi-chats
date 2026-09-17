@@ -574,7 +574,7 @@ describe("Discussion HTTP contract", () => {
     });
   });
 
-  it("exposes evidence validation failures through the Discussion API", async () => {
+  it("exposes evidence validation failures and repairs through the Discussion API", async () => {
     const store = new MemoryStore(createFixtureState());
     setStoreForTests(store);
     process.env.DATABASE_URL = "postgres://discussion-contract";
@@ -639,7 +639,7 @@ describe("Discussion HTTP contract", () => {
     const failedView = await response.json();
     expect(failedView).toMatchObject({
       evidence: {
-        validationFailureCount: 2
+        validationFailureCount: 4
       }
     });
     const roundResponse = await handleApiRequest(
@@ -654,7 +654,7 @@ describe("Discussion HTTP contract", () => {
       ]
     );
     expect(await roundResponse.json()).toMatchObject({
-      run: { errorCode: "discussion_evidence_invalid" }
+      run: { status: "completed" }
     });
 
     const events = await handleApiRequest(

@@ -6,6 +6,7 @@ import type {
   EvidenceReference,
   EvidenceReferenceKind
 } from "@/server/domain/types";
+import type { DiscussionBriefV2 } from "@/server/application/discussion-brief";
 
 export const DISCUSSION_EVIDENCE_INVALID_CODE =
   "discussion_evidence_invalid";
@@ -288,6 +289,135 @@ export function validateDiscussionTurnEvidence(
         (claim) => (claim.evidenceIds?.length ?? 0) > 0
       ).length
     }
+  };
+}
+
+export function repairDiscussionTurnEvidence(
+  state: AppState,
+  discussion: Discussion,
+  payload: DiscussionTurnPayload,
+  now = new Date().toISOString()
+): {
+  payload: DiscussionTurnPayload;
+  references: EvidenceReference[];
+  coverage: {
+    claimCount: number;
+    claimsWithEvidence: number;
+  };
+  downgradedClaims: number;
+  removedEvidenceIds: number;
+} {
+  const references = new Map<string, EvidenceReference>();
+  let downgradedClaims = 0;
+  let removedEvidenceIds = 0;
+  const claims = payload.claims.map((claim) => {
+    const originalIds = [...new Set(claim.evidenceIds ?? [])];
+    const validIds: string[] = [];
+    for (const alias of originalIds) {
+      try {
+        const resolved = resolveEvidence(state, discussion, alias, now);
+        references.set(resolved.reference.id, resolved.reference);
+        validIds.push(alias);
+      } catch {
+        removedEvidenceIds += 1;
+      }
+    }
+    const kind = claim.kind ?? "inference";
+    const repairedKind =
+      kind === "fact" && validIds.length === 0 ? "inference" : kind;
+    if (repairedKind !== kind) downgradedClaims += 1;
+    return {
+      ...claim,
+      kind: repairedKind,
+      ...(validIds.length > 0 ? { evidenceIds: validIds } : { evidenceIds: [] })
+    };
+  });
+  return {
+    payload: { ...payload, claims },
+    references: [...references.values()],
+    coverage: {
+      claimCount: claims.length,
+      claimsWithEvidence: claims.filter(
+        (claim) => (claim.evidenceIds?.length ?? 0) > 0
+      ).length
+    },
+    downgradedClaims,
+    removedEvidenceIds
+  };
+}
+
+export function repairDiscussionBriefEvidence(
+  state: AppState,
+  discussion: Discussion,
+  brief: DiscussionBriefV2,
+  now = new Date().toISOString()
+): {
+  brief: DiscussionBriefV2;
+  references: EvidenceReference[];
+  removedFacts: number;
+  restoredFacts: number;
+} {
+  const references = new Map<string, EvidenceReference>();
+  const originalFactCount = brief.facts.length;
+  const facts = brief.facts.flatMap((fact) => {
+    const evidenceIds: string[] = [];
+    for (const alias of fact.evidenceIds) {
+      try {
+        if (alias.startsWith("turn:")) {
+          const turn = discussion.rounds
+            .flatMap((round) => round.turns)
+            .find((item) => item.id === alias.slice("turn:".length));
+          const supported = turn?.payload?.claims.some(
+            (claim) =>
+              claim.kind === "fact" &&
+              (claim.evidenceIds?.length ?? 0) > 0
+          );
+          if (!supported) throw new Error("Unsupported Brief fact");
+        }
+        const resolved = resolveEvidence(state, discussion, alias, now);
+        references.set(resolved.reference.id, resolved.reference);
+        evidenceIds.push(alias);
+      } catch {
+        continue;
+      }
+    }
+    return evidenceIds.length > 0
+      ? [{ ...fact, evidenceIds }]
+      : [];
+  });
+
+  let restoredFacts = 0;
+  if (facts.length === 0) {
+    const supported = discussion.rounds
+      .filter((round) => round.phase === "positions")
+      .flatMap((round) => round.turns)
+      .filter((turn) => turn.status === "completed" && turn.payload)
+      .flatMap((turn) => turn.payload?.claims ?? [])
+      .filter(
+        (claim) =>
+          claim.kind === "fact" &&
+          (claim.evidenceIds?.length ?? 0) > 0
+      );
+    const seen = new Set<string>();
+    for (const claim of supported) {
+      const key = claim.statement.trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      facts.push({
+        statement: claim.statement,
+        kind: "fact",
+        evidenceIds: [...new Set(claim.evidenceIds ?? [])]
+      });
+      restoredFacts += 1;
+      if (facts.length >= 5) break;
+    }
+  }
+
+  return {
+    brief: { ...brief, facts },
+    references: [...references.values()],
+    removedFacts: originalFactCount - (facts.length - restoredFacts),
+    restoredFacts
   };
 }
 

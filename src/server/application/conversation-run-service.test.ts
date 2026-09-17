@@ -1337,7 +1337,7 @@ describe("ConversationRun", () => {
     );
   });
 
-  it("fails with a stable evidence error after one regeneration", async () => {
+  it("downgrades unresolved evidence after regeneration and completes", async () => {
     const state = createFixtureState();
     const { discussion, round } = addFixturePhase(state);
     const store = new MemoryStore(state);
@@ -1367,50 +1367,47 @@ describe("ConversationRun", () => {
       }
     );
 
-    const failed = await runs.processRun(started.run.id);
+    const completed = await runs.processRun(started.run.id);
 
-    expect(failed).toMatchObject({
-      status: "failed",
-      errorCode: "discussion_evidence_invalid"
-    });
+    expect(completed.status).toBe("completed");
     const attempts = await store.read((current) =>
       current.providerAttempts.filter(
         (attempt) => attempt.runId === started.run.id
       )
     );
-    expect(attempts).toMatchObject([
-      {
-        status: "failed",
-        errorKind: "malformed_output",
-        errorCode: "discussion_evidence_invalid"
-      },
-      {
-        status: "failed",
-        errorKind: "malformed_output",
-        errorCode: "discussion_evidence_invalid"
-      }
+    expect(attempts.map((attempt) => attempt.status)).toEqual([
+      "failed",
+      "succeeded",
+      "failed",
+      "succeeded"
     ]);
+    const persisted = await store.read((current) => ({
+      turn: current.discussions
+        .find((item) => item.id === discussion.id)
+        ?.rounds.find((item) => item.id === round.id)
+        ?.turns[0],
+      events: current.runEvents
+        .filter((event) => event.runId === started.run.id)
+        .map((event) => event.type)
+    }));
+    expect(persisted.turn?.payload?.claims[0]).toMatchObject({
+      kind: "inference",
+      evidenceIds: []
+    });
+    expect(persisted.events).toEqual(
+      expect.arrayContaining([
+        "evidence_validation_failed",
+        "evidence_validated"
+      ])
+    );
     expect(
       await store.read((current) =>
-        current.runEvents
-          .filter((event) => event.runId === started.run.id)
-          .map((event) => event.type)
-      )
-    ).toContain("evidence_validation_failed");
-    expect(
-      await store.read((current) =>
-        current.runEvents.find(
+        current.runEvents.some(
           (event) =>
-            event.runId === started.run.id &&
-            event.type === "run_error"
+            event.runId === started.run.id && event.type === "run_error"
         )
       )
-    ).toMatchObject({
-      payload: {
-        reason: "evidence_validation_failed",
-        errorCode: "discussion_evidence_invalid"
-      }
-    });
+    ).toBe(false);
   });
 
   it("aggregates attempt usage in the Discussion view", async () => {

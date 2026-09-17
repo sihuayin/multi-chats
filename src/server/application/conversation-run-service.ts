@@ -24,7 +24,10 @@ import type {
 } from "@/server/application/model-gateway";
 import { validateDiscussionParticipants } from "@/server/application/discussion-domain";
 import { appendDiscussionEvent } from "@/server/application/discussion-ledger";
-import { parseDiscussionBrief } from "@/server/application/discussion-brief";
+import {
+  parseDiscussionBrief,
+  type DiscussionBriefV2
+} from "@/server/application/discussion-brief";
 import {
   buildExtractiveDigest,
   compressionMatches,
@@ -37,6 +40,8 @@ import {
   DiscussionEvidenceError,
   DISCUSSION_EVIDENCE_INVALID_CODE,
   evidenceReferenceId,
+  repairDiscussionBriefEvidence,
+  repairDiscussionTurnEvidence,
   validateDiscussionBriefEvidence,
   validateDiscussionTurnEvidence
 } from "@/server/application/discussion-evidence";
@@ -2629,6 +2634,8 @@ export class ConversationRunService {
     let finalText = "";
     let completed = false;
     let validatedPayload: DiscussionTurnPayload | undefined;
+    let parsedPayloadForRepair: DiscussionTurnPayload | undefined;
+    let parsedBriefForRepair: DiscussionBriefV2 | undefined;
     let retryCorrection: string | undefined;
     const purpose =
       context.phaseContext?.phase === "synthesis"
@@ -2900,6 +2907,9 @@ export class ConversationRunService {
             try {
               if (context.phaseContext.phase === "synthesis") {
                 const brief = parseDiscussionBrief(finalText);
+                if (brief.schemaVersion === 2) {
+                  parsedBriefForRepair = brief;
+                }
                 if (
                   brief.promptProfileVersion !==
                     context.phaseContext.plan.promptProfileVersion ||
@@ -2966,6 +2976,7 @@ export class ConversationRunService {
                   finalText,
                   context.phaseContext.phase
                 );
+                parsedPayloadForRepair = payload;
                 const validation = await this.store.read((state) => {
                   const discussion = state.discussions.find(
                     (item) =>
@@ -3052,30 +3063,142 @@ export class ConversationRunService {
                   }
                 }
               });
-              retryCorrection = [
-                `The previous ${context.phaseContext.phase === "synthesis" ? "Discussion Brief" : "Discussion Turn"} was rejected: ${
-                  error instanceof Error
-                    ? error.message
-                    : "Provider output was invalid"
-                }.`,
-                evidenceError
-                  ? "Return a new response and copy evidence IDs exactly from the supplied Available evidence IDs list. Never invent or modify an ID. If a claim cannot be supported by that list, use kind inference, opinion, or assumption instead of fact."
-                  : `Return only valid JSON matching the required ${context.phaseContext.phase} schema, with no markdown fences or extra text.`,
-                context.phaseContext.phase === "synthesis"
-                  ? "Every facts[].evidenceIds value must exist in the supplied evidence catalog, and turn:<id> references must identify completed Position Turns."
-                  : "Every fact claim must cite exact evidence IDs from the supplied evidence catalog."
-              ].join(" ");
-              attemptLimit = Math.min(attemptLimit, 2);
-              throw new ProviderReliabilityError({
-                kind: "malformed_output",
-                code: evidenceError
-                  ? DISCUSSION_EVIDENCE_INVALID_CODE
-                  : "provider_malformed_output",
-                message:
-                  error instanceof Error
-                    ? error.message
-                    : "Provider output was invalid"
-              });
+              let repaired = false;
+              if (
+                evidenceError &&
+                targetAttempt >= Math.min(maxProviderAttempts, 2)
+              ) {
+                const snapshot = await this.store.read((state) => state);
+                const discussion = snapshot.discussions.find(
+                  (item) => item.id === context.phaseContext?.discussionId
+                );
+                if (discussion) {
+                  if (
+                    context.phaseContext.phase === "synthesis" &&
+                    parsedBriefForRepair
+                  ) {
+                    const repair = repairDiscussionBriefEvidence(
+                      snapshot,
+                      discussion,
+                      parsedBriefForRepair
+                    );
+                    finalText = JSON.stringify(repair.brief);
+                    await this.store.update((state) => {
+                      const run = state.runs.find((item) => item.id === runId);
+                      const currentDiscussion = state.discussions.find(
+                        (item) =>
+                          item.id === context.phaseContext?.discussionId
+                      );
+                      if (!run || !currentDiscussion) return;
+                      for (const reference of repair.references) {
+                        if (
+                          !state.evidenceReferences.some(
+                            (item) => item.id === reference.id
+                          )
+                        ) {
+                          state.evidenceReferences.push(reference);
+                        }
+                      }
+                      const payload = {
+                        runId,
+                        discussionTurnId: context.phaseContext?.turnId,
+                        evidenceIds: repair.references.map(
+                          (item) => item.id
+                        ),
+                        repaired: true,
+                        removedFacts: repair.removedFacts,
+                        restoredFacts: repair.restoredFacts
+                      };
+                      appendEvent(
+                        state,
+                        run,
+                        "evidence_validated",
+                        payload
+                      );
+                      appendDiscussionEvent(
+                        currentDiscussion,
+                        "evidence_validated",
+                        payload
+                      );
+                    });
+                    repaired = true;
+                  } else if (parsedPayloadForRepair) {
+                    const repair = repairDiscussionTurnEvidence(
+                      snapshot,
+                      discussion,
+                      parsedPayloadForRepair
+                    );
+                    validatedPayload = repair.payload;
+                    finalText = JSON.stringify(repair.payload);
+                    await this.store.update((state) => {
+                      const run = state.runs.find((item) => item.id === runId);
+                      const currentDiscussion = state.discussions.find(
+                        (item) =>
+                          item.id === context.phaseContext?.discussionId
+                      );
+                      if (!run || !currentDiscussion) return;
+                      for (const reference of repair.references) {
+                        if (
+                          !state.evidenceReferences.some(
+                            (item) => item.id === reference.id
+                          )
+                        ) {
+                          state.evidenceReferences.push(reference);
+                        }
+                      }
+                      const payload = {
+                        runId,
+                        discussionTurnId: context.phaseContext?.turnId,
+                        evidenceIds: repair.references.map(
+                          (item) => item.id
+                        ),
+                        coverage: repair.coverage,
+                        repaired: true,
+                        downgradedClaims: repair.downgradedClaims,
+                        removedEvidenceIds: repair.removedEvidenceIds
+                      };
+                      appendEvent(
+                        state,
+                        run,
+                        "evidence_validated",
+                        payload
+                      );
+                      appendDiscussionEvent(
+                        currentDiscussion,
+                        "evidence_validated",
+                        payload
+                      );
+                    });
+                    repaired = true;
+                  }
+                }
+              }
+              if (!repaired) {
+                retryCorrection = [
+                  `The previous ${context.phaseContext.phase === "synthesis" ? "Discussion Brief" : "Discussion Turn"} was rejected: ${
+                    error instanceof Error
+                      ? error.message
+                      : "Provider output was invalid"
+                  }.`,
+                  evidenceError
+                    ? "Return a new response and copy evidence IDs exactly from the supplied Available evidence IDs list. Never invent or modify an ID. If a claim cannot be supported by that list, use kind inference, opinion, or assumption instead of fact."
+                    : `Return only valid JSON matching the required ${context.phaseContext.phase} schema, with no markdown fences or extra text.`,
+                  context.phaseContext.phase === "synthesis"
+                    ? "Every facts[].evidenceIds value must exist in the supplied evidence catalog, and turn:<id> references must identify completed Position Turns."
+                    : "Every fact claim must cite exact evidence IDs from the supplied evidence catalog."
+                ].join(" ");
+                attemptLimit = Math.min(attemptLimit, 2);
+                throw new ProviderReliabilityError({
+                  kind: "malformed_output",
+                  code: evidenceError
+                    ? DISCUSSION_EVIDENCE_INVALID_CODE
+                    : "provider_malformed_output",
+                  message:
+                    error instanceof Error
+                      ? error.message
+                      : "Provider output was invalid"
+                });
+              }
             }
           }
           await this.finalizeProviderAttempt({

@@ -2,13 +2,17 @@ import { describe, expect, it } from "vitest";
 import {
   DiscussionEvidenceError,
   evidenceAlias,
+  repairDiscussionBriefEvidence,
+  repairDiscussionTurnEvidence,
   validateDiscussionTurnEvidence
 } from "@/server/application/discussion-evidence";
 import {
+  createFixtureBrief,
   createFixtureDiscussion,
   createFixtureState
 } from "@/server/test-support/fixtures";
 import type { DiscussionTurnPayload } from "@/server/domain/types";
+import type { DiscussionBriefV2 } from "@/server/application/discussion-brief";
 
 function fixture() {
   const state = createFixtureState();
@@ -174,5 +178,64 @@ describe("Discussion evidence", () => {
         payload(["message:outside"])
       )
     ).toThrow("outside the Discussion");
+  });
+
+  it("repairs invalid Turn evidence by removing references and downgrading facts", () => {
+    const value = fixture();
+    const repaired = repairDiscussionTurnEvidence(
+      value.state,
+      value.discussion,
+      payload(["message:outside"])
+    );
+
+    expect(repaired.payload.claims[0]).toMatchObject({
+      kind: "inference",
+      evidenceIds: []
+    });
+    expect(repaired).toMatchObject({
+      downgradedClaims: 1,
+      removedEvidenceIds: 1
+    });
+  });
+
+  it("repairs an unsupported Brief fact from grounded Position claims", () => {
+    const value = fixture();
+    value.turn.payload!.claims[0] = {
+      ...value.turn.payload!.claims[0],
+      kind: "fact",
+      evidenceIds: ["external:https://example.com/supported"]
+    };
+    const fixtureBrief = createFixtureBrief(value.discussion.id);
+    if (fixtureBrief.schemaVersion !== 2) {
+      throw new Error("Fixture Brief must use schema v2");
+    }
+    const brief: DiscussionBriefV2 = {
+      ...fixtureBrief,
+      facts: [
+        {
+          statement: "Unsupported Brief fact.",
+          kind: "fact" as const,
+          evidenceIds: ["message:outside"]
+        }
+      ]
+    };
+
+    const repaired = repairDiscussionBriefEvidence(
+      value.state,
+      value.discussion,
+      brief
+    );
+
+    expect(repaired).toMatchObject({
+      removedFacts: 1,
+      restoredFacts: 1
+    });
+    expect(repaired.brief.facts).toEqual([
+      {
+        statement: "Use the existing state document.",
+        kind: "fact",
+        evidenceIds: ["external:https://example.com/supported"]
+      }
+    ]);
   });
 });
