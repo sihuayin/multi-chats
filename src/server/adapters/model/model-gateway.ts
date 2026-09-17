@@ -304,6 +304,7 @@ export class PiModelGateway implements ModelGateway {
     const queue: ModelEvent[] = [];
     let wake: (() => void) | undefined;
     let finished = false;
+    let aborted = false;
     let finalText = "";
     let providerAttempt = 0;
     let finalAssistantMessage: AssistantMessage | undefined;
@@ -515,7 +516,13 @@ export class PiModelGateway implements ModelGateway {
         wake = undefined;
       }
     });
-    const abortAgent = () => agent.abort();
+    const abortAgent = () => {
+      aborted = true;
+      finished = true;
+      agent.abort();
+      wake?.();
+      wake = undefined;
+    };
     request.signal?.addEventListener("abort", abortAgent, { once: true });
     if (request.signal?.aborted) agent.abort();
 
@@ -556,7 +563,7 @@ export class PiModelGateway implements ModelGateway {
           yield queue.shift() as ModelEvent;
         }
       }
-      await runPromise;
+      if (!aborted) await runPromise;
     } finally {
       request.signal?.removeEventListener("abort", abortAgent);
       unsubscribe();
