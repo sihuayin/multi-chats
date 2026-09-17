@@ -103,7 +103,7 @@ function quality(
       gateFailures: passed ? [] : ["briefFidelity mean is below 0.8"]
     },
     contractVersions: {
-      promptProfiles: ["discussion-prompts.v3"],
+      promptProfiles: ["discussion-prompts.v4"],
       briefSchemas: [2],
       compressionSchemas: [1],
       evidenceProtocols: ["discussion-evidence.v1"]

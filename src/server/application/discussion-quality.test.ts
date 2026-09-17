@@ -165,6 +165,30 @@ describe("Discussion quality evaluation", () => {
     expect(result.scores.briefFidelity).toBe(1);
   });
 
+  it("scores Brief fidelity through Position evidence provenance instead of exact prose", () => {
+    const input = sample();
+    if (!input.brief || input.brief.schemaVersion !== 2) {
+      throw new Error("Fixture Brief must use schema v2");
+    }
+    input.brief.facts[0].statement =
+      "A paraphrased statement grounded by the same evidence.";
+
+    const grounded = evaluateDiscussionQuality(input);
+    expect(grounded.scores.briefFidelity).toBe(1);
+    expect(grounded.hardFailures.map((failure) => failure.code)).not.toContain(
+      "brief_fidelity_regression"
+    );
+
+    input.brief.facts[0].evidenceIds = [
+      "external:https://example.com/not-used-by-a-position"
+    ];
+    const ungrounded = evaluateDiscussionQuality(input);
+    expect(ungrounded.scores.briefFidelity).toBe(0.8);
+    expect(ungrounded.hardFailures.map((failure) => failure.code)).toContain(
+      "brief_fidelity_regression"
+    );
+  });
+
   it("reports unsupported facts and missing synthesis as hard regressions", () => {
     const input = sample();
     input.brief = undefined;

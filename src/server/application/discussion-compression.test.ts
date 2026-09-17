@@ -23,7 +23,7 @@ describe("Discussion compression", () => {
       unresolvedQuestions: [],
       minorityPositions: [],
       schemaVersion: 1,
-      promptProfileVersion: "discussion-prompts.v3",
+      promptProfileVersion: "discussion-prompts.v4",
       compressionProfileVersion: "discussion-compression.v1",
       contentHash: "content",
       sourceSpanHash: first.sourceSpanHash,

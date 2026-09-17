@@ -2629,6 +2629,7 @@ export class ConversationRunService {
     let finalText = "";
     let completed = false;
     let validatedPayload: DiscussionTurnPayload | undefined;
+    let retryCorrection: string | undefined;
     const purpose =
       context.phaseContext?.phase === "synthesis"
         ? "discussion_synthesis"
@@ -2759,6 +2760,19 @@ export class ConversationRunService {
             signal,
             attemptController.signal
           ]);
+          const retryMessage =
+            retryCorrection && context.phaseContext
+              ? {
+                  id: `retry-correction-${attempt}`,
+                  role: "user" as const,
+                  content: retryCorrection,
+                  kind: "conversation" as const,
+                  discussionId: context.phaseContext.discussionId,
+                  roundId: context.phaseContext.roundId,
+                  turnId: context.phaseContext.turnId,
+                  phase: context.phaseContext.phase
+                }
+              : undefined;
           const stream = this.gateway.run({
             provider: target.provider,
             credential: this.cipher.decrypt(target.encryptedCredential),
@@ -2767,8 +2781,16 @@ export class ConversationRunService {
             purpose,
             maxOutputTokens: compatibility.maxOutputTokens,
             systemPrompt: context.systemPrompt,
-            prompt: context.prompt,
-            messages: context.phaseContext?.plan.messages,
+            prompt:
+              retryCorrection && !context.phaseContext
+                ? `${context.prompt}\n\nRetry correction:\n${retryCorrection}`
+                : context.prompt,
+            messages: context.phaseContext
+              ? [
+                  ...context.phaseContext.plan.messages,
+                  ...(retryMessage ? [retryMessage] : [])
+                ]
+              : undefined,
             tools: modelTools,
             signal: attemptSignal
           })[Symbol.asyncIterator]();
@@ -3030,6 +3052,19 @@ export class ConversationRunService {
                   }
                 }
               });
+              retryCorrection = [
+                `The previous ${context.phaseContext.phase === "synthesis" ? "Discussion Brief" : "Discussion Turn"} was rejected: ${
+                  error instanceof Error
+                    ? error.message
+                    : "Provider output was invalid"
+                }.`,
+                evidenceError
+                  ? "Return a new response and copy evidence IDs exactly from the supplied Available evidence IDs list. Never invent or modify an ID. If a claim cannot be supported by that list, use kind inference, opinion, or assumption instead of fact."
+                  : `Return only valid JSON matching the required ${context.phaseContext.phase} schema, with no markdown fences or extra text.`,
+                context.phaseContext.phase === "synthesis"
+                  ? "Every facts[].evidenceIds value must exist in the supplied evidence catalog, and turn:<id> references must identify completed Position Turns."
+                  : "Every fact claim must cite exact evidence IDs from the supplied evidence catalog."
+              ].join(" ");
               attemptLimit = Math.min(attemptLimit, 2);
               throw new ProviderReliabilityError({
                 kind: "malformed_output",

@@ -102,10 +102,19 @@ function messageTokenCount(
 function historyFor(
   state: AppState,
   discussion: Discussion,
-  currentTurnId: string
+  currentTurnId: string,
+  currentRound: DiscussionRound
 ): HistoryItem[] {
   const items: HistoryItem[] = [];
   for (const round of discussion.rounds) {
+    // Initial Positions must be independent. Cross-response and synthesis
+    // phases still receive the completed Turns used to advance the Discussion.
+    if (
+      round.id === currentRound.id &&
+      currentRound.phase === "positions"
+    ) {
+      continue;
+    }
     const turnsByEmployee = new Map<string, DiscussionTurn>();
     for (const turn of round.turns) {
       if (
@@ -432,14 +441,46 @@ export function planDiscussionContext(input: {
     participantId: input.participant.id,
     phase: input.round.phase
   });
+  const evidence = availableEvidence(input.state, input.discussion);
+  const currentPositionTurnIds = new Set(
+    input.round.phase === "positions"
+      ? input.round.turns.map((turn) => turn.id)
+      : []
+  );
+  const visibleEvidence =
+    input.round.phase === "positions"
+      ? evidence.filter((item) => {
+          const separator = item.id.indexOf(":");
+          const kind = separator > 0 ? item.id.slice(0, separator) : "";
+          const sourceId =
+            separator > 0 ? item.id.slice(separator + 1) : item.id;
+          if (kind === "turn" && currentPositionTurnIds.has(sourceId)) {
+            return false;
+          }
+          if (kind === "message") {
+            const message = input.state.messages.find(
+              (candidate) => candidate.id === sourceId
+            );
+            if (
+              message?.id !== input.triggerMessageId &&
+              (message?.runId === input.round.runId ||
+                (message?.discussionTurnId &&
+                  currentPositionTurnIds.has(message.discussionTurnId)))
+            ) {
+              return false;
+            }
+          }
+          return true;
+        })
+      : evidence;
   const evidenceMessage: ModelMessage = {
     ...baseMessage(
       [
         "Available evidence IDs:",
-        ...availableEvidence(input.state, input.discussion).map(
+        ...visibleEvidence.map(
           (item) => `- ${item.id}: ${item.label}`
         ),
-        "External sources may be cited as external:<https URL>."
+        "Concrete external sources may be cited as external:<full HTTPS URL>. The literal placeholder external:<https URL> is not valid evidence."
       ].join("\n")
     ),
     kind: "conversation"
@@ -509,7 +550,8 @@ export function planDiscussionContext(input: {
   const history = historyFor(
     input.state,
     input.discussion,
-    input.currentTurn.id
+    input.currentTurn.id,
+    input.round
   );
   const latestRound = history.at(-1)?.roundNumber;
   const mandatoryHistory = history.filter(

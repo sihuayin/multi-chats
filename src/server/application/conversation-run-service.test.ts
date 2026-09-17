@@ -31,7 +31,8 @@ import type {
 import type {
   AppState,
   Approval,
-  DiscussionRound
+  DiscussionRound,
+  DiscussionRoundPhase
 } from "@/server/domain/types";
 
 describe("ConversationRun", () => {
@@ -422,9 +423,9 @@ describe("ConversationRun", () => {
       {
         modelContext: () => ({
           // Sized so priority retention still overflows (forcing
-          // compression) while the compressed plan fits with the v3
-          // prompt profile's extra convergence guidance.
-          contextWindow: 5_700,
+          // compression) while the compressed plan fits with the v4
+          // prompt profile's additional evidence guidance.
+          contextWindow: 6_500,
           maxOutputTokens: 200
         }),
         sleep: async () => undefined,
@@ -1203,9 +1204,11 @@ describe("ConversationRun", () => {
     const { discussion, round } = addFixturePhase(state);
     const store = new MemoryStore(state);
     let calls = 0;
+    const requests: Array<Parameters<ModelGateway["run"]>[0]> = [];
     const gateway: ModelGateway = {
-      async *run() {
+      async *run(request) {
         calls += 1;
+        requests.push(request);
         const response = createFixtureTurnPayload(
           "cross_response",
           "evidence response"
@@ -1266,6 +1269,12 @@ describe("ConversationRun", () => {
       },
       { attempt: 2, status: "succeeded" }
     ]);
+    expect(requests[1].messages?.at(-1)?.content).toContain(
+      "previous Discussion Turn was rejected"
+    );
+    expect(requests[1].messages?.at(-1)?.content).toContain(
+      "copy evidence IDs exactly"
+    );
     expect(persisted.references).toContainEqual(
       expect.objectContaining({
         kind: "external_source",
@@ -1279,6 +1288,52 @@ describe("ConversationRun", () => {
         "evidence_validation_failed",
         "evidence_validated"
       ])
+    );
+  });
+
+  it("keeps initial Position Turns independent of earlier Participants", async () => {
+    const state = createFixtureState();
+    const { discussion, round } = addFixturePhase(state, "positions");
+    const store = new MemoryStore(state);
+    const expectedResponse = JSON.stringify(
+      createFixtureTurnPayload("positions", "independent position")
+    );
+    const engine = new RecordingModelGateway(() => [expectedResponse]);
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      engine
+    );
+    const started = await runs.startPhaseRun(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        discussionId: discussion.id,
+        roundId: round.id,
+        participantSnapshot: round.participantSnapshot,
+        context: "Establish initial positions.",
+        purpose: "Establish the initial positions."
+      }
+    );
+
+    await runs.processRun(started.run.id);
+
+    const firstTurnId = await store.read((current) => {
+      const currentRound = current.discussions
+        .find((item) => item.id === discussion.id)
+        ?.rounds.find((item) => item.id === round.id);
+      return currentRound?.turns[0]?.id;
+    });
+    expect(firstTurnId).toBeDefined();
+    expect(engine.requests).toHaveLength(2);
+    expect(
+      engine.requests[1].messages?.some(
+        (message) =>
+          message.roundId === round.id &&
+          message.turnId === firstTurnId
+      )
+    ).toBe(false);
+    expect(engine.requests[1].prompt).not.toContain(
+      '"summary":"independent position"'
     );
   });
 
@@ -4097,7 +4152,10 @@ function addApprovalSkill(state: AppState, skillId: string): void {
   state.employees[0].skillIds.push(skillId);
 }
 
-function addFixturePhase(state: AppState) {
+function addFixturePhase(
+  state: AppState,
+  phase: DiscussionRoundPhase = "cross_response"
+) {
   const discussion = createFixtureDiscussion({
     workspaceId: state.workspace.id,
     conversationId: state.conversations[0].id
@@ -4106,7 +4164,7 @@ function addFixturePhase(state: AppState) {
   const round: DiscussionRound = {
     id: `${discussion.id}-round-2`,
     roundNumber: 2,
-    phase: "cross_response",
+    phase,
     status: "pending",
     participantSnapshot: structuredClone(discussion.participants),
     turns: [],

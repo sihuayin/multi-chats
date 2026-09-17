@@ -356,7 +356,7 @@ function evaluateScores(
       message: "Discussion has no resolvable Facilitator Participant."
     });
   }
-  if (roleScore < 1) {
+  if (roleCoverage < 1) {
     failures.push({
       code: "insufficient_roles",
       dimension: "roleDifferentiation",
@@ -444,27 +444,26 @@ function evaluateScores(
       brief.options.some((option) => option.id === brief.recommendation.optionId) &&
       brief.recommendation.optionId.length > 0
   );
-  const sourceStatements = new Set(
-    positions.flatMap((turn) =>
-      (turn.payload?.claims ?? []).map((claim) => claim.statement.toLowerCase())
-    )
+  const positionFactEvidenceIds = new Set(
+    factClaims.flatMap((claim) => claim.evidenceIds ?? [])
   );
-  const briefStatements = new Set(
-    (brief?.facts ?? []).map((fact) => fact.statement.toLowerCase())
+  const briefFacts = brief?.facts ?? [];
+  const groundedBriefFacts = briefFacts.filter((fact) => {
+    const evidenceIds =
+      "evidenceIds" in fact
+        ? fact.evidenceIds ?? []
+        : fact.evidence
+          ? [fact.evidence]
+          : [];
+    return evidenceIds.some((id) => positionFactEvidenceIds.has(id));
+  });
+  const briefSourceCoverage = boundedScore(
+    groundedBriefFacts.length,
+    briefFacts.length
   );
-  const matchingBriefStatements = [...briefStatements].filter((statement) =>
-    [...sourceStatements].some(
-      (source) => source.includes(statement) || statement.includes(source)
-    )
-  );
-  const briefSourceCoverage =
-    sourceStatements.size + briefStatements.size === 0
-      ? 0
-      : (matchingBriefStatements.length * 2) /
-        (sourceStatements.size + briefStatements.size);
   if (
     briefValid &&
-    matchingBriefStatements.length !== briefStatements.size
+    groundedBriefFacts.length !== briefFacts.length
   ) {
     failures.push({
       code: "brief_fidelity_regression",

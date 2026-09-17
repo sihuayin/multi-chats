@@ -17,6 +17,7 @@ import type {
   Task
 } from "@/server/domain/types";
 import type { DiscussionBrief } from "@/server/application/discussion-brief";
+import { DISCUSSION_PROMPT_PROFILE_VERSION } from "@/server/application/discussion-prompts";
 import { AesCredentialCipher } from "@/server/security/credential-cipher";
 import { createInitialState } from "@/server/store/initial-state";
 
@@ -122,7 +123,7 @@ export function createFixtureDiscussion(
     title: "Choose a persistence model",
     mode: "solution",
     language: "en",
-    promptProfileVersion: "discussion-prompts.v3",
+    promptProfileVersion: DISCUSSION_PROMPT_PROFILE_VERSION,
     status: "review",
     facilitatorParticipantId: participants[1].id,
     maxRounds: 3,
@@ -309,7 +310,7 @@ export function createFixtureBrief(
 ): DiscussionBrief {
   return {
     schemaVersion: 2,
-    promptProfileVersion: "discussion-prompts.v3",
+    promptProfileVersion: DISCUSSION_PROMPT_PROFILE_VERSION,
     discussionId,
     mode: "solution",
     title: "Choose a persistence model",
