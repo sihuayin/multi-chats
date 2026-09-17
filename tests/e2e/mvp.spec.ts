@@ -1,7 +1,19 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 test.setTimeout(360_000);
 test.describe.configure({ mode: "serial" });
+
+async function goToLastPage(page: Page, accessibleNamePrefix: string) {
+  const lastPageLink = page
+    .locator(
+      `[data-slot="pagination-link"][aria-label^="${accessibleNamePrefix} "]`
+    )
+    .last();
+  await lastPageLink.waitFor();
+  if ((await lastPageLink.getAttribute("aria-current")) !== "page") {
+    await lastPageLink.click();
+  }
+}
 
 test("configures an Employee Group and completes a mentioned Run", async ({
   page
@@ -18,16 +30,37 @@ test("configures an Employee Group and completes a mentioned Run", async ({
     }
   ]);
   await page.goto("/providers");
+  await page
+    .locator("header")
+    .getByRole("button", { name: "Add provider" })
+    .click();
+  await expect(page.getByRole("dialog")).toBeVisible();
   await page.getByLabel("Label").fill(`Test Provider ${suffix}`);
   await page.getByLabel("API credential").fill("test-key");
   await page.getByRole("button", { name: "Validate and save" }).click();
   await expect(page.getByText("Provider saved.")).toBeVisible();
-  await expect(page.getByLabel("Label")).toHaveValue("");
-  await expect(page.getByLabel("API credential")).toHaveValue("");
+  await expect(page.getByRole("dialog")).toBeHidden();
+  await goToLastPage(page, "Go to page");
   await expect(page.getByText(`Test Provider ${suffix}`)).toBeVisible();
+  const providerRow = page
+    .locator(".provider-table-row")
+    .filter({ hasText: `Test Provider ${suffix}` });
+  await providerRow.getByTitle("Edit provider").click();
+  await page.getByLabel("Label").fill(`Updated Provider ${suffix}`);
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByText("Provider updated.")).toBeVisible();
+  await expect(page.getByRole("dialog")).toBeHidden();
+  await expect(page.getByText(`Updated Provider ${suffix}`)).toBeVisible();
 
   const customSkillName = `Fact Checker ${suffix}`;
   await page.goto("/skills");
+  await page
+    .locator("header")
+    .getByRole("button", { name: "Add Skill" })
+    .click();
+  const skillDialog = page.getByRole("dialog");
+  await expect(skillDialog).toBeVisible();
+  await expect(page.getByLabel("Name")).toHaveValue("");
   await page.getByLabel("Name").fill(customSkillName);
   await page.getByLabel("Description").fill("Checks claims against sources.");
   await page
@@ -37,17 +70,26 @@ test("configures an Employee Group and completes a mentioned Run", async ({
   await page.getByLabel(/Post webhook/).check();
   await page.getByLabel(/Update Task/).check();
   await page.getByLabel(/Attach Artifact/).check();
-  await page.getByRole("button", { name: "Create custom Skill" }).click();
+  await skillDialog
+    .getByRole("button", { name: "Create custom Skill" })
+    .click();
+  await expect(page.getByText("Skill created.")).toBeVisible();
+  await expect(skillDialog).toBeHidden();
+  await goToLastPage(page, "Go to page");
   await expect(page.getByText(customSkillName)).toBeVisible({
     timeout: 15_000
   });
 
-  const skillCard = page.locator(".list-card").filter({ hasText: customSkillName });
+  const skillCard = page.locator(".skill-card").filter({ hasText: customSkillName });
   await skillCard.getByTitle("Edit Skill").click();
+  await expect(skillDialog).toBeVisible();
+  await expect(page.getByLabel("Name")).toHaveValue(customSkillName);
   await page
     .getByLabel("Description")
     .fill("Updated custom Skill description.");
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await skillDialog.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByText("Skill updated.")).toBeVisible();
+  await expect(skillDialog).toBeHidden();
   await expect(skillCard).toContainText("Updated custom Skill description.");
 
   await page.goto("/employees");
@@ -580,10 +622,16 @@ test("shows a redacted diagnostics surface on desktop and mobile", async ({
     }
   ]);
   await page.goto("/providers");
+  await page
+    .locator("header")
+    .getByRole("button", { name: "Add provider" })
+    .click();
+  await expect(page.getByRole("dialog")).toBeVisible();
   await page.getByLabel("Label").fill(`Diagnostics Provider ${suffix}`);
   await page.getByLabel("API credential").fill(credential);
   await page.getByRole("button", { name: "Validate and save" }).click();
   await expect(page.getByText("Provider saved.")).toBeVisible();
+  await expect(page.getByRole("dialog")).toBeHidden();
 
   const workspace = await page.request
     .get("/api/workspace")

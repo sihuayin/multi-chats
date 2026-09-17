@@ -37,15 +37,19 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { data, loading, error } = useWorkspace();
   const { locale, setLocale, t } = useI18n();
+  const isProvidersPage = pathname.startsWith("/providers");
+  const isSkillsPage = pathname.startsWith("/skills");
+  const frameClassName =
+    pathname === "/"
+      ? "app-frame conversation-layout"
+      : isProvidersPage
+        ? "app-frame providers-layout"
+        : isSkillsPage
+          ? "app-frame skills-layout"
+          : "app-frame";
 
   return (
-    <div
-      className={
-        pathname === "/"
-          ? "app-frame conversation-layout"
-          : "app-frame"
-      }
-    >
+    <div className={frameClassName}>
       <aside className="app-sidebar">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">

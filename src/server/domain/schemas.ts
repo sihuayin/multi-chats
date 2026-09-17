@@ -10,6 +10,12 @@ export const providerInputSchema = z.object({
   credential: z.string().trim().min(1)
 });
 
+export const providerUpdateSchema = z.object({
+  provider: providerIdSchema,
+  label: z.string().trim().min(1).max(80),
+  credential: z.string().trim().min(1).optional()
+});
+
 export const employeeInputSchema = z.object({
   name: z.string().trim().min(1).max(80),
   identity: z.string().trim().min(1).max(4000),

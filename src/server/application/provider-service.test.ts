@@ -99,6 +99,41 @@ describe("provider configuration", () => {
     expect(registry.validations).toEqual(["first-key", "second-key"]);
   });
 
+  it("updates metadata without rotating the credential", async () => {
+    const { service, store, cipher, registry } = createService();
+    const created = await service.createProvider({
+      provider: "openai",
+      label: "Primary",
+      credential: "first-key"
+    });
+
+    await service.updateProvider(created.id, {
+      provider: "openai",
+      label: "Renamed"
+    });
+
+    const persisted = store.snapshot().providers[0];
+    expect(persisted.label).toBe("Renamed");
+    expect(cipher.decrypt(persisted.encryptedCredential)).toBe("first-key");
+    expect(registry.validations).toEqual(["first-key"]);
+  });
+
+  it("requires a new credential when changing the Provider", async () => {
+    const { service } = createService();
+    const created = await service.createProvider({
+      provider: "openai",
+      label: "Primary",
+      credential: "first-key"
+    });
+
+    await expect(
+      service.updateProvider(created.id, {
+        provider: "anthropic",
+        label: "Primary"
+      })
+    ).rejects.toThrow("new credential is required");
+  });
+
   it("deletes an unused provider", async () => {
     const { service, store } = createService();
     const created = await service.createProvider({

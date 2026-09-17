@@ -14,6 +14,7 @@ import {
   employeeInputSchema,
   groupInputSchema,
   providerInputSchema,
+  providerUpdateSchema,
   skillInputSchema,
   taskInputSchema,
   taskPatchSchema,
@@ -135,19 +136,35 @@ export class WorkspaceService {
   }
 
   async updateProvider(id: string, input: unknown): Promise<PublicProvider> {
-    const parsed = providerInputSchema.parse(input);
-    await this.providers.validate({
-      provider: parsed.provider,
-      credential: parsed.credential
-    });
+    const parsed = providerUpdateSchema.parse(input);
+    const current = await this.store.read((state) =>
+      state.providers.find((item) => item.id === id)
+    );
+    if (!current) notFound("Provider");
+    if (parsed.provider !== current.provider && !parsed.credential) {
+      throw new ApiError(
+        400,
+        "A new credential is required when changing the Provider",
+        "credential_required"
+      );
+    }
+    if (parsed.credential) {
+      await this.providers.validate({
+        provider: parsed.provider,
+        credential: parsed.credential
+      });
+    }
     return this.store.update((state) => {
       const provider = state.providers.find((item) => item.id === id);
       if (!provider) notFound("Provider");
+      const timestamp = now();
       provider.provider = parsed.provider;
       provider.label = parsed.label;
-      provider.encryptedCredential = this.cipher.encrypt(parsed.credential);
-      provider.lastValidatedAt = now();
-      provider.updatedAt = provider.lastValidatedAt;
+      if (parsed.credential) {
+        provider.encryptedCredential = this.cipher.encrypt(parsed.credential);
+        provider.lastValidatedAt = timestamp;
+      }
+      provider.updatedAt = timestamp;
       state.workspace.updatedAt = provider.updatedAt;
       return publicProvider(provider);
     });
