@@ -100,6 +100,43 @@ import type { StateStore } from "@/server/store/store";
 import { logger } from "@/server/observability/logger";
 import { mentionSlug } from "@/lib/mentions";
 
+function nextWithAbort<T>(
+  iterator: AsyncIterator<T>,
+  signal: AbortSignal
+): Promise<IteratorResult<T>> {
+  if (signal.aborted) {
+    return Promise.reject(new Error("Provider iteration aborted"));
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      signal.removeEventListener("abort", onAbort);
+    };
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      void iterator.return?.().catch(() => undefined);
+      reject(new Error("Provider iteration aborted"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    iterator.next().then(
+      (result) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(result);
+      },
+      (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      }
+    );
+  });
+}
+
 export type StartTurnResult = {
   message: Message;
   run: Run | null;
@@ -1939,7 +1976,7 @@ export class ConversationRunService {
           input.signal,
           attemptController.signal
         ]);
-        for await (const event of this.gateway.run({
+        const stream = this.gateway.run({
           provider: input.target.provider,
           credential: this.cipher.decrypt(
             input.target.encryptedCredential
@@ -1952,34 +1989,51 @@ export class ConversationRunService {
           messages,
           tools: [],
           signal: attemptSignal
-        })) {
-          if (event.type === "text_delta") content += event.delta;
-          if (event.type === "text_completed" && event.text) {
-            content = event.text;
-          }
-          if (event.type === "error") {
-            if (timedOut) {
-              throw new ProviderReliabilityError({
-                kind: "timeout",
-                code: "provider_timeout",
-                message: "Provider request timed out"
-              });
+        })[Symbol.asyncIterator]();
+        try {
+          while (true) {
+            const next = await nextWithAbort(
+              stream,
+              attemptController.signal
+            );
+            if (next.done) break;
+            const event = next.value;
+            if (event.type === "text_delta") content += event.delta;
+            if (event.type === "text_completed" && event.text) {
+              content = event.text;
             }
-            if (input.signal.aborted) {
-              throw new ProviderReliabilityError({
-                kind: "cancelled",
-                code: "provider_cancelled",
-                message: "Run cancelled"
+            if (event.type === "error") {
+              if (timedOut) {
+                throw new ProviderReliabilityError({
+                  kind: "timeout",
+                  code: "provider_timeout",
+                  message: "Provider request timed out"
+                });
+              }
+              if (input.signal.aborted) {
+                throw new ProviderReliabilityError({
+                  kind: "cancelled",
+                  code: "provider_cancelled",
+                  message: "Run cancelled"
+                });
+              }
+              const failure = classifyProviderFailure({
+                message: event.message,
+                kind: event.kind,
+                code: event.code,
+                ambiguous: event.ambiguous,
+                retryAfterMs: event.retryAfterMs,
+                status: event.status
               });
+              await this.recordModelEvent(
+                input.runId,
+                undefined,
+                undefined,
+                attemptId,
+                event
+              );
+              throw new ProviderReliabilityError(failure);
             }
-            const failure = classifyProviderFailure({
-              message: event.message,
-              kind: event.kind,
-              code: event.code,
-              ambiguous: event.ambiguous,
-              retryAfterMs: event.retryAfterMs,
-              status: event.status
-            });
             await this.recordModelEvent(
               input.runId,
               undefined,
@@ -1987,15 +2041,9 @@ export class ConversationRunService {
               attemptId,
               event
             );
-            throw new ProviderReliabilityError(failure);
           }
-          await this.recordModelEvent(
-            input.runId,
-            undefined,
-            undefined,
-            attemptId,
-            event
-          );
+        } finally {
+          void stream.return?.().catch(() => undefined);
         }
         if (input.signal.aborted) {
           throw new ProviderReliabilityError({
@@ -2711,7 +2759,7 @@ export class ConversationRunService {
             signal,
             attemptController.signal
           ]);
-          for await (const event of this.gateway.run({
+          const stream = this.gateway.run({
             provider: target.provider,
             credential: this.cipher.decrypt(target.encryptedCredential),
             modelId: target.modelId,
@@ -2723,81 +2771,94 @@ export class ConversationRunService {
             messages: context.phaseContext?.plan.messages,
             tools: modelTools,
             signal: attemptSignal
-          })) {
-            if (event.type === "provider_attempt_started") {
-              if (providerCallCount > 0) {
-                await this.finalizeProviderAttempt({
-                  runId,
-                  attemptId: currentProviderAttemptId,
-                  status: "succeeded"
-                });
-                currentProviderAttemptId = await this.startProviderAttempt({
-                  runId,
-                  purpose,
-                  provider: target.provider,
-                  modelId: target.modelId,
-                  targetOrder: target.order,
-                  fallbackFromAttemptId:
-                    targetIndex > 0 ? previousFailedAttemptId : undefined,
-                  roundId: context.phaseContext?.roundId,
-                  turnId: context.phaseContext?.turnId
-                });
-              }
-              providerCallCount += 1;
-              continue;
-            }
-            const cancelledByAbort = signal.aborted;
-            if (event.type === "error" && (timedOut || cancelledByAbort)) {
-              if (timedOut) {
-                throw new ProviderReliabilityError({
-                  kind: "timeout",
-                  code: "provider_timeout",
-                  message: "Provider request timed out"
-                });
-              }
-              throw new ProviderReliabilityError({
-                kind: "cancelled",
-                code: "provider_cancelled",
-                message: "Run cancelled"
-              });
-            }
-            const visibleDiscussionDelta =
-              context.phaseContext &&
-              (event.type === "text_delta" ||
-                event.type === "text_completed");
-            if (!visibleDiscussionDelta) {
-              await this.recordModelEvent(
-                runId,
-                message.id,
-                employeeId,
-                currentProviderAttemptId,
-                event
+          })[Symbol.asyncIterator]();
+          try {
+            while (true) {
+              const next = await nextWithAbort(
+                stream,
+                attemptController.signal
               );
+              if (next.done) break;
+              const event = next.value;
+              if (event.type === "provider_attempt_started") {
+                if (providerCallCount > 0) {
+                  await this.finalizeProviderAttempt({
+                    runId,
+                    attemptId: currentProviderAttemptId,
+                    status: "succeeded"
+                  });
+                  currentProviderAttemptId = await this.startProviderAttempt({
+                    runId,
+                    purpose,
+                    provider: target.provider,
+                    modelId: target.modelId,
+                    targetOrder: target.order,
+                    fallbackFromAttemptId:
+                      targetIndex > 0 ? previousFailedAttemptId : undefined,
+                    roundId: context.phaseContext?.roundId,
+                    turnId: context.phaseContext?.turnId
+                  });
+                }
+                providerCallCount += 1;
+                continue;
+              }
+              const cancelledByAbort = signal.aborted;
+              if (event.type === "error" && (timedOut || cancelledByAbort)) {
+                if (timedOut) {
+                  throw new ProviderReliabilityError({
+                    kind: "timeout",
+                    code: "provider_timeout",
+                    message: "Provider request timed out"
+                  });
+                }
+                throw new ProviderReliabilityError({
+                  kind: "cancelled",
+                  code: "provider_cancelled",
+                  message: "Run cancelled"
+                });
+              }
+              const visibleDiscussionDelta =
+                context.phaseContext &&
+                (event.type === "text_delta" ||
+                  event.type === "text_completed");
+              if (!visibleDiscussionDelta) {
+                await this.recordModelEvent(
+                  runId,
+                  message.id,
+                  employeeId,
+                  currentProviderAttemptId,
+                  event
+                );
+              }
+              if (
+                (event.type === "text_delta" ||
+                  event.type === "text_completed") &&
+                !context.phaseContext
+              ) {
+                producedOutput = true;
+              }
+              if (event.type === "tool_started") {
+                producedOutput = true;
+                sideEffectStarted = true;
+              }
+              if (event.type === "text_delta") finalText += event.delta;
+              if (event.type === "text_completed" && event.text) {
+                finalText = event.text;
+              }
+              if (event.type === "error") {
+                gatewayFailure = classifyProviderFailure({
+                  message: event.message,
+                  kind: event.kind,
+                  code: event.code,
+                  ambiguous: event.ambiguous,
+                  retryAfterMs: event.retryAfterMs,
+                  status: event.status
+                });
+                throw new ProviderReliabilityError(gatewayFailure);
+              }
             }
-            if (
-              (event.type === "text_delta" ||
-                event.type === "text_completed") &&
-              !context.phaseContext
-            ) {
-              producedOutput = true;
-            }
-            if (event.type === "tool_started") {
-              producedOutput = true;
-              sideEffectStarted = true;
-            }
-            if (event.type === "text_delta") finalText += event.delta;
-            if (event.type === "text_completed" && event.text) finalText = event.text;
-            if (event.type === "error") {
-              gatewayFailure = classifyProviderFailure({
-                message: event.message,
-                kind: event.kind,
-                code: event.code,
-                ambiguous: event.ambiguous,
-                retryAfterMs: event.retryAfterMs,
-                status: event.status
-              });
-              throw new ProviderReliabilityError(gatewayFailure);
-            }
+          } finally {
+            void stream.return?.().catch(() => undefined);
           }
           if (signal.aborted) {
             throw new ProviderReliabilityError({

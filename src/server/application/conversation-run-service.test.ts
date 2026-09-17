@@ -2789,6 +2789,38 @@ describe("ConversationRun", () => {
     ]);
   });
 
+  it("aborts a Provider iterator that ignores its signal", async () => {
+    const store = new MemoryStoreFixture();
+    const gateway: ModelGateway = {
+      async *run() {
+        await new Promise(() => undefined);
+        yield { type: "text_completed", text: "never" };
+      }
+    };
+    const runService = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway,
+      {
+        maxProviderAttempts: 1,
+        providerTimeoutMs: 20
+      }
+    );
+    const started = await runService.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice ignored timeout" }
+    );
+    const before = Date.now();
+
+    const failed = await runService.processRun(started.run!.id);
+
+    expect(Date.now() - before).toBeLessThan(500);
+    expect(failed).toMatchObject({
+      status: "failed",
+      errorCode: "provider_timeout"
+    });
+  });
+
   it("does not retry after a Tool side effect has started", async () => {
     const state = createFixtureState();
     const fallbackProvider = addFallbackProvider(state);
