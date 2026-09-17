@@ -1942,8 +1942,8 @@ export class ConversationRunService {
       }
     ];
     const maxAttempts = this.options.maxProviderAttempts ?? 3;
-    const deadlineAt =
-      Date.now() + (this.options.providerTimeoutMs ?? 120_000);
+    const providerTimeoutMs = this.options.providerTimeoutMs ?? 120_000;
+    const deadlineAt = Date.now() + providerTimeoutMs;
     const sleep = this.options.sleep;
     let lastAttemptId: string | undefined;
 
@@ -2651,14 +2651,15 @@ export class ConversationRunService {
       1,
       this.options.maxProviderAttempts ?? 3
     );
-    const deadlineAt =
-      Date.now() + (this.options.providerTimeoutMs ?? 120_000);
+    const providerTimeoutMs = this.options.providerTimeoutMs ?? 120_000;
+    let deadlineAt = Date.now() + providerTimeoutMs;
     const sleep = this.options.sleep;
     providerTargetLoop: while (
       targetIndex < context.providerTargets.length &&
       !completed
     ) {
       const target = context.providerTargets[targetIndex]!;
+      deadlineAt = Date.now() + providerTimeoutMs;
       const targetModelContext = this.options.modelContext?.({
         provider: target.provider,
         modelId: target.modelId
@@ -3270,12 +3271,10 @@ export class ConversationRunService {
               hasNextTarget:
                 targetIndex + 1 < context.providerTargets.length,
               producedOutput,
-            sideEffectStarted,
-            cancelled: signal.aborted || failure.kind === "cancelled",
-            ambiguous: failure.ambiguous,
-            deadlineExceeded:
-                decision.reason === "deadline_exceeded" ||
-                failure.code === "provider_deadline_exceeded"
+              sideEffectStarted,
+              cancelled: signal.aborted || failure.kind === "cancelled",
+              ambiguous: failure.ambiguous,
+              deadlineExceeded: false
             });
             if (failover.failover) {
               let nextTargetIndex = targetIndex + 1;
@@ -3290,27 +3289,27 @@ export class ConversationRunService {
                   modelId: candidate.modelId
                 });
                 const candidateCompatibility =
-                providerTargetCompatibility(
-                  candidateContext,
-                  context.phaseContext?.plan,
-                  {
-                    requireCapabilities: true,
-                    inputTokens: context.promptInputTokens,
-                    toolOverheadTokens: context.toolOverheadTokens
-                  }
-                );
+                  providerTargetCompatibility(
+                    candidateContext,
+                    context.phaseContext?.plan,
+                    {
+                      requireCapabilities: true,
+                      inputTokens: context.promptInputTokens,
+                      toolOverheadTokens: context.toolOverheadTokens
+                    }
+                  );
                 if (candidateCompatibility.compatible) {
                   nextTarget = candidate;
                   break;
                 }
-              await this.recordProviderTargetSkipped({
-                runId,
-                target: candidate,
-                reason:
-                  candidateCompatibility.reason ??
-                  "incompatible_target",
-                fromAttemptId: currentProviderAttemptId
-              });
+                await this.recordProviderTargetSkipped({
+                  runId,
+                  target: candidate,
+                  reason:
+                    candidateCompatibility.reason ??
+                    "incompatible_target",
+                  fromAttemptId: currentProviderAttemptId
+                });
                 nextTargetIndex += 1;
               }
               if (!nextTarget) {
@@ -3339,6 +3338,7 @@ export class ConversationRunService {
               });
               targetIndex = nextTargetIndex;
               targetAttempt = 0;
+              deadlineAt = Date.now() + providerTimeoutMs;
               continue providerTargetLoop;
             }
             if (context.phaseContext && finalText) {

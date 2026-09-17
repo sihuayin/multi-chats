@@ -2873,6 +2873,75 @@ describe("ConversationRun", () => {
     });
   });
 
+  it("fails over to a fallback target after the primary times out", async () => {
+    const state = createFixtureState();
+    const fallbackProvider = addFallbackProvider(state);
+    state.employees[0].fallbackTargets = [
+      {
+        providerCredentialId: fallbackProvider.id,
+        modelId: "fallback-model"
+      }
+    ];
+    const store = new MemoryStore(state);
+    const gateway: ModelGateway = {
+      async *run(request) {
+        if (request.modelId === "test-model") {
+          await new Promise<never>((_resolve, reject) => {
+            request.signal?.addEventListener(
+              "abort",
+              () => reject(new Error("primary aborted")),
+              { once: true }
+            );
+          });
+        }
+        yield {
+          type: "text_completed",
+          text: "fallback after timeout"
+        };
+      }
+    };
+    const runService = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      gateway,
+      {
+        maxProviderAttempts: 1,
+        modelContext: fallbackModelContext,
+        providerTimeoutMs: 10,
+        sleep: async () => undefined
+      }
+    );
+    const started = await runService.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice timeout then fallback" }
+    );
+
+    const completed = await runService.processRun(started.run!.id);
+
+    expect(completed.status).toBe("completed");
+    const persisted = await store.read((current) => ({
+      attempts: current.providerAttempts.filter(
+        (attempt) => attempt.runId === started.run!.id
+      ),
+      events: current.runEvents
+        .filter((event) => event.runId === started.run!.id)
+        .map((event) => event.type)
+    }));
+    expect(persisted.attempts).toMatchObject([
+      {
+        modelId: "test-model",
+        status: "failed",
+        errorKind: "timeout",
+        errorCode: "provider_timeout"
+      },
+      {
+        modelId: "fallback-model",
+        status: "succeeded"
+      }
+    ]);
+    expect(persisted.events).toContain("provider_fallback_started");
+  });
+
   it("does not retry after a Tool side effect has started", async () => {
     const state = createFixtureState();
     const fallbackProvider = addFallbackProvider(state);
