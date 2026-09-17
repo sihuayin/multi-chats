@@ -87,6 +87,8 @@ async function seedWorkspace(input: {
 }): Promise<void> {
   const { store, cipher, config, clock } = input;
   const primary = config.targets[0];
+  const fallback = config.targets.find((target) => target.role === "fallback");
+  const fallbackProviderId = "quality-provider-fallback";
   const timestamp = clock();
   await store.update((state) => {
     state.providers.push({
@@ -98,6 +100,17 @@ async function seedWorkspace(input: {
       createdAt: timestamp,
       updatedAt: timestamp
     });
+    if (fallback) {
+      state.providers.push({
+        id: fallbackProviderId,
+        workspaceId: state.workspace.id,
+        provider: fallback.provider,
+        label: `Quality fallback (${fallback.provider})`,
+        encryptedCredential: cipher.encrypt(fallback.credential),
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
+    }
     for (const participant of PARTICIPANTS) {
       state.employees.push({
         id: participant.id,
@@ -106,28 +119,39 @@ async function seedWorkspace(input: {
         identity: `You are the ${participant.role} in a bounded Discussion.`,
         providerCredentialId: PROVIDER_ID,
         modelId: primary.modelId,
+        ...(fallback
+          ? {
+              fallbackTargets: [
+                {
+                  providerCredentialId: fallbackProviderId,
+                  modelId: fallback.modelId
+                }
+              ]
+            }
+          : {}),
         skillIds: [],
         active: true,
         createdAt: timestamp,
         updatedAt: timestamp
       });
     }
-    const pricing: ModelPricing = {
-      id: "quality-pricing",
-      workspaceId: state.workspace.id,
-      provider: primary.provider,
-      modelId: primary.modelId,
-      currency: "USD",
-      inputMicrosPerMillionTokens:
-        config.pricing.inputMicrosPerMillionTokens,
-      outputMicrosPerMillionTokens:
-        config.pricing.outputMicrosPerMillionTokens,
-      effectiveAt: timestamp,
-      source: "discussion_quality",
-      version: "quality-default",
-      createdAt: timestamp
-    };
-    state.modelPricing.push(pricing);
+    state.modelPricing.push(
+      ...[primary, ...(fallback ? [fallback] : [])].map((target) => ({
+        id: `quality-pricing-${target.role}`,
+        workspaceId: state.workspace.id,
+        provider: target.provider,
+        modelId: target.modelId,
+        currency: "USD",
+        inputMicrosPerMillionTokens:
+          config.pricing.inputMicrosPerMillionTokens,
+        outputMicrosPerMillionTokens:
+          config.pricing.outputMicrosPerMillionTokens,
+        effectiveAt: timestamp,
+        source: "discussion_quality",
+        version: "quality-default",
+        createdAt: timestamp
+      })) satisfies ModelPricing[]
+    );
   });
 }
 

@@ -223,6 +223,16 @@ async function seedWorkspace(input: {
         identity: "You are a decisive facilitator.",
         providerCredentialId: providerIdFor("primary"),
         modelId: primary.modelId,
+        ...(fallback
+          ? {
+              fallbackTargets: [
+                {
+                  providerCredentialId: providerIdFor("fallback"),
+                  modelId: fallback.modelId
+                }
+              ]
+            }
+          : {}),
         skillIds: [],
         active: true,
         createdAt: timestamp,
