@@ -131,20 +131,44 @@ async function seedWorkspace(input: {
 async function queuedRunId(
   store: MemoryStore,
   discussionId: string
-): Promise<string> {
-  const runId = await store.read(
+): Promise<string | undefined> {
+  return store.read(
     (state) =>
       state.runs.find(
         (run) =>
           run.discussionId === discussionId && run.status === "queued"
       )?.id
   );
-  if (!runId) throw new Error(`Quality Discussion ${discussionId} has no queued Run`);
-  return runId;
 }
 
 function qualityTitle(mode: DiscussionMode, repeat: number): string {
   return `Discussion quality ${mode} run ${repeat + 1}`;
+}
+
+async function runDiscussionToTerminalState(input: {
+  store: MemoryStore;
+  runs: ConversationRunService;
+  orchestrator: DiscussionOrchestrator;
+  discussionId: string;
+}): Promise<void> {
+  const { store, runs, orchestrator, discussionId } = input;
+  for (let step = 0; step < 10; step += 1) {
+    const runId = await queuedRunId(store, discussionId);
+    if (runId) {
+      const run = await runs.processRun(runId);
+      await orchestrator.advanceDiscussion(discussionId);
+      if (run.status !== "completed") return;
+      continue;
+    }
+
+    const status = await store.read(
+      (state) =>
+        state.discussions.find((item) => item.id === discussionId)?.status
+    );
+    if (status !== "running") return;
+    await orchestrator.advanceDiscussion(discussionId);
+  }
+  throw new Error(`Quality Discussion ${discussionId} did not reach a terminal state`);
 }
 
 function assertWithinCaps(
@@ -243,18 +267,12 @@ export async function runDiscussionQualityCorpusAgainstProviders(
       }
 
       await orchestrator.startDiscussion(view.discussion.id);
-      await runs.processRun(
-        await queuedRunId(store, view.discussion.id)
-      );
-      await orchestrator.advanceDiscussion(view.discussion.id);
-      await runs.processRun(
-        await queuedRunId(store, view.discussion.id)
-      );
-      await orchestrator.advanceDiscussion(view.discussion.id);
-      await runs.processRun(
-        await queuedRunId(store, view.discussion.id)
-      );
-      await orchestrator.advanceDiscussion(view.discussion.id);
+      await runDiscussionToTerminalState({
+        store,
+        runs,
+        orchestrator,
+        discussionId: view.discussion.id
+      });
 
       const snapshot = store.snapshot();
       const discussion = snapshot.discussions.find(
