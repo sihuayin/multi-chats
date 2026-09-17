@@ -75,7 +75,7 @@ export const phaseRunInputSchema = z.object({
     .array(discussionParticipantInputSchema)
     .min(2)
     .max(8),
-  context: z.string().trim().min(1).max(20_000),
+  context: z.string().trim().min(1),
   purpose: z.string().trim().min(1).max(4000)
 }).strict();
 

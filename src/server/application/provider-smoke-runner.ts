@@ -35,8 +35,8 @@ const FACILITATOR_EMPLOYEE_ID = "smoke-employee-facilitator";
 /** Injected failures keep the retry, failover, and cancellation paths deterministic. */
 const INJECTED_FAILURE_CODE = "provider_smoke_fault_injected";
 const STALL_SAFETY_TIMEOUT_MS = 30_000;
-/** Context window small enough to force a Discussion Compression under pressure. */
-const PRESSURED_CONTEXT_WINDOW = 8_000;
+/** Bounded window that forces compression while leaving room for real Provider output. */
+const PRESSURED_CONTEXT_WINDOW = 32_000;
 
 export type ProviderSmokeFaultPlan = {
   retryableFailures: Map<string, { count: number; kind: ProviderFailureKind }>;
@@ -412,7 +412,7 @@ async function usageCaptureScenario(
  * without also inflating the Evidence list or the phase context.
  */
 const PRESSURE_FILLER = "Historical analysis detail. ";
-const PRESSURE_PADDING_REPEATS = 385;
+const PRESSURE_PADDING_REPEATS = 1_600;
 
 /**
  * Grow every completed Turn older than the newest completed Round, so the next
@@ -440,6 +440,10 @@ async function growCompletedTurns(
       for (const turn of round.turns) {
         if (turn.status !== "completed" || !turn.payload) continue;
         turn.payload.assumptions.push(filler);
+        turn.payload.openQuestions = [];
+        if (turn.payload.disagreements) {
+          turn.payload.disagreements = [];
+        }
       }
     }
   });
@@ -464,15 +468,23 @@ async function preparePressuredDiscussion(context: ScenarioContext): Promise<{
   runOutcome: string;
   runErrorCode?: string;
 }> {
-  const { runs, orchestrator, discussion } = await openScenario(
+  const { orchestrator, discussion } = await openScenario(
     context,
     "Provider smoke context pressure",
     4
   );
-  await runs.processRun(
+  const conciseRuns = context.createRuns({
+    modelContext: () => ({
+      contextWindow: 32_000,
+      maxOutputTokens: 512,
+      available: true,
+      supportsStructuredOutput: true
+    })
+  });
+  await conciseRuns.processRun(
     await startPhase(context.store, orchestrator, discussion)
   );
-  await runs.processRun(
+  await conciseRuns.processRun(
     await advancePhase(context.store, orchestrator, discussion)
   );
   const pressureRun = await advancePhase(
@@ -513,9 +525,9 @@ async function contextPressureScenario(
   context: ScenarioContext
 ): Promise<ProviderSmokeScenarioOutcome> {
   const result = await preparePressuredDiscussion(context);
-  const completed = result.attempts.some(
-    (attempt) => attempt.status === "succeeded"
-  );
+  const completed =
+    result.runOutcome === "completed" &&
+    result.attempts.some((attempt) => attempt.status === "succeeded");
   return scenarioOutcome(
     completed,
     `The pressured Round settled as ${result.runOutcome}${
