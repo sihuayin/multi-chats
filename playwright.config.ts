@@ -13,9 +13,9 @@ export default defineConfig({
   },
   webServer: {
     command:
-      `DATABASE_URL= SQLITE_PATH=.data/e2e.sqlite MODEL_MODE=fake MODEL_STREAM_DELAY_MS=150 npm run dev -- --port ${port}`,
+      `DATABASE_URL= SQLITE_PATH=$(mktemp /tmp/multi-chats-e2e.XXXXXX) MODEL_MODE=fake MODEL_STREAM_DELAY_MS=150 npm run dev -- --port ${port}`,
     url: `http://localhost:${port}/api/health`,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
     timeout: 300_000
   },
   projects: [
