@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { evaluateDiscussionQualityReport } from "@/server/application/discussion-quality";
 import {
@@ -7,6 +8,15 @@ import {
   validateReleaseGateReport
 } from "@/server/application/release-gate";
 import { verifyProviderSmokeMatrix } from "@/server/application/provider-smoke-verification";
+
+function loadEnvironmentFiles(): void {
+  for (const path of [
+    new URL("../.env", import.meta.url),
+    new URL("../.env.local", import.meta.url)
+  ]) {
+    if (existsSync(path)) process.loadEnvFile(path);
+  }
+}
 
 async function appVersions(): Promise<Record<string, string>> {
   const packageJson = JSON.parse(
@@ -41,6 +51,7 @@ function proxyConfigured(env: Record<string, string | undefined>): boolean {
 }
 
 async function main(): Promise<void> {
+  loadEnvironmentFiles();
   const config = resolveReleaseGateConfig(process.env);
   if (!config.enabled) {
     process.stdout.write(`${config.message}\n`);
