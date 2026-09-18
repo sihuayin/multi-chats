@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PROTOTYPE — Brief fact traceability (throwaway)</title>
+<style>
+  :root {
+    --background: #0d1117;
+    --panel: #161b22;
+    --panel-2: #1c2129;
+    --border: #30363d;
+    --muted-foreground: #8b949e;
+    --foreground: #e6edf3;
+    --primary: #58a6ff;
+    --accent: #1f6feb22;
+    --chip: #21262d;
+    --success: #3fb950;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 24px 90px;
+    background: var(--background); color: var(--foreground);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .banner {
+    max-width: 880px; margin: 0 auto 16px; padding: 10px 14px;
+    border: 1px dashed #f85149; border-radius: 8px; color: #ff7b72;
+    font-size: 12px;
+  }
+  .brief {
+    max-width: 880px; margin: 0 auto;
+    border: 1px solid var(--border); border-radius: 10px; background: var(--panel);
+  }
+  .brief-head {
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .brief-head strong { font-size: 13px; }
+  .brief-head small { color: var(--muted-foreground); margin-left: auto; }
+  .brief-body { padding: 16px; }
+
+  .fact { border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); }
+  .fact + .fact { margin-top: 10px; }
+  .fact-row { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; cursor: pointer; }
+  .fact-idx { color: var(--muted-foreground); font-variant-numeric: tabular-nums; font-size: 11px; }
+  .fact-statement { flex: 1; font-size: 13px; }
+  .evidence-chip {
+    flex: 0 0 auto; font-size: 10px; padding: 2px 8px; border-radius: 999px;
+    background: var(--chip); color: var(--primary); border: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  /* --- Variant A: inline expand --- */
+  .inline-evidence { border-top: 1px solid var(--border); padding: 10px 12px; background: #12161c; }
+  .chunk { margin-bottom: 10px; }
+  .chunk-meta { font-size: 11px; color: var(--primary); margin-bottom: 4px; }
+  .chunk-excerpt {
+    font-size: 12px; color: var(--muted-foreground);
+    border-left: 2px solid var(--border); padding-left: 10px;
+  }
+  .chunk-source { font-size: 11px; color: var(--muted-foreground); margin-top: 4px; }
+
+  /* --- Variant B: popover --- */
+  .popover {
+    position: absolute; z-index: 10; width: 320px;
+    border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2);
+    box-shadow: 0 8px 24px rgba(0,0,0,.5); padding: 12px;
+  }
+  .popover .chunk-meta { font-size: 11px; color: var(--primary); margin-bottom: 6px; }
+  .popover .chunk-excerpt { font-size: 12px; color: var(--muted-foreground); }
+  .popover .chunk-source { font-size: 11px; color: var(--muted-foreground); margin-top: 6px; }
+
+  /* --- Variant C: side panel --- */
+  .split { display: grid; grid-template-columns: 1fr 320px; gap: 14px; align-items: start; }
+  .panel {
+    border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); padding: 12px;
+  }
+  .panel h4 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted-foreground); }
+  .panel .chunk { border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+  .reverse { font-size: 11px; color: var(--muted-foreground); margin-top: 6px; }
+  .reverse b { color: var(--success); }
+  .fact.selected { border-color: var(--primary); }
+
+  /* floating switcher */
+  .switcher {
+    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 12px;
+    background: #000; color: #fff; border: 1px solid #444; border-radius: 999px;
+    padding: 8px 14px; box-shadow: 0 6px 24px rgba(0,0,0,.6); font-size: 13px;
+  }
+  .switcher button {
+    background: none; border: none; color: #fff; font-size: 16px; cursor: pointer; padding: 0 4px;
+  }
+  .switcher .label { font-variant-numeric: tabular-nums; }
+  .switcher .name { color: #bbb; }
+</style>
+</head>
+<body>
+<div class="banner">THROWAWAY PROTOTYPE — answers "how should a Brief fact trace back to its chunk?" Mock data. Flip variants with the bottom bar, ←/→ keys, or <code>?variant=a|b|c</code>.</div>
+
+<div class="brief" id="brief"></div>
+
+<div class="switcher">
+  <button id="prev">◀</button>
+  <span class="label" id="label">A</span>
+  <span class="name" id="name"></span>
+  <button id="next">▶</button>
+</div>
+
+<script>
+const FACTS = [
+  { idx: 1, statement: "Rollbacks must be gated on a green canary for at least ten minutes.",
+    evidence: [{ chunk: "chunk-101", source: "Deployment runbook", excerpt: "A rollback is only permitted after the canary has served green for ten consecutive minutes. Any earlier rollback must be filed as an incident.", excerptHash: "h101" }] },
+  { idx: 2, statement: "The Q3 outage was traced to a missing index on the events table.",
+    evidence: [
+      { chunk: "chunk-201", source: "Incident postmortem Q3", excerpt: "Root cause: the events table lacked an index on (tenant_id, created_at), so the retention sweep degraded into a full scan under load.", excerptHash: "h201" },
+      { chunk: "chunk-202", source: "Incident postmortem Q3", excerpt: "Remediation added the missing index and backfilled it in a background migration; p99 dropped from 4.2s to 180ms.", excerptHash: "h202" }
+    ] },
+  { idx: 3, statement: "Staging and production ship the same image digest.",
+    evidence: [{ chunk: "chunk-102", source: "Deployment runbook", excerpt: "Promotion is digest-based: the exact image digest verified in staging is promoted, never rebuilt, into production.", excerptHash: "h102" }] },
+  { idx: 4, statement: "Alert fatigue dropped after paging was scoped to the on-call rotation.",
+    evidence: [{ chunk: "chunk-203", source: "Incident postmortem Q3", excerpt: "After scoping pages to the rotation and muting non-actionable warnings, pages per on-call week fell by 62%.", excerptHash: "h203" }] }
+];
+
+const NAMES = { a: "A — inline expand", b: "B — popover", c: "C — side panel + reverse map" };
+let variant = new URLSearchParams(location.search).get("variant")?.toLowerCase();
+if (!["a","b","c"].includes(variant)) variant = "a";
+
+function chunkMarkup(e) {
+  return `<div class="chunk">
+    <div class="chunk-meta">external:${e.chunk} · ${e.excerptHash}</div>
+    <div class="chunk-excerpt">“${e.excerpt}”</div>
+    <div class="chunk-source">${e.source}</div>
+  </div>`;
+}
+
+function renderA() {
+  document.getElementById("brief").innerHTML = `
+    <div class="brief-head"><strong>Brief</strong><small>Revision 3</small></div>
+    <div class="brief-body">
+      ${FACTS.map(f => `
+        <div class="fact" data-idx="${f.idx}">
+          <div class="fact-row">
+            <span class="fact-idx">F${f.idx}</span>
+            <span class="fact-statement">${f.statement}</span>
+            <span class="evidence-chip">${f.evidence.length} source${f.evidence.length>1?"s":""}</span>
+          </div>
+          <div class="inline-evidence" style="display:none">${f.evidence.map(chunkMarkup).join("")}</div>
+        </div>`).join("")}
+    </div>`;
+  document.querySelectorAll(".fact-row").forEach(row => {
+    row.addEventListener("click", () => {
+      const body = row.parentElement.querySelector(".inline-evidence");
+      body.style.display = body.style.display === "none" ? "block" : "none";
+    });
+  });
+}
+
+function renderB() {
+  document.getElementById("brief").innerHTML = `
+    <div class="brief-head"><strong>Brief</strong><small>Revision 3</small></div>
+    <div class="brief-body">
+      ${FACTS.map(f => `
+        <div class="fact" data-idx="${f.idx}" style="position:relative">
+          <div class="fact-row">
+            <span class="fact-idx">F${f.idx}</span>
+            <span class="fact-statement">${f.statement}</span>
+            <span class="evidence-chip">🔗 ${f.evidence.length}</span>
+          </div>
+        </div>`).join("")}
+    </div>`;
+  let open = null;
+  document.querySelectorAll(".fact-row").forEach(row => {
+    row.addEventListener("click", (ev) => {
+      closePopover();
+      const f = FACTS.find(x => x.idx === Number(row.parentElement.dataset.idx));
+      const pop = document.createElement("div");
+      pop.className = "popover";
+      pop.innerHTML = `<strong>Evidence</strong>` + f.evidence.map(chunkMarkup).join("");
+      row.parentElement.appendChild(pop);
+      open = pop;
+      ev.stopPropagation();
+    });
+  });
+  document.addEventListener("click", closePopover);
+  function closePopover() { if (open) { open.remove(); open = null; } }
+}
+
+function renderC() {
+  let selected = 1;
+  function draw() {
+    const sel = FACTS.find(f => f.idx === selected);
+    const chunkIndex = new Map();
+    FACTS.forEach(f => f.evidence.forEach(e => {
+      if (!chunkIndex.has(e.chunk)) chunkIndex.set(e.chunk, { e, facts: [] });
+      chunkIndex.get(e.chunk).facts.push(f.idx);
+    }));
+    document.getElementById("brief").innerHTML = `
+      <div class="brief-head"><strong>Brief</strong><small>Revision 3</small></div>
+      <div class="brief-body split">
+        <div>
+          ${FACTS.map(f => `
+            <div class="fact ${f.idx===selected?"selected":""}" data-idx="${f.idx}">
+              <div class="fact-row">
+                <span class="fact-idx">F${f.idx}</span>
+                <span class="fact-statement">${f.statement}</span>
+                <span class="evidence-chip">${f.evidence.length}</span>
+              </div>
+            </div>`).join("")}
+        </div>
+        <div class="panel">
+          <h4>Evidence — F${sel.idx}</h4>
+          ${sel.evidence.map(chunkMarkup).join("")}
+          <h4 style="margin-top:14px">Evidence index</h4>
+          ${[...chunkIndex.values()].map(({e, facts}) => `
+            <div class="chunk">
+              <div class="chunk-meta">${e.source}</div>
+              <div class="chunk-excerpt" style="font-size:11px">“${e.excerpt.slice(0,60)}…”</div>
+              <div class="reverse">cited by <b>${facts.map(i=>"F"+i).join(", ")}</b></div>
+            </div>`).join("")}
+        </div>
+      </div>`;
+    document.querySelectorAll(".fact-row").forEach(row => {
+      row.addEventListener("click", () => { selected = Number(row.parentElement.dataset.idx); draw(); });
+    });
+  }
+  draw();
+}
+
+const renders = { a: renderA, b: renderB, c: renderC };
+function apply() {
+  renders[variant]();
+  document.getElementById("label").textContent = variant.toUpperCase();
+  document.getElementById("name").textContent = NAMES[variant];
+  history.replaceState(null, "", "?variant=" + variant);
+}
+function cycle(d) {
+  const keys = ["a","b","c"];
+  variant = keys[(keys.indexOf(variant) + d + 3) % 3];
+  apply();
+}
+document.getElementById("prev").addEventListener("click", () => cycle(-1));
+document.getElementById("next").addEventListener("click", () => cycle(1));
+document.addEventListener("keydown", (e) => {
+  if (["INPUT","TEXTAREA"].includes(document.activeElement?.tagName) || document.activeElement?.isContentEditable) return;
+  if (e.key === "ArrowLeft") cycle(-1);
+  if (e.key === "ArrowRight") cycle(1);
+});
+apply();
+</script>
+</body>
+</html>
