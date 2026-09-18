@@ -579,6 +579,80 @@ export function validateDiscussionBriefEvidence(
   return [...references.values()];
 }
 
+export type ResolvedBriefFactEvidence = {
+  statement: string;
+  evidenceIds: string[];
+  resolved: Array<{
+    alias: string;
+    kind: EvidenceReferenceKind;
+    chunkId?: string;
+    sourceTitle?: string;
+    excerpt: string;
+    excerptHash: string;
+  }>;
+  unresolvedIds: string[];
+};
+
+/**
+ * Resolve a Brief's facts to the evidence the traceable UI can render: per
+ * fact, each evidence alias resolves to its excerpt, hash, and — for
+ * `external:<chunkId>` citations — the chunk id and Source title. Aliases
+ * that no longer resolve are returned in `unresolvedIds`, never dropped.
+ */
+export function resolveBriefFactEvidence(
+  state: AppState,
+  discussion: Discussion,
+  brief: { facts: Array<{ statement: string; evidenceIds: string[] }> },
+  now = new Date().toISOString()
+): ResolvedBriefFactEvidence[] {
+  return brief.facts.map((fact) => {
+    const resolved: ResolvedBriefFactEvidence["resolved"] = [];
+    const unresolvedIds: string[] = [];
+    for (const alias of fact.evidenceIds) {
+      try {
+        const { reference, label } = resolveEvidence(
+          state,
+          discussion,
+          alias,
+          now
+        );
+        let chunkId: string | undefined;
+        let sourceTitle: string | undefined;
+        if (
+          reference.kind === "external_source" &&
+          !/^https?:\/\//.test(reference.sourceId)
+        ) {
+          const chunk = state.chunks.find(
+            (item) => item.id === reference.sourceId
+          );
+          if (chunk) {
+            chunkId = chunk.id;
+            sourceTitle = state.sources.find(
+              (item) => item.id === chunk.sourceId
+            )?.title;
+          }
+        }
+        resolved.push({
+          alias,
+          kind: reference.kind,
+          ...(chunkId !== undefined ? { chunkId } : {}),
+          ...(sourceTitle !== undefined ? { sourceTitle } : {}),
+          excerpt: label,
+          excerptHash: reference.excerptHash ?? ""
+        });
+      } catch {
+        unresolvedIds.push(alias);
+      }
+    }
+    return {
+      statement: fact.statement,
+      evidenceIds: fact.evidenceIds,
+      resolved,
+      unresolvedIds
+    };
+  });
+}
+
 export function evidenceCoverage(payload: DiscussionTurnPayload) {
   const claims = payload.claims.filter(
     (claim) => claim.kind === "fact"

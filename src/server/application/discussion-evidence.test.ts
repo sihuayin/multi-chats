@@ -5,6 +5,7 @@ import {
   evidenceAlias,
   repairDiscussionBriefEvidence,
   repairDiscussionTurnEvidence,
+  resolveBriefFactEvidence,
   validateDiscussionTurnEvidence
 } from "@/server/application/discussion-evidence";
 import {
@@ -333,5 +334,47 @@ describe("Discussion evidence", () => {
           item.kind === "external_source"
       )
     ).toBe(true);
+  });
+});
+
+describe("resolveBriefFactEvidence", () => {
+  it("resolves a chunk citation to excerpt, source title, and hash", () => {
+    const value = fixture();
+    const { source, chunkId } = attachSource(
+      value.state,
+      value.discussion
+    );
+
+    const result = resolveBriefFactEvidence(value.state, value.discussion, {
+      facts: [{ statement: "A fact.", evidenceIds: [`external:${chunkId}`] }]
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0].resolved).toHaveLength(1);
+    expect(result[0].unresolvedIds).toEqual([]);
+    const resolved = result[0].resolved[0];
+    expect(resolved.chunkId).toBe(chunkId);
+    expect(resolved.sourceTitle).toBe(source.title);
+    expect(resolved.excerpt).toBe("First chunk.");
+    expect(resolved.excerptHash).toBe(
+      value.state.chunks.find((chunk) => chunk.id === chunkId)?.contentHash
+    );
+  });
+
+  it("surfaces unresolved evidence ids instead of dropping them", () => {
+    const value = fixture();
+    const { chunkId } = attachSource(value.state, value.discussion);
+
+    const result = resolveBriefFactEvidence(value.state, value.discussion, {
+      facts: [
+        {
+          statement: "A fact.",
+          evidenceIds: [`external:${chunkId}`, "external:missing-chunk"]
+        }
+      ]
+    });
+
+    expect(result[0].resolved).toHaveLength(1);
+    expect(result[0].unresolvedIds).toEqual(["external:missing-chunk"]);
   });
 });

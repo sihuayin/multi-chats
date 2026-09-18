@@ -10,6 +10,8 @@ import { notFound } from "@/server/application/errors";
 import { aggregateModelUsage } from "@/server/application/model-usage";
 import { aggregateAttemptCosts } from "@/server/application/model-pricing";
 import { evaluateDiscussionBudget } from "@/server/application/discussion-budget";
+import { parseDiscussionBrief } from "@/server/application/discussion-brief";
+import { resolveBriefFactEvidence } from "@/server/application/discussion-evidence";
 
 export type DiscussionAction =
   | "edit"
@@ -138,6 +140,21 @@ function briefView(
   };
 }
 
+function resolvedBriefFacts(
+  state: AppState,
+  discussion: Discussion,
+  brief: ReturnType<typeof briefView>
+) {
+  if (!brief) return [];
+  try {
+    const parsed = parseDiscussionBrief(brief.content);
+    if (parsed.schemaVersion !== 2) return [];
+    return resolveBriefFactEvidence(state, discussion, parsed);
+  } catch {
+    return [];
+  }
+}
+
 export function buildDiscussionView(
   state: AppState,
   discussionId: string
@@ -196,6 +213,7 @@ export function buildDiscussionView(
       (event) => event.type === "evidence_validation_failed"
     ).length
   };
+  const briefFacts = resolvedBriefFacts(state, discussion, latestBrief);
   const fallbacks = (discussion.events ?? [])
     .filter((event) => event.type === "provider_fallback_started")
     .map((event) => ({
@@ -290,6 +308,7 @@ export function buildDiscussionView(
     cost,
     fallbacks,
     evidence,
+    briefFacts,
     budget: {
       usedRounds: discussion.rounds.filter(
         (round) => round.phase !== "synthesis"
