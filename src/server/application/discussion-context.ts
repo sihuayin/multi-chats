@@ -17,6 +17,7 @@ import {
 } from "@/server/application/discussion-compression";
 import type {
   AppState,
+  Chunk,
   Discussion,
   DiscussionCompression,
   DiscussionIntervention,
@@ -27,6 +28,15 @@ import type {
   Skill,
   ToolDefinition
 } from "@/server/domain/types";
+
+function orderById(chunks: Chunk[], ids: string[]): Chunk[] {
+  const byId = new Map(chunks.map((chunk) => [chunk.id, chunk]));
+  const placed = ids
+    .map((id) => byId.get(id))
+    .filter((chunk): chunk is Chunk => chunk !== undefined);
+  const placedIds = new Set(placed.map((chunk) => chunk.id));
+  return [...placed, ...chunks.filter((chunk) => !placedIds.has(chunk.id))];
+}
 
 export const DEFAULT_MODEL_CONTEXT_WINDOW = 32_768;
 export const DEFAULT_MAX_OUTPUT_TOKENS = 4_096;
@@ -235,10 +245,11 @@ function relatedContextMessages(
         artifactId: artifact.id
       })
     );
-  const chunks = rankChunks(
-    attachedReadyChunks(state, discussion),
-    discussionRetrievalQuery(discussion)
-  ).map(
+  const attachedChunks = attachedReadyChunks(state, discussion);
+  const orderedChunks = discussion.rerankedChunkIds
+    ? orderById(attachedChunks, discussion.rerankedChunkIds)
+    : rankChunks(attachedChunks, discussionRetrievalQuery(discussion));
+  const chunks = orderedChunks.map(
     (chunk): ModelMessage => {
       const source = state.sources.find(
         (item) => item.id === chunk.sourceId

@@ -71,7 +71,8 @@ export class WorkspaceService {
         id: state.workspace.id,
         name: state.workspace.name,
         discussionBudgetDefaults:
-          state.workspace.discussionBudgetDefaults
+          state.workspace.discussionBudgetDefaults,
+        rerankChunks: state.workspace.rerankChunks
       },
       providers: state.providers.map(publicProvider),
       employees: state.employees,
@@ -103,6 +104,9 @@ export class WorkspaceService {
       if (parsed.discussionBudgetDefaults !== undefined) {
         state.workspace.discussionBudgetDefaults =
           parsed.discussionBudgetDefaults ?? undefined;
+      }
+      if (parsed.rerankChunks !== undefined) {
+        state.workspace.rerankChunks = parsed.rerankChunks;
       }
       state.workspace.updatedAt = new Date().toISOString();
     });

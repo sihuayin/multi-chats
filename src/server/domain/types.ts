@@ -17,6 +17,7 @@ export type Workspace = {
   name: string;
   workerHeartbeatAt?: IsoDate;
   discussionBudgetDefaults?: DiscussionBudget;
+  rerankChunks?: boolean;
   createdAt: IsoDate;
   updatedAt: IsoDate;
 };
@@ -69,6 +70,7 @@ export type ProviderAttemptPurpose =
   | "discussion_turn"
   | "discussion_synthesis"
   | "discussion_compression"
+  | "discussion_rerank"
   | "smoke_test";
 
 export type ProviderAttemptStatus =
@@ -622,6 +624,7 @@ export type Discussion = {
   sourceTaskId?: string;
   confirmedTaskId?: string;
   sourceIds: string[];
+  rerankedChunkIds?: string[];
   participants: DiscussionParticipant[];
   rounds: DiscussionRound[];
   events?: DiscussionEvent[];

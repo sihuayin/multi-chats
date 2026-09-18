@@ -76,6 +76,14 @@ import {
 } from "@/server/application/discussion-context";
 import { DISCUSSION_PROMPT_PROFILE_VERSION } from "@/server/application/discussion-prompts";
 import { parseDiscussionTurnPayload } from "@/server/application/discussion-turn-payload";
+import {
+  attachedReadyChunks,
+  discussionRetrievalQuery
+} from "@/server/application/source-retrieval";
+import {
+  parseRerankOrder,
+  rerankChunkOrder
+} from "@/server/application/discussion-rerank";
 import { ApiError, notFound } from "@/server/application/errors";
 import {
   appendEvent,
@@ -2210,6 +2218,149 @@ export class ConversationRunService {
     return { ...fallback, attemptId: lastAttemptId };
   }
 
+  private async rerankDiscussionChunks(runId: string): Promise<void> {
+    if (process.env.MODEL_MODE === "fake") return;
+    const input = await this.store.read((state) => {
+      const run = state.runs.find((item) => item.id === runId);
+      const discussion = run?.discussionId
+        ? state.discussions.find((item) => item.id === run.discussionId)
+        : undefined;
+      if (
+        !discussion ||
+        discussion.rerankedChunkIds !== undefined ||
+        discussion.sourceIds.length === 0 ||
+        !state.workspace.rerankChunks
+      ) {
+        return null;
+      }
+      const facilitatorParticipant = discussion.participants.find(
+        (participant) =>
+          participant.id === discussion.facilitatorParticipantId
+      );
+      const facilitator = facilitatorParticipant
+        ? state.employees.find(
+            (item) =>
+              item.id === facilitatorParticipant.employeeId && item.active
+          )
+        : undefined;
+      const facilitatorProvider = facilitator
+        ? state.providers.find(
+            (item) => item.id === facilitator.providerCredentialId
+          )
+        : undefined;
+      if (!facilitator || !facilitatorProvider) return null;
+      const attached = attachedReadyChunks(state, discussion);
+      if (attached.length < 2) return null;
+      return { discussion, facilitator, facilitatorProvider, attached };
+    });
+    if (!input) return;
+
+    const { discussion, facilitator, facilitatorProvider, attached } = input;
+    const query = discussionRetrievalQuery(discussion);
+    const byId = new Map(attached.map((chunk) => [chunk.id, chunk]));
+
+    const ordered = await rerankChunkOrder({
+      chunks: attached,
+      query,
+      reorder: async (topIds) => {
+        const attemptId = crypto.randomUUID();
+        const startedAt = now();
+        await this.store.update((s) => {
+          s.providerAttempts.push({
+            id: attemptId,
+            workspaceId: s.workspace.id,
+            discussionId: discussion.id,
+            purpose: "discussion_rerank",
+            provider: facilitatorProvider.provider,
+            modelId: facilitator.modelId,
+            targetOrder: 0,
+            attempt: 1,
+            status: "started",
+            usage: { source: "unknown" },
+            startedAt
+          });
+        });
+        let text = "";
+        try {
+          const prompt = [
+            `Query: ${discussion.title}`,
+            ...(discussion.note ? [`Note: ${discussion.note}`] : []),
+            "Rank these chunk candidates by relevance to the query:",
+            ...topIds.map(
+              (id) =>
+                `- ${id}: ${byId.get(id)?.content.slice(0, 120) ?? ""}`
+            ),
+            'Return JSON: {"order": ["<id>", ...]}'
+          ].join("\n");
+          const stream = this.gateway.run({
+            provider: facilitatorProvider.provider,
+            credential: this.cipher.decrypt(
+              facilitatorProvider.encryptedCredential
+            ),
+            modelId: facilitator.modelId,
+            purpose: "discussion_rerank",
+            maxOutputTokens: 500,
+            systemPrompt:
+              "You rank evidence chunks for a Discussion. Return the chunk ids ordered by relevance.",
+            prompt,
+            tools: [],
+            signal: AbortSignal.timeout(10_000)
+          })[Symbol.asyncIterator]();
+          while (true) {
+            const next = await stream.next();
+            if (next.done) break;
+            const event = next.value;
+            if (event.type === "text_delta") text += event.delta;
+            if (event.type === "text_completed" && event.text) {
+              text = event.text;
+            }
+            if (event.type === "usage") {
+              await this.store.update((s) => {
+                const attempt = s.providerAttempts.find(
+                  (item) => item.id === attemptId
+                );
+                if (attempt) attempt.usage = event.usage;
+              });
+            }
+            if (event.type === "error") {
+              throw new Error(event.message);
+            }
+          }
+          const order = parseRerankOrder(text);
+          await this.store.update((s) => {
+            const attempt = s.providerAttempts.find(
+              (item) => item.id === attemptId
+            );
+            if (attempt) {
+              attempt.status = "succeeded";
+              attempt.completedAt = now();
+            }
+          });
+          return order;
+        } catch (error) {
+          await this.store.update((s) => {
+            const attempt = s.providerAttempts.find(
+              (item) => item.id === attemptId
+            );
+            if (attempt) {
+              attempt.status = "failed";
+              attempt.errorKind = "unknown";
+              attempt.completedAt = now();
+            }
+          });
+          throw error;
+        }
+      }
+    });
+
+    await this.store.update((s) => {
+      const target = s.discussions.find((item) => item.id === discussion.id);
+      if (target) {
+        target.rerankedChunkIds = ordered.map((chunk) => chunk.id);
+      }
+    });
+  }
+
   private async processEmployeeTurn(
     runId: string,
     employeeId: string,
@@ -2217,6 +2368,7 @@ export class ConversationRunService {
     signal: AbortSignal,
     allowCompression = true
   ): Promise<void> {
+    await this.rerankDiscussionChunks(runId);
     const context = await this.store.read((state) => {
       const run = state.runs.find((item) => item.id === runId);
       const employee = state.employees.find((item) => item.id === employeeId);

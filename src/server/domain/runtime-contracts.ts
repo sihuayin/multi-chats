@@ -43,6 +43,7 @@ export const providerAttemptSchema = z
       "discussion_turn",
       "discussion_synthesis",
       "discussion_compression",
+      "discussion_rerank",
       "smoke_test"
     ]),
     provider: z.enum(PROVIDER_IDS),

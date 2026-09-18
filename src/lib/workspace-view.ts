@@ -29,6 +29,7 @@ export type WorkspaceView = {
     id: string;
     name: string;
     discussionBudgetDefaults?: DiscussionBudget;
+    rerankChunks?: boolean;
   };
   providers: PublicProvider[];
   employees: Employee[];
