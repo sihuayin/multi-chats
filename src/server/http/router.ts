@@ -626,6 +626,10 @@ async function handleApiRoute(
         emptyCommandSchema.parse(await body(request));
         return json(await sources.retrySource(id));
       }
+      if (request.method === "POST" && id && child === "refresh") {
+        emptyCommandSchema.parse(await body(request));
+        return json(await sources.refreshSource(id));
+      }
       if (request.method === "DELETE" && id && !child) {
         await sources.deleteSource(id);
         return new Response(null, { status: 204 });

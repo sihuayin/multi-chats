@@ -38,7 +38,9 @@ export function attachedReadyChunks(
         source.status === "ready"
     )
     .flatMap((source) =>
-      state.chunks.filter((chunk) => chunk.sourceId === source.id)
+      state.chunks.filter(
+        (chunk) => chunk.sourceId === source.id && !chunk.superseded
+      )
     );
 }
 

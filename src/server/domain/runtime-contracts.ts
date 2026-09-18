@@ -204,6 +204,7 @@ export const chunkSchema = z
     index: z.number().int().nonnegative(),
     content: z.string(),
     contentHash: identifier,
+    superseded: z.boolean().optional(),
     createdAt: timestamp,
     updatedAt: timestamp
   })

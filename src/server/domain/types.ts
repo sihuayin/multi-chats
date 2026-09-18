@@ -446,6 +446,8 @@ export type Chunk = {
   index: number;
   content: string;
   contentHash: string;
+  /** Set when a refresh supersedes this chunk with a newer revision. */
+  superseded?: boolean;
   createdAt: IsoDate;
   updatedAt: IsoDate;
 };

@@ -221,3 +221,96 @@ describe("SourceService", () => {
     expect(source.error).toContain("PDF");
   });
 });
+
+describe("refreshSource", () => {
+  it("supersedes old chunks and appends a new set on changed content", async () => {
+    let fetched = "Version one.\n\nBody one.";
+    const changing: TextExtractor = {
+      async extract(input: SourceTextInput) {
+        if (input.kind === "url") return fetched;
+        return input.content ?? "";
+      }
+    };
+    const { store, service } = storeWithExtractor(changing);
+    const created = await service.createSource({
+      kind: "url",
+      location: "https://example.com/article"
+    });
+    await service.ingestPendingSources();
+    const before = await service.getSource(created.id);
+    expect(before.chunkCount).toBe(2);
+    const oldChunkIds = (await service.listChunks(created.id)).map(
+      (chunk) => chunk.id
+    );
+
+    fetched = "Version two.\n\nBody two.\n\nBody three.";
+    const refreshed = await service.refreshSource(created.id);
+    expect(refreshed.chunkCount).toBe(3);
+    expect(refreshed.contentHash).not.toBe(before.contentHash);
+
+    const chunks = store.snapshot().chunks.filter(
+      (chunk) => chunk.sourceId === created.id
+    );
+    expect(chunks.filter((chunk) => chunk.superseded)).toHaveLength(2);
+    expect(chunks.filter((chunk) => !chunk.superseded)).toHaveLength(3);
+    for (const id of oldChunkIds) {
+      expect(chunks.some((chunk) => chunk.id === id)).toBe(true);
+    }
+  });
+
+  it("leaves a Source unchanged when refreshed content is identical", async () => {
+    const { service } = storeWithExtractor(textExtractor);
+    const created = await service.createSource({
+      kind: "url",
+      location: "https://example.com/article"
+    });
+    await service.ingestPendingSources();
+    const before = await service.getSource(created.id);
+
+    const refreshed = await service.refreshSource(created.id);
+    expect(refreshed.contentHash).toBe(before.contentHash);
+    expect(refreshed.chunkCount).toBe(before.chunkCount);
+    expect(await service.listChunks(created.id)).toHaveLength(before.chunkCount);
+  });
+
+  it("keeps the current set when a refresh fetch fails", async () => {
+    let fail = false;
+    const flaky: TextExtractor = {
+      async extract(input: SourceTextInput) {
+        if (input.kind === "url") {
+          if (fail) throw new Error("network down");
+          return "Stable text.";
+        }
+        return input.content ?? "";
+      }
+    };
+    const { service } = storeWithExtractor(flaky);
+    const created = await service.createSource({
+      kind: "url",
+      location: "https://example.com/article"
+    });
+    await service.ingestPendingSources();
+    const before = await service.getSource(created.id);
+    expect(before.status).toBe("ready");
+
+    fail = true;
+    await expect(service.refreshSource(created.id)).rejects.toThrow(
+      "network down"
+    );
+    const after = await service.getSource(created.id);
+    expect(after.contentHash).toBe(before.contentHash);
+    expect(after.chunkCount).toBe(before.chunkCount);
+  });
+
+  it("rejects refreshing a file Source", async () => {
+    const { service } = storeWithExtractor(textExtractor);
+    const source = await service.createSource({
+      kind: "file",
+      location: "notes.md",
+      content: "One."
+    });
+    await expect(service.refreshSource(source.id)).rejects.toThrow(
+      "Only URL Sources can be refreshed"
+    );
+  });
+});
