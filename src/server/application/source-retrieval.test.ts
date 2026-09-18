@@ -78,4 +78,26 @@ describe("rankChunks", () => {
       0, 1, 2
     ]);
   });
+
+  it("ranks a chunk with the query phrase verbatim above a scattered match", () => {
+    const chunks = [
+      chunk(0, "Persistence, in isolation, is cheap; the data model differs."),
+      chunk(1, "The persistence model should use SQLite."),
+      chunk(2, "Unrelated text about weather.")
+    ];
+    const ranked = rankChunks(chunks, "persistence model");
+    expect(ranked[0].index).toBe(1);
+  });
+
+  it("ranks chunks covering more distinct query terms above those covering fewer", () => {
+    const chunks = [
+      chunk(0, "Migrations deserve their own section."),
+      chunk(1, "SQLite and migrations are covered together."),
+      chunk(2, "SQLite durability migrations all together.")
+    ];
+    const ranked = rankChunks(chunks, "SQLite durability migrations");
+    expect(ranked[0].index).toBe(2);
+    expect(ranked[1].index).toBe(1);
+    expect(ranked[2].index).toBe(0);
+  });
 });
