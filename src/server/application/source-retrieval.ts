@@ -35,18 +35,59 @@ export function attachedReadyChunks(
     .filter(
       (source) =>
         discussion.sourceIds.includes(source.id) &&
-        source.status === "ready"
+        source.status === "ready" &&
+        !source.deletedAt
     )
     .flatMap((source) =>
-      state.chunks.filter((chunk) => chunk.sourceId === source.id)
+      state.chunks.filter(
+        (chunk) => chunk.sourceId === source.id && !chunk.superseded
+      )
     );
 }
 
 /**
+ * The longest contiguous run of query terms (in query order) that appears
+ * consecutively in `tokens`. Returns 0 for no match, 1 for an isolated term,
+ * and ≥2 only when two or more query terms sit adjacent in the chunk — the
+ * exact-phrase signal that separates "the persistence model" from
+ * "persistence … model".
+ */
+function longestPhraseMatch(tokens: string[], queryTerms: string[]): number {
+  const startsByTerm = new Map<string, number[]>();
+  queryTerms.forEach((term, index) => {
+    const starts = startsByTerm.get(term) ?? [];
+    starts.push(index);
+    startsByTerm.set(term, starts);
+  });
+  let best = 0;
+  for (let i = 0; i < tokens.length; i += 1) {
+    const starts = startsByTerm.get(tokens[i]);
+    if (!starts) continue;
+    for (const start of starts) {
+      let length = 1;
+      let cursor = i + 1;
+      let next = start + 1;
+      while (
+        cursor < tokens.length &&
+        next < queryTerms.length &&
+        tokens[cursor] === queryTerms[next]
+      ) {
+        length += 1;
+        cursor += 1;
+        next += 1;
+      }
+      if (length > best) best = length;
+    }
+  }
+  return best;
+}
+
+/**
  * Deterministic keyword ranking: score each chunk by the inverse-document
- * frequency of the query terms it contains, then break ties by chunk index.
- * No embeddings or vector dependency; identical input always yields the same
- * ordering.
+ * frequency of the query terms it contains, add an exact-phrase boost when a
+ * contiguous multi-term query subphrase appears verbatim, then break ties by
+ * term coverage and finally chunk index. No embeddings or vector dependency;
+ * identical input always yields the same ordering.
  */
 export function rankChunks(chunks: Chunk[], query: string): Chunk[] {
   const queryTerms = tokenize(query);
@@ -58,7 +99,7 @@ export function rankChunks(chunks: Chunk[], query: string): Chunk[] {
 
   const tokenized = chunks.map((chunk) => {
     const tokens = tokenize(chunk.content);
-    return { chunk, tokenSet: new Set(tokens) };
+    return { chunk, tokens, tokenSet: new Set(tokens) };
   });
   const documentCount = Math.max(1, tokenized.length);
   const documentFrequency = new Map<string, number>();
@@ -70,18 +111,24 @@ export function rankChunks(chunks: Chunk[], query: string): Chunk[] {
   }
 
   return tokenized
-    .map(({ chunk, tokenSet }) => {
+    .map(({ chunk, tokens, tokenSet }) => {
       let score = 0;
+      let coverage = 0;
       for (const term of queryTerms) {
         if (!tokenSet.has(term)) continue;
+        coverage += 1;
         const frequency = documentFrequency.get(term) ?? documentCount;
         score += Math.log(1 + documentCount / Math.max(1, frequency));
       }
-      return { chunk, score };
+      const phrase = longestPhraseMatch(tokens, queryTerms);
+      if (phrase >= 2) score += phrase;
+      return { chunk, score, coverage };
     })
     .sort(
       (left, right) =>
-        right.score - left.score || left.chunk.index - right.chunk.index
+        right.score - left.score ||
+        right.coverage - left.coverage ||
+        left.chunk.index - right.chunk.index
     )
     .map((item) => item.chunk);
 }

@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  attachedReadyChunks,
   discussionRetrievalQuery,
   rankChunks
 } from "@/server/application/source-retrieval";
-import type { Chunk } from "@/server/domain/types";
+import { createFixtureState } from "@/server/test-support/fixtures";
+import type { Chunk, Source } from "@/server/domain/types";
 
 function chunk(index: number, content: string): Chunk {
   return {
@@ -77,5 +79,71 @@ describe("rankChunks", () => {
     expect(rankChunks(chunks, "SQLite").map((item) => item.index)).toEqual([
       0, 1, 2
     ]);
+  });
+
+  it("ranks a chunk with the query phrase verbatim above a scattered match", () => {
+    const chunks = [
+      chunk(0, "Persistence, in isolation, is cheap; the data model differs."),
+      chunk(1, "The persistence model should use SQLite."),
+      chunk(2, "Unrelated text about weather.")
+    ];
+    const ranked = rankChunks(chunks, "persistence model");
+    expect(ranked[0].index).toBe(1);
+  });
+
+  it("ranks chunks covering more distinct query terms above those covering fewer", () => {
+    const chunks = [
+      chunk(0, "Migrations deserve their own section."),
+      chunk(1, "SQLite and migrations are covered together."),
+      chunk(2, "SQLite durability migrations all together.")
+    ];
+    const ranked = rankChunks(chunks, "SQLite durability migrations");
+    expect(ranked[0].index).toBe(2);
+    expect(ranked[1].index).toBe(1);
+    expect(ranked[2].index).toBe(0);
+  });
+});
+
+describe("attachedReadyChunks", () => {
+  it("excludes superseded chunks from the current set", () => {
+    const state = createFixtureState();
+    const source: Source = {
+      id: "source-attached",
+      workspaceId: state.workspace.id,
+      title: "Attached source",
+      kind: "file",
+      location: "notes.md",
+      status: "ready",
+      chunkCount: 1,
+      createdAt: state.workspace.createdAt,
+      updatedAt: state.workspace.updatedAt
+    };
+    state.sources.push(source);
+    const chunkBase = {
+      workspaceId: state.workspace.id,
+      sourceId: source.id,
+      createdAt: state.workspace.createdAt,
+      updatedAt: state.workspace.updatedAt
+    };
+    state.chunks.push(
+      {
+        ...chunkBase,
+        id: "chunk-old",
+        index: 0,
+        content: "Old content.",
+        contentHash: "hash-old",
+        superseded: true
+      },
+      {
+        ...chunkBase,
+        id: "chunk-new",
+        index: 1,
+        content: "New content.",
+        contentHash: "hash-new"
+      }
+    );
+
+    const chunks = attachedReadyChunks(state, { sourceIds: [source.id] });
+    expect(chunks.map((chunk) => chunk.id)).toEqual(["chunk-new"]);
   });
 });

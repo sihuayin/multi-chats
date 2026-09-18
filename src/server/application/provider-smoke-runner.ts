@@ -776,6 +776,86 @@ async function briefGenerationScenario(
   });
 }
 
+const SMOKE_RERANK_SOURCE_ID = "smoke-rerank-source";
+const SMOKE_RERANK_CHUNK_COUNT = 3;
+
+async function rerankScenario(
+  context: ScenarioContext
+): Promise<ProviderSmokeScenarioOutcome> {
+  const timestamp = context.clock();
+  await context.store.update((state) => {
+    state.workspace.rerankChunks = true;
+    state.sources.push({
+      id: SMOKE_RERANK_SOURCE_ID,
+      workspaceId: state.workspace.id,
+      title: "Smoke rerank evidence",
+      kind: "file",
+      location: "smoke.md",
+      status: "ready",
+      chunkCount: SMOKE_RERANK_CHUNK_COUNT,
+      contentHash: "smoke-rerank-hash",
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    for (let index = 0; index < SMOKE_RERANK_CHUNK_COUNT; index += 1) {
+      state.chunks.push({
+        id: `smoke-rerank-chunk-${index}`,
+        workspaceId: state.workspace.id,
+        sourceId: SMOKE_RERANK_SOURCE_ID,
+        index,
+        content: `Smoke chunk ${index} about the persistence model.`,
+        contentHash: `smoke-rerank-chunk-hash-${index}`,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
+    }
+  });
+
+  const { runs, orchestrator, discussion } = await openScenario(
+    context,
+    "Provider smoke rerank",
+    3
+  );
+  await context.store.update((state) => {
+    const target = state.discussions.find((item) => item.id === discussion);
+    if (target) target.sourceIds = [SMOKE_RERANK_SOURCE_ID];
+  });
+
+  const runId = await startPhase(context.store, orchestrator, discussion);
+  await runs.processRun(runId);
+
+  const result = await context.store.read((state) => {
+    const target = state.discussions.find((item) => item.id === discussion);
+    const rerankAttempts = state.providerAttempts.filter(
+      (attempt) =>
+        attempt.discussionId === discussion &&
+        attempt.purpose === "discussion_rerank"
+    );
+    return {
+      rerankedChunkCount: (target?.rerankedChunkIds ?? []).length,
+      rerankAttempts: rerankAttempts.map(attemptRecord)
+    };
+  });
+
+  const succeeded = result.rerankAttempts.some(
+    (attempt) => attempt.status === "succeeded"
+  );
+  const passed =
+    succeeded && result.rerankedChunkCount === SMOKE_RERANK_CHUNK_COUNT;
+  return scenarioOutcome(
+    passed,
+    "Re-rank did not produce a cached chunk order",
+    {
+      attempts: await runAttempts(context.store, runId),
+      detail: {
+        rerankedChunkCount: result.rerankedChunkCount,
+        rerankAttempts: result.rerankAttempts.length,
+        rerankSucceeded: succeeded
+      }
+    }
+  );
+}
+
 const EXECUTORS: Record<
   ProviderSmokeScenario,
   (context: ScenarioContext) => Promise<ProviderSmokeScenarioOutcome>
@@ -787,7 +867,8 @@ const EXECUTORS: Record<
   retry: retryScenario,
   failover: failoverScenario,
   cancellation: cancellationScenario,
-  brief_generation: briefGenerationScenario
+  brief_generation: briefGenerationScenario,
+  rerank: rerankScenario
 };
 
 /**

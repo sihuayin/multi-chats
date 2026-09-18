@@ -17,6 +17,7 @@ export type Workspace = {
   name: string;
   workerHeartbeatAt?: IsoDate;
   discussionBudgetDefaults?: DiscussionBudget;
+  rerankChunks?: boolean;
   createdAt: IsoDate;
   updatedAt: IsoDate;
 };
@@ -69,6 +70,7 @@ export type ProviderAttemptPurpose =
   | "discussion_turn"
   | "discussion_synthesis"
   | "discussion_compression"
+  | "discussion_rerank"
   | "smoke_test";
 
 export type ProviderAttemptStatus =
@@ -435,6 +437,8 @@ export type Source = {
   chunkCount: number;
   /** Transient raw upload content retained only while ingestion is in flight. */
   pendingContent?: string;
+  /** Set when the Source is tombstoned (deleted but chunks retained). */
+  deletedAt?: IsoDate;
   createdAt: IsoDate;
   updatedAt: IsoDate;
 };
@@ -446,6 +450,8 @@ export type Chunk = {
   index: number;
   content: string;
   contentHash: string;
+  /** Set when a refresh supersedes this chunk with a newer revision. */
+  superseded?: boolean;
   createdAt: IsoDate;
   updatedAt: IsoDate;
 };
@@ -618,6 +624,7 @@ export type Discussion = {
   sourceTaskId?: string;
   confirmedTaskId?: string;
   sourceIds: string[];
+  rerankedChunkIds?: string[];
   participants: DiscussionParticipant[];
   rounds: DiscussionRound[];
   events?: DiscussionEvent[];

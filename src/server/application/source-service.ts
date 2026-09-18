@@ -127,14 +127,13 @@ export class SourceService {
     await this.store.update((state) => {
       const source = state.sources.find((item) => item.id === id);
       if (!source) notFound("Source");
-      state.chunks = state.chunks.filter((chunk) => chunk.sourceId !== id);
-      state.sources = state.sources.filter((item) => item.id !== id);
-      for (const discussion of state.discussions) {
-        discussion.sourceIds = discussion.sourceIds.filter(
-          (sourceId) => sourceId !== id
-        );
-      }
-      state.workspace.updatedAt = now();
+      if (source.deletedAt) return;
+      const timestamp = now();
+      source.deletedAt = timestamp;
+      source.updatedAt = timestamp;
+      // Retain chunks and Discussion sourceIds so already-confirmed Briefs
+      // keep resolving their evidence references.
+      state.workspace.updatedAt = timestamp;
     });
   }
 
@@ -215,6 +214,74 @@ export class SourceService {
       source.chunkCount = chunks.length;
       source.error = undefined;
       source.pendingContent = undefined;
+      source.updatedAt = timestamp;
+      state.workspace.updatedAt = timestamp;
+    });
+    return this.getSource(id);
+  }
+
+  async refreshSource(id: string): Promise<Source> {
+    const current = await this.store.read((state) => {
+      const source = state.sources.find((item) => item.id === id);
+      if (!source) notFound("Source");
+      return {
+        kind: source.kind,
+        status: source.status,
+        location: source.location,
+        contentHash: source.contentHash
+      };
+    });
+    if (current.kind !== "url") {
+      throw new ApiError(
+        400,
+        "Only URL Sources can be refreshed",
+        "source_not_url"
+      );
+    }
+    if (current.status !== "ready") {
+      throw new ApiError(
+        409,
+        "Only ready Sources can be refreshed",
+        "source_not_ready"
+      );
+    }
+
+    let text: string;
+    try {
+      text = await this.extractor.extract({
+        kind: "url",
+        location: current.location
+      });
+    } catch (error) {
+      throw new ApiError(
+        502,
+        error instanceof Error ? error.message : String(error),
+        "source_refresh_failed"
+      );
+    }
+    const hash = contentHash(text);
+    if (hash === current.contentHash) {
+      return this.getSource(id);
+    }
+
+    await this.store.update((state) => {
+      const source = state.sources.find((item) => item.id === id);
+      if (!source) return;
+      const timestamp = now();
+      for (const chunk of state.chunks) {
+        if (chunk.sourceId === id) chunk.superseded = true;
+      }
+      const chunks = chunkSource({
+        sourceId: id,
+        workspaceId: state.workspace.id,
+        text,
+        now: timestamp
+      });
+      state.chunks.push(...chunks);
+      source.status = "ready";
+      source.contentHash = hash;
+      source.chunkCount = chunks.length;
+      source.error = undefined;
       source.updatedAt = timestamp;
       state.workspace.updatedAt = timestamp;
     });

@@ -43,6 +43,7 @@ export const providerAttemptSchema = z
       "discussion_turn",
       "discussion_synthesis",
       "discussion_compression",
+      "discussion_rerank",
       "smoke_test"
     ]),
     provider: z.enum(PROVIDER_IDS),
@@ -191,6 +192,7 @@ export const sourceSchema = z
     contentHash: identifier.optional(),
     chunkCount: z.number().int().nonnegative(),
     pendingContent: z.string().optional(),
+    deletedAt: timestamp.optional(),
     createdAt: timestamp,
     updatedAt: timestamp
   })
@@ -204,6 +206,7 @@ export const chunkSchema = z
     index: z.number().int().nonnegative(),
     content: z.string(),
     contentHash: identifier,
+    superseded: z.boolean().optional(),
     createdAt: timestamp,
     updatedAt: timestamp
   })

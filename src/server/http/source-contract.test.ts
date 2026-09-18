@@ -145,7 +145,7 @@ describe("Source HTTP contract", () => {
     expect(afterRetry.error).toBe("URL is unreachable");
   });
 
-  it("deletes a Source and its chunks", async () => {
+  it("tombstones a Source, retaining it with a deletedAt marker", async () => {
     setup();
     const created = await handleApiRequest(
       new Request("http://localhost/api/sources", {
@@ -167,6 +167,9 @@ describe("Source HTTP contract", () => {
       new Request("http://localhost/api/sources"),
       ["sources"]
     );
-    expect(await listed.json()).toEqual([]);
+    const sources = await listed.json();
+    expect(sources).toHaveLength(1);
+    expect(sources[0].id).toBe(body.id);
+    expect(sources[0].deletedAt).toBeDefined();
   });
 });

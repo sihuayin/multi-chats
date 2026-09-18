@@ -17,7 +17,8 @@ export const PROVIDER_SMOKE_SCENARIOS = [
   "retry",
   "failover",
   "cancellation",
-  "brief_generation"
+  "brief_generation",
+  "rerank"
 ] as const;
 
 export type ProviderSmokeScenario = (typeof PROVIDER_SMOKE_SCENARIOS)[number];
@@ -69,6 +70,10 @@ const PROVIDER_SMOKE_SCENARIO_CONTRACTS: Record<
   brief_generation: {
     requiresFallbackTarget: false,
     requiresArtifactLink: true
+  },
+  rerank: {
+    requiresFallbackTarget: false,
+    requiresArtifactLink: false
   }
 };
 

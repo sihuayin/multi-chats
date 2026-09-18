@@ -338,6 +338,19 @@ type DiscussionView = {
     factsWithEvidence: number;
     validationFailureCount: number;
   };
+  briefFacts: Array<{
+    statement: string;
+    evidenceIds: string[];
+    resolved: Array<{
+      alias: string;
+      kind: string;
+      chunkId?: string;
+      sourceTitle?: string;
+      excerpt: string;
+      excerptHash: string;
+    }>;
+    unresolvedIds: string[];
+  }>;
   availableActions: DiscussionAction[];
 };
 
@@ -514,10 +527,36 @@ export function DiscussionWorkspace({
           summary: string;
           risks: string[];
         }>;
+        facts?: Array<{ statement: string }>;
       };
     } catch {
       return null;
     }
+  })();
+
+  const [expandedFactIndex, setExpandedFactIndex] = useState<number | null>(
+    null
+  );
+  const briefFacts = view?.briefFacts ?? [];
+  const evidenceIndex = (() => {
+    const index = new Map<
+      string,
+      { chunkId: string; sourceTitle?: string; excerpt: string; factIndexes: number[] }
+    >();
+    briefFacts.forEach((fact, factIndex) => {
+      fact.resolved.forEach((evidence) => {
+        if (evidence.kind !== "external_source" || !evidence.chunkId) return;
+        const entry = index.get(evidence.chunkId) ?? {
+          chunkId: evidence.chunkId,
+          sourceTitle: evidence.sourceTitle,
+          excerpt: evidence.excerpt,
+          factIndexes: []
+        };
+        entry.factIndexes.push(factIndex);
+        index.set(evidence.chunkId, entry);
+      });
+    });
+    return [...index.values()];
   })();
 
   const effectiveRoleByEmployee =
@@ -1562,6 +1601,93 @@ export function DiscussionWorkspace({
                           </button>
                         );
                       })}
+                      {selectedBrief.facts?.length ? (
+                        <div className="grid gap-1">
+                          <h4 className="text-[11px] font-medium uppercase tracking-wide text-[var(--muted-foreground)]">
+                            {t("discussion.facts")} ({selectedBrief.facts.length})
+                          </h4>
+                          {selectedBrief.facts.map((fact, index) => {
+                            const resolved = briefFacts[index];
+                            const open = expandedFactIndex === index;
+                            return (
+                              <button
+                                key={fact.statement}
+                                type="button"
+                                className={cn(
+                                  "rounded-md border p-2 text-left transition-colors",
+                                  open
+                                    ? "border-[var(--primary)]"
+                                    : "hover:bg-[var(--muted)]"
+                                )}
+                                onClick={() =>
+                                  setExpandedFactIndex(open ? null : index)
+                                }
+                              >
+                                <div className="flex items-start gap-2">
+                                  <span className="text-[10px] font-medium text-[var(--muted-foreground)]">
+                                    F{index + 1}
+                                  </span>
+                                  <span className="text-xs">
+                                    {fact.statement}
+                                  </span>
+                                </div>
+                                {open && resolved ? (
+                                  <div className="mt-2 grid gap-1 border-t border-[var(--border)] pt-2">
+                                    {resolved.resolved.map((evidence) => (
+                                      <div
+                                        key={evidence.alias}
+                                        className="text-[11px]"
+                                      >
+                                        <span className="text-[var(--primary)]">
+                                          {evidence.sourceTitle ??
+                                            evidence.kind}
+                                        </span>
+                                        <p className="text-[var(--muted-foreground)]">
+                                          “{evidence.excerpt}”
+                                        </p>
+                                      </div>
+                                    ))}
+                                    {resolved.unresolvedIds.length > 0 ? (
+                                      <span className="text-[10px] text-[var(--danger)]">
+                                        {t("discussion.unresolved", {
+                                          count: resolved.unresolvedIds.length
+                                        })}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                      {evidenceIndex.length > 0 ? (
+                        <details className="rounded-md border p-2">
+                          <summary className="cursor-pointer text-[11px] font-medium text-[var(--muted-foreground)]">
+                            {t("discussion.evidenceIndex")}
+                          </summary>
+                          <div className="mt-2 grid gap-2">
+                            {evidenceIndex.map((entry) => (
+                              <div key={entry.chunkId} className="text-[11px]">
+                                <span className="text-[var(--primary)]">
+                                  {entry.sourceTitle ?? entry.chunkId}
+                                </span>
+                                <p className="text-[var(--muted-foreground)]">
+                                  “{entry.excerpt.slice(0, 80)}
+                                  {entry.excerpt.length > 80 ? "…" : ""}”
+                                </p>
+                                <span className="text-[var(--success)]">
+                                  {t("discussion.citedBy", {
+                                    facts: entry.factIndexes
+                                      .map((i) => `F${i + 1}`)
+                                      .join(", ")
+                                  })}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      ) : null}
                       <Separator />
                       <Input
                         value={taskTitle}
