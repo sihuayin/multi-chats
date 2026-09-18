@@ -2932,7 +2932,9 @@ export class ConversationRunService {
                     ? validateDiscussionBriefEvidence(
                         snapshot,
                         discussion,
-                        brief
+                        brief,
+                        undefined,
+                        { requirePositionGrounding: true }
                       )
                     : [];
                 await this.store.update((state) => {

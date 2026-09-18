@@ -415,9 +415,11 @@ function evaluateScores(
   const briefDisagreements = brief?.disagreements ?? [];
   const briefMinority =
     brief?.schemaVersion === 2 ? brief.minorityPositions : [];
-  const hasDisagreement = disagreementSignals.length > 0;
+  const hasExplicitDisagreement = disagreementSignals.length > 0;
+  const hasResolvableDisagreement =
+    hasExplicitDisagreement || distinctRoleOutputs.size > 1;
   const preservedDisagreement =
-    !hasDisagreement ||
+    !hasExplicitDisagreement ||
     (briefDisagreements.length > 0 &&
       briefDisagreements.some((item) =>
         disagreementSignals.some((signal) =>
@@ -507,7 +509,10 @@ function evaluateScores(
       message: "The corpus requires a Cross-response agreement, disagreement, and correction."
     });
   }
-  if (scenario?.expected.requiresDisagreement && !hasDisagreement) {
+  if (
+    scenario?.expected.requiresDisagreement &&
+    !hasResolvableDisagreement
+  ) {
     failures.push({
       code: "missing_quality_signal",
       dimension: "unresolvedDisagreement",
@@ -558,7 +563,8 @@ function evaluateScores(
     ),
     unresolvedDisagreement:
       preservedDisagreement &&
-      (!scenario?.expected.requiresDisagreement || hasDisagreement)
+      (!scenario?.expected.requiresDisagreement ||
+        hasResolvableDisagreement)
         ? 1
         : 0,
     actionability: boundedScore(

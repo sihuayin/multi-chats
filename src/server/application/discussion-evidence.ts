@@ -166,6 +166,48 @@ function resolveEvidence(
   };
 }
 
+function positionFactEvidenceIds(discussion: Discussion): Set<string> {
+  return new Set(
+    discussion.rounds
+      .filter((round) => round.phase === "positions")
+      .flatMap((round) => round.turns)
+      .filter((turn) => turn.status === "completed" && turn.payload)
+      .flatMap((turn) => turn.payload?.claims ?? [])
+      .filter(
+        (claim) =>
+          claim.kind === "fact" &&
+          (claim.evidenceIds?.length ?? 0) > 0
+      )
+      .flatMap((claim) => claim.evidenceIds ?? [])
+  );
+}
+
+function hasPositionGrounding(
+  discussion: Discussion,
+  alias: string,
+  positionEvidenceIds = positionFactEvidenceIds(discussion),
+  visited = new Set<string>()
+): boolean {
+  if (positionEvidenceIds.has(alias)) return true;
+  if (!alias.startsWith("turn:") || visited.has(alias)) return false;
+  visited.add(alias);
+  const turn = discussion.rounds
+    .flatMap((round) => round.turns)
+    .find((item) => item.id === alias.slice("turn:".length));
+  if (!turn?.payload) return false;
+  return turn.payload.claims
+    .filter((claim) => claim.kind === "fact")
+    .flatMap((claim) => claim.evidenceIds ?? [])
+    .some((evidenceId) =>
+      hasPositionGrounding(
+        discussion,
+        evidenceId,
+        positionEvidenceIds,
+        visited
+      )
+    );
+}
+
 export function availableEvidence(
   state: AppState,
   discussion: Discussion
@@ -381,7 +423,8 @@ export function repairDiscussionBriefEvidence(
         continue;
       }
     }
-    return evidenceIds.length > 0
+    return evidenceIds.length > 0 &&
+      evidenceIds.some((id) => hasPositionGrounding(discussion, id))
       ? [{ ...fact, evidenceIds }]
       : [];
   });
@@ -431,7 +474,8 @@ export function validateDiscussionBriefEvidence(
       kind?: "fact";
     }>;
   },
-  now = new Date().toISOString()
+  now = new Date().toISOString(),
+  options: { requirePositionGrounding?: boolean } = {}
 ): EvidenceReference[] {
   const references = new Map<string, EvidenceReference>();
   for (const fact of brief.facts) {
@@ -445,6 +489,20 @@ export function validateDiscussionBriefEvidence(
         {
           claim: fact.statement,
           reason: "missing"
+        }
+      );
+    }
+    if (
+      options.requirePositionGrounding &&
+      !fact.evidenceIds.some((alias) =>
+        hasPositionGrounding(discussion, alias)
+      )
+    ) {
+      throw new DiscussionEvidenceError(
+        "Discussion Brief fact is not grounded in Position claims",
+        {
+          claim: fact.statement,
+          reason: "out_of_scope"
         }
       );
     }
