@@ -159,3 +159,19 @@ _Avoid_: Document, file, knowledge base
 **Chunk**:
 A citable unit of extracted text within a Source, addressed by an `external:<chunkId>` Evidence reference.
 _Avoid_: Passage, fragment, snippet
+
+**Source revision**:
+A versioned chunk set of a Source; a refresh produces a new revision whose chunks supersede the prior set while the prior chunks remain resolvable by confirmed Briefs.
+_Avoid_: Source version, snapshot
+
+**Source tombstone**:
+The deleted-but-retained state of a Source whose chunks remain stored so already-confirmed Briefs keep resolving their Evidence references; a tombstoned Source is hidden from new attachment and context.
+_Avoid_: Source deletion, purge
+
+**Stale Source**:
+A URL Source whose fetched content no longer matches its ingested content, detected by an on-demand content-hash comparison.
+_Avoid_: Outdated Source, dirty Source
+
+**Dangling evidence reference**:
+An Evidence reference whose target Chunk no longer resolves; the failure mode that Source refresh and deletion must never cause.
+_Avoid_: Broken citation, orphaned reference
