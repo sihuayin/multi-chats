@@ -319,7 +319,7 @@ describe("Workspace backup and restore", () => {
     }
 
     expect(parseWorkspaceBackup(JSON.stringify(legacy))).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: 5,
       providerAttempts: [],
       evidenceReferences: [],
       discussionCompressions: [],

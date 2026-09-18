@@ -75,4 +75,68 @@ describe("ModelGateway request contracts", () => {
       kind: "terminal"
     });
   });
+
+  it("cites an ingested Source chunk in Discussion positions and synthesis", async () => {
+    const gateway = new FakeModelGateway(0);
+    const systemPrompt = [
+      "You are Alice.",
+      "Profile version: discussion-prompts.v5",
+      "Mode: solution.",
+      "Phase: positions."
+    ].join("\n");
+
+    const positions = await collect(
+      gateway.run(
+        request({
+          systemPrompt,
+          prompt: "Discussion: Grounded\n\nDiscussion ID: d-1",
+          messages: [
+            {
+              id: "source-chunk-chunk-1",
+              role: "user",
+              content: "Source \"notes.md\" chunk:\nThe stored passage.",
+              kind: "source_context",
+              chunkId: "chunk-1"
+            }
+          ]
+        })
+      )
+    );
+    const positionText = positions.find(
+      (event) => event.type === "text_completed"
+    );
+    expect(positionText).toBeDefined();
+    const positionPayload = JSON.parse(
+      (positionText as { text: string }).text
+    ) as { claims: Array<{ kind: string; evidenceIds: string[] }> };
+    expect(positionPayload.claims[0]).toMatchObject({
+      kind: "fact",
+      evidenceIds: ["external:chunk-1"]
+    });
+
+    const synthesis = await collect(
+      gateway.run(
+        request({
+          systemPrompt: systemPrompt.replace("positions", "synthesis"),
+          prompt: "Discussion: Grounded\n\nDiscussion ID: d-1",
+          messages: [
+            {
+              id: "source-chunk-chunk-1",
+              role: "user",
+              content: "Source \"notes.md\" chunk:\nThe stored passage.",
+              kind: "source_context",
+              chunkId: "chunk-1"
+            }
+          ]
+        })
+      )
+    );
+    const synthesisText = synthesis.find(
+      (event) => event.type === "text_completed"
+    );
+    const brief = JSON.parse(
+      (synthesisText as { text: string }).text
+    ) as { facts: Array<{ evidenceIds: string[] }> };
+    expect(brief.facts[0].evidenceIds).toEqual(["external:chunk-1"]);
+  });
 });

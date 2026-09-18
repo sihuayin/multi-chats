@@ -303,8 +303,15 @@ button {
   overflow: hidden;
 }
 
+.app-frame.sources-layout {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .providers-layout .app-main,
-.skills-layout .app-main {
+.skills-layout .app-main,
+.sources-layout .app-main {
   height: 100dvh;
   min-height: 0;
   overflow: hidden;
@@ -2269,8 +2276,13 @@ label textarea {
     grid-template-rows: max-content minmax(0, 1fr);
   }
 
+  .app-frame.sources-layout {
+    grid-template-rows: max-content minmax(0, 1fr);
+  }
+
   .providers-layout .app-main,
-  .skills-layout .app-main {
+  .skills-layout .app-main,
+  .sources-layout .app-main {
     height: auto;
     min-height: 0;
   }

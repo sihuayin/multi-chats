@@ -7,6 +7,9 @@ import {
 } from "@/server/adapters/model/provider-registry.server";
 import { ConversationRunService } from "@/server/application/conversation-run-service";
 import { DiscussionOrchestrator } from "@/server/application/discussion-orchestrator";
+import { SourceService } from "@/server/application/source-service";
+import { DefaultTextExtractor } from "@/server/application/text-extractor";
+import { extractPdfText } from "@/server/application/pdf-extractor";
 import { WorkspaceService } from "@/server/application/workspace-service";
 import { createCredentialCipher } from "@/server/security/credential-cipher";
 import { getStore } from "@/server/store";
@@ -19,6 +22,7 @@ export type AppServices = {
   workspace: WorkspaceService;
   runs: ConversationRunService;
   discussions: DiscussionOrchestrator;
+  sources: SourceService;
 };
 
 export function getServices(): AppServices {
@@ -38,7 +42,11 @@ export function getServices(): AppServices {
     globalState.__multiChatsServices = {
       workspace: new WorkspaceService(store, cipher, piProviderRegistry),
       runs,
-      discussions: new DiscussionOrchestrator(store, runs)
+      discussions: new DiscussionOrchestrator(store, runs),
+      sources: new SourceService(
+        store,
+        new DefaultTextExtractor({ pdfToText: extractPdfText })
+      )
     };
   }
   return globalState.__multiChatsServices;

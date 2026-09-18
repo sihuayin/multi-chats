@@ -128,6 +128,7 @@ export function createFixtureDiscussion(
     facilitatorParticipantId: participants[1].id,
     maxRounds: 3,
     currentRound: 1,
+    sourceIds: [],
     participants,
     events: [],
     rounds: [

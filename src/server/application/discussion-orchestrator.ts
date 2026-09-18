@@ -375,6 +375,15 @@ export class DiscussionOrchestrator {
         );
       }
       const timestamp = this.clock();
+      const sourceIds = [...new Set(parsed.sourceIds)];
+      const knownSourceIds = new Set(state.sources.map((source) => source.id));
+      if (sourceIds.some((sourceId) => !knownSourceIds.has(sourceId))) {
+        throw new ApiError(
+          400,
+          "Discussion references an unknown Source",
+          "discussion_invalid_source"
+        );
+      }
       const discussion: Discussion = {
         id: crypto.randomUUID(),
         workspaceId: state.workspace.id,
@@ -392,6 +401,7 @@ export class DiscussionOrchestrator {
           parsed.budget
         ),
         sourceTaskId: parsed.sourceTaskId,
+        sourceIds,
         participants,
         rounds: [],
         events: [],
@@ -484,6 +494,20 @@ export class DiscussionOrchestrator {
           parsed.budget
         );
       }
+      if (parsed.sourceIds !== undefined) {
+        const sourceIds = [...new Set(parsed.sourceIds)];
+        const knownSourceIds = new Set(
+          state.sources.map((source) => source.id)
+        );
+        if (sourceIds.some((sourceId) => !knownSourceIds.has(sourceId))) {
+          throw new ApiError(
+            400,
+            "Discussion references an unknown Source",
+            "discussion_invalid_source"
+          );
+        }
+        discussion.sourceIds = sourceIds;
+      }
       const facilitatorEmployeeId =
         parsed.facilitatorId ??
         previousFacilitatorEmployeeId;
@@ -537,6 +561,14 @@ export class DiscussionOrchestrator {
               {
                 kind: "budget_change" as const,
                 content: "Token and cost budget updated."
+              }
+            ]
+          : []),
+        ...(parsed.sourceIds !== undefined
+          ? [
+              {
+                kind: "material" as const,
+                content: "Discussion Sources were changed."
               }
             ]
           : [])

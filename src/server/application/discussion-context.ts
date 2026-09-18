@@ -7,6 +7,11 @@ import {
 import { phasePurpose } from "@/server/application/discussion-protocol";
 import { availableEvidence } from "@/server/application/discussion-evidence";
 import {
+  attachedReadyChunks,
+  discussionRetrievalQuery,
+  rankChunks
+} from "@/server/application/source-retrieval";
+import {
   compressionMatches,
   compressionSource
 } from "@/server/application/discussion-compression";
@@ -230,7 +235,26 @@ function relatedContextMessages(
         artifactId: artifact.id
       })
     );
-  return [...tasks, ...artifacts];
+  const chunks = rankChunks(
+    attachedReadyChunks(state, discussion),
+    discussionRetrievalQuery(discussion)
+  ).map(
+    (chunk): ModelMessage => {
+      const source = state.sources.find(
+        (item) => item.id === chunk.sourceId
+      );
+      return {
+        id: `source-chunk-${chunk.id}`,
+        role: "user",
+        content: `Source chunk external:${chunk.id} (${source?.title ?? chunk.sourceId}):\n${chunk.content}`,
+        kind: "source_context",
+        discussionId: discussion.id,
+        sourceId: chunk.sourceId,
+        chunkId: chunk.id
+      };
+    }
+  );
+  return [...tasks, ...artifacts, ...chunks];
 }
 
 function appliedInterventionMessages(
@@ -442,6 +466,12 @@ export function planDiscussionContext(input: {
     phase: input.round.phase
   });
   const evidence = availableEvidence(input.state, input.discussion);
+  // Chunk aliases are listed with their chunk text (bounded to the input
+  // budget) below, not in the fixed evidence message, so a large Source never
+  // blows the fixed-token budget.
+  const structuralEvidence = evidence.filter(
+    (item) => item.kind !== "external_source"
+  );
   const currentPositionTurnIds = new Set(
     input.round.phase === "positions"
       ? input.round.turns.map((turn) => turn.id)
@@ -449,7 +479,7 @@ export function planDiscussionContext(input: {
   );
   const visibleEvidence =
     input.round.phase === "positions"
-      ? evidence.filter((item) => {
+      ? structuralEvidence.filter((item) => {
           const separator = item.id.indexOf(":");
           const kind = separator > 0 ? item.id.slice(0, separator) : "";
           const sourceId =
@@ -472,7 +502,7 @@ export function planDiscussionContext(input: {
           }
           return true;
         })
-      : evidence;
+      : structuralEvidence;
   const evidenceMessage: ModelMessage = {
     ...baseMessage(
       [
@@ -480,7 +510,8 @@ export function planDiscussionContext(input: {
         ...visibleEvidence.map(
           (item) => `- ${item.id}: ${item.label}`
         ),
-        "Concrete external sources may be cited as external:<full HTTPS URL>. The literal placeholder external:<https URL> is not valid evidence."
+        "Concrete external sources may be cited as external:<full HTTPS URL>. The literal placeholder external:<https URL> is not valid evidence.",
+        "Attached Source chunks are listed with their text below as external:<chunkId>."
       ].join("\n")
     ),
     kind: "conversation"

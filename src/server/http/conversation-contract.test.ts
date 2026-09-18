@@ -39,6 +39,7 @@ function setupContractServices(
   );
   setServicesForTests({
     workspace: getServices().workspace,
+    sources: getServices().sources,
     runs: runService,
     discussions: new DiscussionOrchestrator(store, runService)
   });

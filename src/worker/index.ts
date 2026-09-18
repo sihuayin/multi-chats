@@ -1,5 +1,8 @@
 import { ConversationRunService } from "@/server/application/conversation-run-service";
 import { DiscussionOrchestrator } from "@/server/application/discussion-orchestrator";
+import { SourceService } from "@/server/application/source-service";
+import { DefaultTextExtractor } from "@/server/application/text-extractor";
+import { extractPdfText } from "@/server/application/pdf-extractor";
 import {
   createModelGateway
 } from "@/server/adapters/model/model-gateway";
@@ -20,8 +23,13 @@ async function main(): Promise<void> {
     }
   );
   const discussions = new DiscussionOrchestrator(store, runs);
+  const sources = new SourceService(
+    store,
+    new DefaultTextExtractor({ pdfToText: extractPdfText })
+  );
   await runs.recoverInterruptedRuns();
   await discussions.reconcileDiscussions();
+  await sources.ingestPendingSources();
 
   const interval = Number(process.env.WORKER_POLL_INTERVAL_MS ?? 1_000);
   let stopping = false;
@@ -51,6 +59,7 @@ async function main(): Promise<void> {
   while (!stopping) {
     const processed = await runs.processNextQueuedRun();
     await discussions.reconcileDiscussions();
+    await sources.ingestPendingSources();
     if (!processed) {
       await new Promise((resolve) => setTimeout(resolve, interval));
     }

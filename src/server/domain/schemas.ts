@@ -151,7 +151,8 @@ export const discussionCreateSchema = z.object({
   facilitatorId: z.string().trim().min(1),
   maxRounds: z.number().int().min(1).max(5).default(3),
   budget: discussionBudgetSchema.optional(),
-  sourceTaskId: z.string().trim().min(1).optional()
+  sourceTaskId: z.string().trim().min(1).optional(),
+  sourceIds: z.array(z.string().trim().min(1)).max(100).default([])
 }).strict();
 
 export const discussionPatchSchema = z.object({
@@ -161,7 +162,8 @@ export const discussionPatchSchema = z.object({
   participants: discussionCreateSchema.shape.participants.optional(),
   facilitatorId: z.string().trim().min(1).optional(),
   maxRounds: z.number().int().min(1).max(5).optional(),
-  budget: discussionBudgetSchema.optional()
+  budget: discussionBudgetSchema.optional(),
+  sourceIds: z.array(z.string().trim().min(1)).max(100).optional()
 }).strict().refine(
   (value) => Object.keys(value).length > 0,
   "At least one Discussion field is required"
@@ -262,6 +264,31 @@ export const artifactPatchSchema = z
   .refine(
     (value) => value.name !== undefined || value.content !== undefined,
     "At least one Artifact field is required"
+  );
+
+export const sourceCreateSchema = z
+  .discriminatedUnion("kind", [
+    z
+      .object({
+        kind: z.literal("url"),
+        title: z.string().trim().min(1).max(120).optional(),
+        location: z.string().trim().min(1).max(2000)
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal("file"),
+        title: z.string().trim().min(1).max(120).optional(),
+        location: z.string().trim().min(1).max(255),
+        content: z.string().max(2_000_000)
+      })
+      .strict()
+  ])
+  .refine(
+    (source) =>
+      source.kind !== "url" ||
+      /^https?:\/\//.test(source.location),
+    "URL Sources require an HTTP or HTTPS location"
   );
 
 export const approvalDecisionSchema = z.object({

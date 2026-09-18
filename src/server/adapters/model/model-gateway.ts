@@ -192,6 +192,12 @@ export class FakeModelGateway implements ModelGateway {
       const title =
         request.prompt.match(/^Discussion: (.+)$/m)?.[1] ??
         "Fake Discussion";
+      const chunkMessage = request.messages?.find(
+        (message) => message.kind === "source_context" && message.chunkId
+      );
+      const chunkEvidenceId = chunkMessage?.chunkId
+        ? `external:${chunkMessage.chunkId}`
+        : undefined;
       const response =
         phase === "synthesis"
           ? {
@@ -210,7 +216,9 @@ export class FakeModelGateway implements ModelGateway {
                 {
                   statement: "The Discussion has a deterministic fixture.",
                   kind: "fact",
-                  evidenceIds: ["external:https://example.com/fixture"]
+                  evidenceIds: [
+                    chunkEvidenceId ?? "external:https://example.com/fixture"
+                  ]
                 }
               ],
               constraints: [],
@@ -238,12 +246,20 @@ export class FakeModelGateway implements ModelGateway {
           : {
               summary: `${employee} ${phase} response`,
               claims: [
-                {
-                  statement: `${phase} produced a deterministic claim`,
-                  kind: "inference",
-                  evidenceIds: [],
-                  confidence: "high"
-                }
+                chunkEvidenceId
+                  ? {
+                      statement:
+                        "The Discussion cites an ingested Source chunk.",
+                      kind: "fact",
+                      evidenceIds: [chunkEvidenceId],
+                      confidence: "high"
+                    }
+                  : {
+                      statement: `${phase} produced a deterministic claim`,
+                      kind: "inference",
+                      evidenceIds: [],
+                      confidence: "high"
+                    }
               ],
               assumptions: [],
               risks: [],

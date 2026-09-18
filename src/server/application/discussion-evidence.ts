@@ -7,6 +7,7 @@ import type {
   EvidenceReferenceKind
 } from "@/server/domain/types";
 import type { DiscussionBriefV2 } from "@/server/application/discussion-brief";
+import { attachedReadyChunks } from "@/server/application/source-retrieval";
 
 export const DISCUSSION_EVIDENCE_INVALID_CODE =
   "discussion_evidence_invalid";
@@ -65,9 +66,9 @@ function resolveEvidence(
       "turn",
       "task",
       "artifact",
-      "tool_result"
-    ].includes(prefix) &&
-    !isExternalUrl
+      "tool_result",
+      "external"
+    ].includes(prefix)
   ) {
     throw new DiscussionEvidenceError(
       `Evidence reference ${alias} is invalid`,
@@ -77,6 +78,8 @@ function resolveEvidence(
 
   let kind = prefix as EvidenceReferenceKind;
   let label = sourceId;
+  let locator: string | undefined;
+  let excerptHash: string | undefined;
   if (prefix === "message") {
     const message = state.messages.find((item) => item.id === sourceId);
     if (
@@ -146,9 +149,38 @@ function resolveEvidence(
       );
     }
     label = String(event.payload.toolName ?? sourceId);
-  } else {
+  } else if (prefix === "external") {
     kind = "external_source";
-    label = sourceId;
+    if (isExternalUrl) {
+      label = sourceId;
+      locator = sourceId;
+    } else {
+      const chunk = state.chunks.find((item) => item.id === sourceId);
+      if (chunk) {
+        const source = state.sources.find(
+          (item) => item.id === chunk.sourceId
+        );
+        if (!source || !discussion.sourceIds.includes(source.id)) {
+          throw new DiscussionEvidenceError(
+            `Evidence reference ${alias} is outside the Discussion`,
+            { evidenceId: alias, reason: "out_of_scope" }
+          );
+        }
+        label = chunk.content.slice(0, 160);
+        locator = source.location;
+        excerptHash = chunk.contentHash;
+      } else {
+        const source = state.sources.find((item) => item.id === sourceId);
+        if (!source || !discussion.sourceIds.includes(source.id)) {
+          throw new DiscussionEvidenceError(
+            `Evidence reference ${alias} is outside the Discussion`,
+            { evidenceId: alias, reason: "out_of_scope" }
+          );
+        }
+        label = source.title;
+        locator = source.location;
+      }
+    }
   }
 
   return {
@@ -157,8 +189,9 @@ function resolveEvidence(
       workspaceId: state.workspace.id,
       kind,
       sourceId,
-      locator: isExternalUrl ? sourceId : undefined,
-      excerptHash: createHash("sha256").update(label).digest("hex"),
+      ...(locator !== undefined ? { locator } : {}),
+      excerptHash:
+        excerptHash ?? createHash("sha256").update(label).digest("hex"),
       retrievedAt: now,
       createdAt: now
     },
@@ -276,6 +309,13 @@ export function availableEvidence(
       id: evidenceAlias("tool_result", event.id),
       kind: "tool_result",
       label: String(event.payload.toolName ?? event.id)
+    });
+  }
+  for (const chunk of attachedReadyChunks(state, discussion)) {
+    entries.push({
+      id: `external:${chunk.id}`,
+      kind: "external_source",
+      label: chunk.content.slice(0, 160)
     });
   }
   return entries;

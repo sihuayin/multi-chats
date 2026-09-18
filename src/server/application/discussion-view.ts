@@ -241,6 +241,7 @@ export function buildDiscussionView(
       latestBriefRevision: latestBrief?.revision,
       confirmedBriefArtifactId: discussion.confirmedBriefArtifactId,
       confirmedTaskId: discussion.confirmedTaskId,
+      sourceIds: discussion.sourceIds,
       promptProfileVersion: discussion.promptProfileVersion,
       budget: discussion.budget,
       createdAt: discussion.createdAt,
@@ -272,6 +273,18 @@ export function buildDiscussionView(
     confirmedBrief,
     sourceTask: sourceTask ? taskView(sourceTask) : undefined,
     confirmedTask: confirmedTask ? taskView(confirmedTask) : undefined,
+    sources: discussion.sourceIds
+      .map((sourceId) =>
+        state.sources.find((source) => source.id === sourceId)
+      )
+      .filter((source): source is NonNullable<typeof source> => Boolean(source))
+      .map((source) => ({
+        id: source.id,
+        title: source.title,
+        location: source.location,
+        status: source.status,
+        chunkCount: source.chunkCount
+      })),
     activeRun: activeRun ? runView(activeRun) : undefined,
     usage,
     cost,

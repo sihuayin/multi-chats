@@ -29,7 +29,7 @@ describe("AppState migrations", () => {
 
     const migrated = migrateAppState(legacy);
 
-    expect(migrated.schemaVersion).toBe(4);
+    expect(migrated.schemaVersion).toBe(5);
     expect(migrated.discussions).toEqual([]);
     expect(migrated.artifacts[0]).toMatchObject({
       id: "artifact-1",
@@ -76,7 +76,7 @@ describe("AppState migrations", () => {
     expect(migrated.messages[0].taskId).toBe(task.id);
     expect(migrated.runs[0].taskId).toBe(task.id);
     expect(migrated.artifacts[0].runId).toBe(run.id);
-    expect(migrated.schemaVersion).toBe(4);
+    expect(migrated.schemaVersion).toBe(5);
     expect(migratedAgain).toEqual(migrated);
   });
 
@@ -211,7 +211,7 @@ describe("AppState migrations", () => {
     const migrated = migrateAppState(legacy);
 
     expect(migrated).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: 5,
       providerAttempts: [],
       evidenceReferences: [],
       discussionCompressions: [],
@@ -253,12 +253,30 @@ describe("AppState migrations", () => {
 
     const migrated = migrateAppState(state);
 
-    expect(migrated.schemaVersion).toBe(4);
+    expect(migrated.schemaVersion).toBe(5);
     expect(migrated.discussionCompressions[0]).toMatchObject({
       sourceSpanHash: "legacy:legacy-content",
       strategy: "extractive",
       compressionProfileVersion: "legacy"
     });
+  });
+
+  it("backfills Sources, Chunks, and Discussion sourceIds", () => {
+    const state = createFixtureState() as unknown as Record<string, unknown>;
+    state.schemaVersion = 4;
+    state.discussions = [
+      createFixtureDiscussion({
+        workspaceId: "00000000-0000-4000-8000-000000000001",
+        conversationId: "30000000-0000-4000-8000-000000000001"
+      })
+    ];
+
+    const migrated = migrateAppState(state);
+
+    expect(migrated.schemaVersion).toBe(5);
+    expect(migrated.sources).toEqual([]);
+    expect(migrated.chunks).toEqual([]);
+    expect(migrated.discussions[0].sourceIds).toEqual([]);
   });
 
   it("does not mutate its input", () => {

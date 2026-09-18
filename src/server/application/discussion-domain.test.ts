@@ -16,6 +16,7 @@ function discussion(): Discussion {
     facilitatorParticipantId: "participant-3",
     maxRounds: 3,
     currentRound: 0,
+    sourceIds: [],
     participants: [
       {
         id: "participant-1",

@@ -265,7 +265,7 @@ async function handleApiRoute(
     return health();
   }
 
-  const { workspace, runs, discussions } = getServices();
+  const { workspace, runs, discussions, sources } = getServices();
 
   if (request.method === "GET" && resource === "workspace") {
     return json(await workspace.getWorkspaceView());
@@ -602,6 +602,33 @@ async function handleApiRoute(
       if (request.method === "PATCH" && id) {
         const parsed = approvalDecisionSchema.parse(await body(request));
         return json(await workspace.resolveApproval(id, parsed.decision));
+      }
+  }
+
+  if (resource === "sources") {
+      if (request.method === "GET" && !id) {
+        return json(await sources.listSources());
+      }
+      if (request.method === "POST" && !id) {
+        const source = await sources.createSource(await body(request));
+        if (!process.env.DATABASE_URL) {
+          void sources.ingestPendingSources();
+        }
+        return json(source, { status: 201 });
+      }
+      if (request.method === "GET" && id && !child) {
+        return json(await sources.getSource(id));
+      }
+      if (request.method === "GET" && id && child === "chunks") {
+        return json(await sources.listChunks(id));
+      }
+      if (request.method === "POST" && id && child === "retry") {
+        emptyCommandSchema.parse(await body(request));
+        return json(await sources.retrySource(id));
+      }
+      if (request.method === "DELETE" && id && !child) {
+        await sources.deleteSource(id);
+        return new Response(null, { status: 204 });
       }
   }
 

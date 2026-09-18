@@ -415,6 +415,41 @@ export type Artifact = {
   updatedAt: IsoDate;
 };
 
+export type SourceKind = "url" | "file";
+
+export type SourceStatus =
+  | "pending"
+  | "ingesting"
+  | "ready"
+  | "failed";
+
+export type Source = {
+  id: string;
+  workspaceId: string;
+  title: string;
+  kind: SourceKind;
+  location: string;
+  status: SourceStatus;
+  error?: string;
+  contentHash?: string;
+  chunkCount: number;
+  /** Transient raw upload content retained only while ingestion is in flight. */
+  pendingContent?: string;
+  createdAt: IsoDate;
+  updatedAt: IsoDate;
+};
+
+export type Chunk = {
+  id: string;
+  workspaceId: string;
+  sourceId: string;
+  index: number;
+  content: string;
+  contentHash: string;
+  createdAt: IsoDate;
+  updatedAt: IsoDate;
+};
+
 export type DiscussionMode =
   | "requirements"
   | "problem"
@@ -582,6 +617,7 @@ export type Discussion = {
   note?: string;
   sourceTaskId?: string;
   confirmedTaskId?: string;
+  sourceIds: string[];
   participants: DiscussionParticipant[];
   rounds: DiscussionRound[];
   events?: DiscussionEvent[];
@@ -632,6 +668,8 @@ export type AppState = {
   runEvents: RunEvent[];
   tasks: Task[];
   artifacts: Artifact[];
+  sources: Source[];
+  chunks: Chunk[];
   discussions: Discussion[];
   providerAttempts: ProviderAttempt[];
   evidenceReferences: EvidenceReference[];

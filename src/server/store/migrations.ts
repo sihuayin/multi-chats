@@ -6,7 +6,7 @@ import {
   validateDiscussionReferences
 } from "@/server/application/discussion-domain";
 
-export const CURRENT_SCHEMA_VERSION = 4;
+export const CURRENT_SCHEMA_VERSION = 5;
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -84,6 +84,25 @@ function migrateV3ToV4(state: Record<string, unknown>): void {
     compression.strategy ??= "extractive";
     compression.compressionProfileVersion ??= "legacy";
   }
+  state.schemaVersion = 4;
+}
+
+function migrateV4ToV5(state: Record<string, unknown>): void {
+  state.sources ??= [];
+  state.chunks ??= [];
+  if (!Array.isArray(state.sources)) {
+    throw new Error("Workspace Sources are invalid");
+  }
+  if (!Array.isArray(state.chunks)) {
+    throw new Error("Workspace Chunks are invalid");
+  }
+  if (!Array.isArray(state.discussions)) {
+    throw new Error("Workspace Discussions are invalid");
+  }
+  for (const value of state.discussions) {
+    const discussion = record(value);
+    discussion.sourceIds ??= [];
+  }
   state.schemaVersion = CURRENT_SCHEMA_VERSION;
 }
 
@@ -146,6 +165,7 @@ export function migrateAppState(input: unknown): AppState {
   }
   if (state.schemaVersion === 2) migrateV2ToV3(state);
   if (state.schemaVersion === 3) migrateV3ToV4(state);
+  if (state.schemaVersion === 4) migrateV4ToV5(state);
   if (version !== CURRENT_SCHEMA_VERSION) {
     if (state.schemaVersion !== CURRENT_SCHEMA_VERSION) {
       throw new Error(

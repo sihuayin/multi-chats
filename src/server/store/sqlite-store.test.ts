@@ -177,7 +177,7 @@ describe("SqliteStore", () => {
         artifact: state.artifacts[0]
       }))
     ).toEqual({
-      schemaVersion: 4,
+      schemaVersion: 5,
       discussions: [],
       artifact: expect.objectContaining({
         ownerType: "task",
@@ -197,7 +197,7 @@ describe("SqliteStore", () => {
     };
     migratedDatabase.close();
 
-    expect(persisted.schemaVersion).toBe(4);
+    expect(persisted.schemaVersion).toBe(5);
     expect(persisted.discussions).toEqual([]);
     expect(persisted.artifacts[0]).toMatchObject({
       ownerType: "task",

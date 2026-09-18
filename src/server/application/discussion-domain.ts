@@ -382,6 +382,13 @@ export function validateDiscussion(discussion: Discussion): void {
     throw new Error("Discussion reference is invalid");
   }
   if (
+    discussion.sourceIds !== undefined &&
+    (!Array.isArray(discussion.sourceIds) ||
+      discussion.sourceIds.some((id) => !nonEmptyString(id)))
+  ) {
+    throw new Error("Discussion sourceIds are invalid");
+  }
+  if (
     !Number.isInteger(discussion.maxRounds) ||
     discussion.maxRounds < 1 ||
     discussion.maxRounds > 5

@@ -151,3 +151,11 @@ _Avoid_: Permission, confirmation
 **Artifact**:
 A structured result owned by a Task or Discussion, limited to text, Markdown, or JSON in v1.
 _Avoid_: Attachment, file, output
+
+**Source**:
+An ingested external document or web page, stored as citable text Chunks, that a user attaches to a Discussion as evidence.
+_Avoid_: Document, file, knowledge base
+
+**Chunk**:
+A citable unit of extracted text within a Source, addressed by an `external:<chunkId>` Evidence reference.
+_Avoid_: Passage, fragment, snippet

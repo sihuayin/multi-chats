@@ -23,7 +23,7 @@ describe("MemoryStore runtime contracts", () => {
 
     const store = new MemoryStore(legacy as never);
 
-    expect(await store.read((state) => state.schemaVersion)).toBe(4);
+    expect(await store.read((state) => state.schemaVersion)).toBe(5);
     expect(await store.read((state) => state.providerAttempts)).toEqual([]);
   });
 

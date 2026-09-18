@@ -38,6 +38,7 @@ describe("Discussion HTTP contract", () => {
     );
     setServicesForTests({
       workspace: getServices().workspace,
+      sources: getServices().sources,
       runs,
       discussions: new DiscussionOrchestrator(store, runs)
     });
@@ -201,6 +202,7 @@ describe("Discussion HTTP contract", () => {
     const discussions = new DiscussionOrchestrator(store, runs);
     setServicesForTests({
       workspace: getServices().workspace,
+      sources: getServices().sources,
       runs,
       discussions
     });
@@ -266,6 +268,7 @@ describe("Discussion HTTP contract", () => {
     );
     setServicesForTests({
       workspace: getServices().workspace,
+      sources: getServices().sources,
       runs,
       discussions: new DiscussionOrchestrator(store, runs)
     });
@@ -428,6 +431,7 @@ describe("Discussion HTTP contract", () => {
     const discussions = new DiscussionOrchestrator(store, runs);
     setServicesForTests({
       workspace: getServices().workspace,
+      sources: getServices().sources,
       runs,
       discussions
     });
@@ -599,6 +603,7 @@ describe("Discussion HTTP contract", () => {
     const discussions = new DiscussionOrchestrator(store, runs);
     setServicesForTests({
       workspace: getServices().workspace,
+      sources: getServices().sources,
       runs,
       discussions
     });

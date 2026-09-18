@@ -11,6 +11,7 @@ import type {
   Run,
   RunEvent,
   Skill,
+  Source,
   Task,
   TaskAction,
   ToolDefinition
@@ -40,6 +41,7 @@ export type WorkspaceView = {
   runEvents: RunEvent[];
   tasks: Array<Task & { availableActions: TaskAction[] }>;
   artifacts: Artifact[];
+  sources: Source[];
   discussions: Discussion[];
   approvals: Approval[];
 };

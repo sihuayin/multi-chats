@@ -2,6 +2,7 @@
 
 import {
   Activity,
+  BookOpen,
   Boxes,
   Bot,
   Braces,
@@ -29,6 +30,7 @@ const navItems: Array<{
   { href: "/groups", label: "nav.groups", icon: UsersRound },
   { href: "/skills", label: "nav.skills", icon: Braces },
   { href: "/tools", label: "nav.tools", icon: Wrench },
+  { href: "/sources", label: "nav.sources", icon: BookOpen },
   { href: "/providers", label: "nav.providers", icon: KeyRound },
   { href: "/diagnostics", label: "nav.diagnostics", icon: Activity }
 ];
@@ -39,6 +41,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { locale, setLocale, t } = useI18n();
   const isProvidersPage = pathname.startsWith("/providers");
   const isSkillsPage = pathname.startsWith("/skills");
+  const isSourcesPage = pathname.startsWith("/sources");
   const frameClassName =
     pathname === "/"
       ? "app-frame conversation-layout"
@@ -46,7 +49,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         ? "app-frame providers-layout"
         : isSkillsPage
           ? "app-frame skills-layout"
-          : "app-frame";
+          : isSourcesPage
+            ? "app-frame sources-layout"
+            : "app-frame";
 
   return (
     <div className={frameClassName}>

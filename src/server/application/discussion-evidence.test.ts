@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DiscussionEvidenceError,
+  availableEvidence,
   evidenceAlias,
   repairDiscussionBriefEvidence,
   repairDiscussionTurnEvidence,
@@ -11,8 +12,12 @@ import {
   createFixtureDiscussion,
   createFixtureState
 } from "@/server/test-support/fixtures";
-import type { DiscussionTurnPayload } from "@/server/domain/types";
+import type {
+  DiscussionTurnPayload,
+  Source
+} from "@/server/domain/types";
 import type { DiscussionBriefV2 } from "@/server/application/discussion-brief";
+import { chunkSource } from "@/server/application/source-chunking";
 
 function fixture() {
   const state = createFixtureState();
@@ -101,6 +106,34 @@ function payload(evidenceIds: string[]): DiscussionTurnPayload {
     risks: [],
     openQuestions: []
   };
+}
+
+function attachSource(
+  state: ReturnType<typeof createFixtureState>,
+  discussion: ReturnType<typeof createFixtureDiscussion>
+): { source: Source; chunkId: string } {
+  const source: Source = {
+    id: "source-attached",
+    workspaceId: state.workspace.id,
+    title: "Attached source",
+    kind: "file",
+    location: "notes.md",
+    status: "ready",
+    chunkCount: 2,
+    contentHash: "source-hash",
+    createdAt: state.workspace.createdAt,
+    updatedAt: state.workspace.updatedAt
+  };
+  state.sources.push(source);
+  const chunks = chunkSource({
+    sourceId: source.id,
+    workspaceId: state.workspace.id,
+    text: "First chunk.\n\nSecond chunk.",
+    now: state.workspace.createdAt
+  });
+  state.chunks.push(...chunks);
+  discussion.sourceIds = [source.id];
+  return { source, chunkId: chunks[0].id };
 }
 
 describe("Discussion evidence", () => {
@@ -237,5 +270,68 @@ describe("Discussion evidence", () => {
         evidenceIds: ["external:https://example.com/supported"]
       }
     ]);
+  });
+
+  it("resolves an attached Source chunk as an external_source reference", () => {
+    const value = fixture();
+    const { chunkId } = attachSource(value.state, value.discussion);
+
+    const result = validateDiscussionTurnEvidence(
+      value.state,
+      value.discussion,
+      payload([`external:${chunkId}`])
+    );
+
+    expect(result.references[0]).toMatchObject({
+      kind: "external_source",
+      sourceId: chunkId,
+      locator: "notes.md"
+    });
+  });
+
+  it("rejects a chunk whose Source is not attached to the Discussion", () => {
+    const value = fixture();
+    const { chunkId } = attachSource(value.state, value.discussion);
+    value.discussion.sourceIds = [];
+
+    expect(() =>
+      validateDiscussionTurnEvidence(
+        value.state,
+        value.discussion,
+        payload([`external:${chunkId}`])
+      )
+    ).toThrow("outside the Discussion");
+  });
+
+  it("resolves an attached Source at the source level", () => {
+    const value = fixture();
+    const { source } = attachSource(value.state, value.discussion);
+
+    const result = validateDiscussionTurnEvidence(
+      value.state,
+      value.discussion,
+      payload([`external:${source.id}`])
+    );
+
+    expect(result.references[0]).toMatchObject({
+      kind: "external_source",
+      sourceId: source.id,
+      locator: "notes.md"
+    });
+  });
+
+  it("lists attached Source chunks in availableEvidence", () => {
+    const value = fixture();
+    const { chunkId } = attachSource(value.state, value.discussion);
+
+    const evidence = availableEvidence(value.state, value.discussion);
+
+    expect(
+      evidence.some(
+        (item) =>
+          item.id === `external:${chunkId}` &&
+          item.kind === "external_source"
+      )
+    ).toBe(true);
   });
 });

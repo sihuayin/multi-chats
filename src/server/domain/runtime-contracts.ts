@@ -179,6 +179,36 @@ export const discussionContextRevisionSchema = z
   })
   .strict();
 
+export const sourceSchema = z
+  .object({
+    id: identifier,
+    workspaceId: identifier,
+    title: identifier,
+    kind: z.enum(["url", "file"]),
+    location: identifier,
+    status: z.enum(["pending", "ingesting", "ready", "failed"]),
+    error: z.string().optional(),
+    contentHash: identifier.optional(),
+    chunkCount: z.number().int().nonnegative(),
+    pendingContent: z.string().optional(),
+    createdAt: timestamp,
+    updatedAt: timestamp
+  })
+  .strict();
+
+export const chunkSchema = z
+  .object({
+    id: identifier,
+    workspaceId: identifier,
+    sourceId: identifier,
+    index: z.number().int().nonnegative(),
+    content: z.string(),
+    contentHash: identifier,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  })
+  .strict();
+
 export const modelPricingSchema = z
   .object({
     id: identifier,
@@ -202,7 +232,9 @@ const runtimeLedgers = [
   ["discussionCompressions", discussionCompressionSchema],
   ["discussionInterventions", discussionInterventionSchema],
   ["discussionContextRevisions", discussionContextRevisionSchema],
-  ["modelPricing", modelPricingSchema]
+  ["modelPricing", modelPricingSchema],
+  ["sources", sourceSchema],
+  ["chunks", chunkSchema]
 ] as const;
 
 function records(value: unknown): Array<Record<string, unknown>> {
@@ -377,6 +409,7 @@ export function validateRuntimeContracts(
   const evidenceIds = ids(parsedValues.get("evidenceReferences"));
   const compressionIds = ids(parsedValues.get("discussionCompressions"));
   const pricingIds = ids(parsedValues.get("modelPricing"));
+  const sourceIds = ids(parsedValues.get("sources"));
 
   for (const message of records(state.messages)) {
     const taskId = optionalIdentifier(
@@ -548,6 +581,29 @@ export function validateRuntimeContracts(
               : undefined;
     if (sources) {
       requireReference(record.sourceId as string, sources, "evidenceReferences");
+    }
+  }
+
+  for (const chunk of parsedValues.get("chunks") ?? []) {
+    const record = chunk as Record<string, unknown>;
+    requireReference(
+      record.sourceId as string,
+      sourceIds,
+      "chunks"
+    );
+  }
+
+  for (const discussion of records(state.discussions)) {
+    const sourceIdsField = discussion.sourceIds;
+    if (sourceIdsField === undefined) continue;
+    if (
+      !Array.isArray(sourceIdsField) ||
+      sourceIdsField.some((id) => typeof id !== "string")
+    ) {
+      throw new Error("Workspace Discussion sourceIds are invalid");
+    }
+    for (const sourceId of sourceIdsField as string[]) {
+      requireReference(sourceId, sourceIds, "Discussion sourceIds");
     }
   }
 

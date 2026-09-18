@@ -34,6 +34,7 @@ import {
 import type { WorkspaceView } from "@/lib/workspace-view";
 import type { CredentialCipher } from "@/server/security/credential-cipher";
 import { BUILT_IN_TOOLS } from "@/server/store/initial-state";
+import { publicSource } from "@/server/application/source-service";
 import type { StateStore } from "@/server/store/store";
 
 export type PublicProvider = WorkspaceView["providers"][number];
@@ -86,6 +87,7 @@ export class WorkspaceService {
         availableActions: availableTaskActions(state, task)
       })),
       artifacts: state.artifacts,
+      sources: state.sources.map((source) => publicSource(source)),
       discussions: state.discussions,
       approvals: state.approvals
     }));

@@ -6,12 +6,14 @@ import {
   useState
 } from "react";
 import {
+  BookOpen,
   Check,
   ChevronRight,
   CircleStop,
   FileJson,
   LoaderCircle,
   MessageSquarePlus,
+  Pencil,
   Play,
   Plus,
   RefreshCw,
@@ -203,6 +205,7 @@ type DiscussionView = {
     };
     latestBriefRevision?: number;
     confirmedTaskId?: string;
+    sourceIds: string[];
   };
   participants: Array<{
     id: string;
@@ -243,6 +246,13 @@ type DiscussionView = {
     title: string;
     status: string;
   };
+  sources: Array<{
+    id: string;
+    title: string;
+    location: string;
+    status: string;
+    chunkCount: number;
+  }>;
   activeRun?: { id: string; status: string };
   budget: {
     usedRounds: number;
@@ -407,6 +417,8 @@ export function DiscussionWorkspace({
   >({});
   const [selectedParticipantIds, setSelectedParticipantIds] = useState<string[]>([]);
   const [facilitatorId, setFacilitatorId] = useState("");
+  const [sourceIds, setSourceIds] = useState<string[]>([]);
+  const [editingSources, setEditingSources] = useState(false);
   const [selectedOptionId, setSelectedOptionId] = useState("");
   const [taskTitle, setTaskTitle] = useState("");
   const [interventionKind, setInterventionKind] = useState<
@@ -596,13 +608,43 @@ export function DiscussionWorkspace({
                 role: effectiveRoleByEmployee[employeeId] ?? "analyst"
               })
             ),
-            facilitatorId: effectiveFacilitatorId
+            facilitatorId: effectiveFacilitatorId,
+            sourceIds
           })
         }
       );
       setLoadedView(created);
       setSelectedDiscussionId(created.discussion.id);
       setTitle("");
+      setSourceIds([]);
+      await refresh();
+    } catch (nextError) {
+      setError(String(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function toggleEditSources() {
+    if (!view) return;
+    setSourceIds(view.discussion.sourceIds);
+    setEditingSources((current) => !current);
+  }
+
+  async function saveSources() {
+    if (!view) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await apiRequest<DiscussionView>(
+        `/api/discussions/${view.discussion.id}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ sourceIds })
+        }
+      );
+      setLoadedView(next);
+      setEditingSources(false);
       await refresh();
     } catch (nextError) {
       setError(String(nextError));
@@ -909,6 +951,46 @@ export function DiscussionWorkspace({
                   </SelectContent>
                 </Select>
               </div>
+              <div className="grid gap-3">
+                <Label>Sources</Label>
+                {(data?.sources ?? []).filter(
+                  (source) => source.status === "ready"
+                ).length === 0 ? (
+                  <p className="text-xs text-[var(--muted-foreground)]">
+                    No ready Sources. Add one on the Sources page to make it
+                    citable.
+                  </p>
+                ) : (
+                  <div className="grid gap-2 md:grid-cols-2">
+                    {(data?.sources ?? [])
+                      .filter((source) => source.status === "ready")
+                      .map((source) => (
+                        <label
+                          key={source.id}
+                          className="flex items-center gap-3 rounded-md border bg-[var(--paper)] p-3"
+                        >
+                          <Checkbox
+                            aria-label={`Attach ${source.title}`}
+                            checked={sourceIds.includes(source.id)}
+                            onCheckedChange={(checked) =>
+                              setSourceIds((current) =>
+                                checked === true
+                                  ? [...current, source.id]
+                                  : current.filter((id) => id !== source.id)
+                              )
+                            }
+                          />
+                          <span className="min-w-0 flex-1 truncate text-sm">
+                            {source.title}
+                          </span>
+                          <small className="text-[var(--muted-foreground)]">
+                            {source.chunkCount}
+                          </small>
+                        </label>
+                      ))}
+                  </div>
+                )}
+              </div>
               <div className="flex justify-end">
                 <Button
                   onClick={() => void createDiscussion()}
@@ -1059,8 +1141,31 @@ export function DiscussionWorkspace({
                     </span>
                   ) : null}
                 </div>
+                {view.sources.length > 0 ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[var(--muted-foreground)]">
+                    <span>Sources</span>
+                    {view.sources.map((source) => (
+                      <Badge
+                        key={source.id}
+                        variant="outline"
+                        title={source.location}
+                      >
+                        {source.title} · {source.chunkCount} chunks
+                      </Badge>
+                    ))}
+                  </div>
+                ) : null}
               </div>
               <div className={styles.commandRow}>
+                {view.availableActions.includes("edit") ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={toggleEditSources}
+                  >
+                    <Pencil /> Sources
+                  </Button>
+                ) : null}
                 {view.availableActions.includes("start") ? (
                   <Button size="sm" onClick={() => void runCommand("start")}>
                     <Play /> Start
@@ -1104,6 +1209,67 @@ export function DiscussionWorkspace({
                 ) : null}
               </div>
             </header>
+
+            {editingSources ? (
+              <Card className="gap-3 py-4">
+                <CardHeader className="px-4">
+                  <CardTitle className="flex items-center gap-2 text-sm">
+                    <BookOpen /> Sources
+                  </CardTitle>
+                  <CardDescription>
+                    Choose which ready Sources this Discussion may cite.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-2 px-3">
+                  {(data?.sources ?? []).filter(
+                    (source) => source.status === "ready"
+                  ).length === 0 ? (
+                    <p className="text-xs text-[var(--muted-foreground)]">
+                      No ready Sources. Add one on the Sources page.
+                    </p>
+                  ) : (
+                    (data?.sources ?? [])
+                      .filter((source) => source.status === "ready")
+                      .map((source) => (
+                        <label
+                          key={source.id}
+                          className="flex items-center gap-3 rounded-md border bg-[var(--paper)] p-3"
+                        >
+                          <Checkbox
+                            aria-label={`Attach ${source.title}`}
+                            checked={sourceIds.includes(source.id)}
+                            onCheckedChange={(checked) =>
+                              setSourceIds((current) =>
+                                checked === true
+                                  ? [...current, source.id]
+                                  : current.filter((id) => id !== source.id)
+                              )
+                            }
+                          />
+                          <span className="min-w-0 flex-1 truncate text-sm">
+                            {source.title}
+                          </span>
+                          <small className="text-[var(--muted-foreground)]">
+                            {source.chunkCount} chunks
+                          </small>
+                        </label>
+                      ))
+                  )}
+                </CardContent>
+                <div className="flex justify-end gap-2 px-4">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setEditingSources(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button size="sm" onClick={() => void saveSources()}>
+                    Save
+                  </Button>
+                </div>
+              </Card>
+            ) : null}
 
             <div className={styles.workbench}>
               <Card className={cn(styles.participants, "gap-3 py-4")}>

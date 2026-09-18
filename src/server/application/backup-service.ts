@@ -24,6 +24,8 @@ const stateArrayKeys = Object.keys({
   runEvents: true,
   tasks: true,
   artifacts: true,
+  sources: true,
+  chunks: true,
   discussions: true,
   providerAttempts: true,
   evidenceReferences: true,

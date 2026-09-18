@@ -151,6 +151,8 @@ export function createInitialState(workspaceId = crypto.randomUUID()): AppState 
     runEvents: [],
     tasks: [],
     artifacts: [],
+    sources: [],
+    chunks: [],
     discussions: [],
     providerAttempts: [],
     evidenceReferences: [],

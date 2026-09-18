@@ -31,7 +31,8 @@ export type ModelMessage = {
     | "user_intervention"
     | "discussion_turn"
     | "task_context"
-    | "artifact_context";
+    | "artifact_context"
+    | "source_context";
   authorId?: string;
   employeeId?: string;
   discussionId?: string;
@@ -42,6 +43,8 @@ export type ModelMessage = {
   interventionId?: string;
   taskId?: string;
   artifactId?: string;
+  sourceId?: string;
+  chunkId?: string;
   evidenceIds?: string[];
 };
 
