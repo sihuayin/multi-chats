@@ -36,7 +36,7 @@ const FACILITATOR_EMPLOYEE_ID = "smoke-employee-facilitator";
 const INJECTED_FAILURE_CODE = "provider_smoke_fault_injected";
 const STALL_SAFETY_TIMEOUT_MS = 30_000;
 /** Bounded window that forces compression while leaving room for real Provider output. */
-const PRESSURED_CONTEXT_WINDOW = 32_000;
+const PRESSURED_CONTEXT_WINDOW = 40_000;
 
 export type ProviderSmokeFaultPlan = {
   retryableFailures: Map<string, { count: number; kind: ProviderFailureKind }>;
@@ -422,7 +422,7 @@ async function usageCaptureScenario(
  * without also inflating the Evidence list or the phase context.
  */
 const PRESSURE_FILLER = "Historical analysis detail. ";
-const PRESSURE_PADDING_REPEATS = 1_600;
+const PRESSURE_PADDING_REPEATS = 3_000;
 
 /**
  * Grow every completed Turn older than the newest completed Round, so the next
