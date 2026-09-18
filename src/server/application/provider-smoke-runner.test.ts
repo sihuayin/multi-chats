@@ -35,7 +35,8 @@ describe("Provider smoke matrix runner", () => {
       ["retry", "passed", undefined],
       ["failover", "passed", undefined],
       ["cancellation", "passed", undefined],
-      ["brief_generation", "passed", undefined]
+      ["brief_generation", "passed", undefined],
+      ["rerank", "passed", undefined]
     ]);
     expect(report.passed).toBe(true);
     expect(report.totals.usage.source).toBe("provider");

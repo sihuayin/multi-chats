@@ -2319,7 +2319,10 @@ export class ConversationRunService {
                 const attempt = s.providerAttempts.find(
                   (item) => item.id === attemptId
                 );
-                if (attempt) attempt.usage = event.usage;
+                if (attempt) {
+                  attempt.usage = event.usage;
+                  stampAttemptCost(s, attempt);
+                }
               });
             }
             if (event.type === "error") {

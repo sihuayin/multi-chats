@@ -45,6 +45,12 @@ export type ProviderSmokeTestGateway = ModelGateway & {
 };
 
 function responseFor(request: ModelRequest): string {
+  if (request.purpose === "discussion_rerank") {
+    const ids = [...request.prompt.matchAll(/^- ([\w-]+):/gm)].map(
+      (match) => match[1]
+    );
+    return JSON.stringify({ order: ids });
+  }
   if (request.systemPrompt.includes("Compress the supplied Discussion history")) {
     return JSON.stringify({
       highlights: [
