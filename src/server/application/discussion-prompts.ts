@@ -4,7 +4,7 @@ import type {
   DiscussionRoundPhase
 } from "@/server/domain/types";
 
-export const DISCUSSION_PROMPT_PROFILE_VERSION = "discussion-prompts.v4";
+export const DISCUSSION_PROMPT_PROFILE_VERSION = "discussion-prompts.v5";
 
 /**
  * Prompt profiles older Records may still carry, paired with the Brief
@@ -17,7 +17,8 @@ export const LEGACY_DISCUSSION_PROMPT_PROFILES: readonly {
 }[] = [
   { promptProfileVersion: "discussion-prompts.v1", briefSchemaVersion: 1 },
   { promptProfileVersion: "discussion-prompts.v2", briefSchemaVersion: 2 },
-  { promptProfileVersion: "discussion-prompts.v3", briefSchemaVersion: 2 }
+  { promptProfileVersion: "discussion-prompts.v3", briefSchemaVersion: 2 },
+  { promptProfileVersion: "discussion-prompts.v4", briefSchemaVersion: 2 }
 ];
 
 const modeProfiles: Record<DiscussionMode, string> = {
@@ -111,13 +112,15 @@ export function composeDiscussionPrompt(input: {
       ? [
           `Return only valid Discussion Brief JSON matching this shape:\n${briefShape}`,
           "facts[].evidenceIds must be copied exactly from the catalog; never invent IDs. turn:<id> must reference a completed Position Turn.",
-          "Include an option, a recommendation referencing it, and a concrete action."
+          "Include an option, a recommendation referencing it, and a concrete action.",
+          "Preserve at least one explicit disagreement and minority position when the prior Turns contain them."
         ].join("\n")
       : input.phase === "cross_response"
         ? [
             `Return only valid JSON matching this shape:\n${crossResponseShape}`,
             "Use exact evidence IDs from the catalog; never invent a Turn ID.",
-            "Provide explicit agreements, disagreements, and corrections; refine rather than repeat."
+            "Provide explicit agreements, disagreements, and corrections; refine rather than repeat.",
+            "Include at least one substantive unresolved disagreement or minority position when plausible."
           ].join("\n")
         : [
             `Return only valid JSON matching this shape:\n${turnJsonShape}`,

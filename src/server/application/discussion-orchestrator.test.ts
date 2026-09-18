@@ -147,7 +147,7 @@ describe("DiscussionOrchestrator", () => {
     expect(persisted.discussion).toMatchObject({
       status: "running",
       currentRound: 1,
-      promptProfileVersion: "discussion-prompts.v4",
+      promptProfileVersion: "discussion-prompts.v5",
       rounds: [
         {
           roundNumber: 1,
@@ -591,7 +591,7 @@ describe("DiscussionOrchestrator", () => {
     });
     expect(forced).toMatchObject({
       status: "running",
-      promptProfileVersion: "discussion-prompts.v4"
+      promptProfileVersion: "discussion-prompts.v5"
     });
     const synthesis = forced.rounds.at(-1)!;
     expect(synthesis).toMatchObject({
@@ -640,7 +640,7 @@ describe("DiscussionOrchestrator", () => {
       previousArtifactId: "brief-context"
     });
     expect(JSON.parse(briefArtifact!.content)).toMatchObject({
-      promptProfileVersion: "discussion-prompts.v4"
+      promptProfileVersion: "discussion-prompts.v5"
     });
     expect(reviewed.events?.map((event) => event.type)).toContain(
       "brief_created"

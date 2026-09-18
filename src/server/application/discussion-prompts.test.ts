@@ -15,7 +15,7 @@ describe("Discussion prompt profiles", () => {
     });
 
     expect(prompt.version).toBe(DISCUSSION_PROMPT_PROFILE_VERSION);
-    expect(prompt.version).toBe("discussion-prompts.v4");
+    expect(prompt.version).toBe("discussion-prompts.v5");
     expect(prompt.systemInstructions).toContain("solution");
     expect(prompt.systemInstructions).toContain("facilitator");
     expect(prompt.systemInstructions).toContain("synthesis");
@@ -44,6 +44,9 @@ describe("Discussion prompt profiles", () => {
     expect(prompt.responseInstructions).toContain("corrections");
     expect(prompt.responseInstructions).toContain(
       "exact evidence IDs"
+    );
+    expect(prompt.responseInstructions).toContain(
+      "unresolved disagreement"
     );
   });
 

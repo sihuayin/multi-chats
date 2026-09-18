@@ -189,6 +189,29 @@ describe("Discussion quality evaluation", () => {
     );
   });
 
+  it("follows Brief evidence through cross-response Turns to Position claims", () => {
+    const input = sample();
+    if (!input.brief || input.brief.schemaVersion !== 2) {
+      throw new Error("Fixture Brief must use schema v2");
+    }
+    input.discussion.rounds[1].turns[0].payload!.claims = [
+      {
+        statement: "Cross-response synthesis.",
+        kind: "fact",
+        evidenceIds: ["turn:position-0"],
+        confidence: "high"
+      }
+    ];
+    input.brief.facts[0].evidenceIds = ["turn:cross-0"];
+
+    const result = evaluateDiscussionQuality(input);
+
+    expect(result.scores.briefFidelity).toBe(1);
+    expect(result.hardFailures.map((failure) => failure.code)).not.toContain(
+      "brief_fidelity_regression"
+    );
+  });
+
   it("reports unsupported facts and missing synthesis as hard regressions", () => {
     const input = sample();
     input.brief = undefined;

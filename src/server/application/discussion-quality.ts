@@ -447,6 +447,22 @@ function evaluateScores(
   const positionFactEvidenceIds = new Set(
     factClaims.flatMap((claim) => claim.evidenceIds ?? [])
   );
+  const allTurns = discussion.rounds.flatMap((round) => round.turns);
+  const turnById = new Map(allTurns.map((turn) => [turn.id, turn]));
+  const hasPositionGrounding = (
+    alias: string,
+    visited = new Set<string>()
+  ): boolean => {
+    if (positionFactEvidenceIds.has(alias)) return true;
+    if (!alias.startsWith("turn:") || visited.has(alias)) return false;
+    visited.add(alias);
+    const turn = turnById.get(alias.slice("turn:".length));
+    if (!turn?.payload) return false;
+    return turn.payload.claims
+      .filter((claim) => claim.kind === "fact")
+      .flatMap((claim) => claim.evidenceIds ?? [])
+      .some((evidenceId) => hasPositionGrounding(evidenceId, visited));
+  };
   const briefFacts = brief?.facts ?? [];
   const groundedBriefFacts = briefFacts.filter((fact) => {
     const evidenceIds =
@@ -455,7 +471,7 @@ function evaluateScores(
         : fact.evidence
           ? [fact.evidence]
           : [];
-    return evidenceIds.some((id) => positionFactEvidenceIds.has(id));
+    return evidenceIds.some((id) => hasPositionGrounding(id));
   });
   const briefSourceCoverage = boundedScore(
     groundedBriefFacts.length,

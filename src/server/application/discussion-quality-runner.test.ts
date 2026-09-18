@@ -34,7 +34,7 @@ describe("Discussion quality corpus runner", () => {
       );
     }
     expect(evaluation.contractVersions.promptProfiles).toEqual([
-      "discussion-prompts.v4"
+      "discussion-prompts.v5"
     ]);
     expect(report.evidenceLinks).toEqual(["ci://provider-smoke/1"]);
     expect(JSON.stringify(report)).not.toContain("test-key-primary");
