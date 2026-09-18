@@ -62,6 +62,12 @@ export function SourcesManager() {
   const [dialogOpen, setDialogOpen] = useState(false);
 
   const sources = data?.sources ?? [];
+  const activeSources = sources.filter((source) => !source.deletedAt);
+  const deletedSources = sources.filter((source) => source.deletedAt);
+  const referencingCount = (sourceId: string) =>
+    data?.discussions?.filter((discussion) =>
+      discussion.sourceIds.includes(sourceId)
+    ).length ?? 0;
 
   function resetForm() {
     setKind("url");
@@ -139,6 +145,23 @@ export function SourcesManager() {
     try {
       await apiRequest(`/api/sources/${id}`, { method: "DELETE" });
       toast.success(t("sources.deleted"));
+      await refresh();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function refreshSource(id: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      await apiRequest(`/api/sources/${id}/refresh`, {
+        method: "POST",
+        body: JSON.stringify({})
+      });
+      toast.success(t("sources.refreshed"));
       await refresh();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
@@ -300,8 +323,9 @@ export function SourcesManager() {
               </Button>
             </div>
           ) : (
+            <>
             <div className="source-card-grid">
-              {sources.map((source) => (
+              {activeSources.map((source) => (
                 <Card key={source.id} className="source-card">
                   <CardHeader className="source-card-header">
                     <div className="source-card-heading">
@@ -323,6 +347,7 @@ export function SourcesManager() {
                     <div className="source-card-meta">
                       <span>{source.kind === "url" ? t("sources.kindUrl") : t("sources.kindFile")}</span>
                       <span>{t("sources.chunkCount", { count: source.chunkCount })}</span>
+                      <span>{t("sources.usedBy", { count: referencingCount(source.id) })}</span>
                     </div>
                     {source.status === "failed" && source.error ? (
                       <p className="source-card-error">{source.error}</p>
@@ -347,6 +372,18 @@ export function SourcesManager() {
                           {t("sources.retry")}
                         </Button>
                       ) : null}
+                      {source.status === "ready" && source.kind === "url" ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={busy}
+                          onClick={() => refreshSource(source.id)}
+                        >
+                          <RefreshCw size={14} />
+                          {t("sources.refresh")}
+                        </Button>
+                      ) : null}
                       <Button
                         type="button"
                         variant="ghost"
@@ -363,6 +400,38 @@ export function SourcesManager() {
                 </Card>
               ))}
             </div>
+            {deletedSources.length > 0 ? (
+              <div className="source-card-grid">
+                {deletedSources.map((source) => (
+                  <Card key={source.id} className="source-card">
+                    <CardHeader className="source-card-header">
+                      <div className="source-card-heading">
+                        <span className="source-card-mark" aria-hidden="true">
+                          <BookOpen size={16} />
+                        </span>
+                        <div>
+                          <CardTitle className="source-card-title">
+                            {source.title}
+                          </CardTitle>
+                          <p className="source-card-location">{source.location}</p>
+                        </div>
+                      </div>
+                      <Badge variant="secondary">
+                        {t("sources.deletedSection")}
+                      </Badge>
+                    </CardHeader>
+                    <CardContent className="source-card-content">
+                      <div className="source-card-meta">
+                        <span>
+                          {t("sources.usedBy", { count: referencingCount(source.id) })}
+                        </span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            ) : null}
+            </>
           )}
         </div>
       </section>

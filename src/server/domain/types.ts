@@ -435,6 +435,8 @@ export type Source = {
   chunkCount: number;
   /** Transient raw upload content retained only while ingestion is in flight. */
   pendingContent?: string;
+  /** Set when the Source is tombstoned (deleted but chunks retained). */
+  deletedAt?: IsoDate;
   createdAt: IsoDate;
   updatedAt: IsoDate;
 };

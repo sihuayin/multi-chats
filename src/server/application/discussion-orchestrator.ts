@@ -376,7 +376,11 @@ export class DiscussionOrchestrator {
       }
       const timestamp = this.clock();
       const sourceIds = [...new Set(parsed.sourceIds)];
-      const knownSourceIds = new Set(state.sources.map((source) => source.id));
+      const knownSourceIds = new Set(
+        state.sources
+          .filter((source) => !source.deletedAt)
+          .map((source) => source.id)
+      );
       if (sourceIds.some((sourceId) => !knownSourceIds.has(sourceId))) {
         throw new ApiError(
           400,
@@ -497,7 +501,9 @@ export class DiscussionOrchestrator {
       if (parsed.sourceIds !== undefined) {
         const sourceIds = [...new Set(parsed.sourceIds)];
         const knownSourceIds = new Set(
-          state.sources.map((source) => source.id)
+          state.sources
+            .filter((source) => !source.deletedAt)
+            .map((source) => source.id)
         );
         if (sourceIds.some((sourceId) => !knownSourceIds.has(sourceId))) {
           throw new ApiError(

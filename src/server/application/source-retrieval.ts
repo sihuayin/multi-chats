@@ -35,7 +35,8 @@ export function attachedReadyChunks(
     .filter(
       (source) =>
         discussion.sourceIds.includes(source.id) &&
-        source.status === "ready"
+        source.status === "ready" &&
+        !source.deletedAt
     )
     .flatMap((source) =>
       state.chunks.filter(

@@ -127,14 +127,13 @@ export class SourceService {
     await this.store.update((state) => {
       const source = state.sources.find((item) => item.id === id);
       if (!source) notFound("Source");
-      state.chunks = state.chunks.filter((chunk) => chunk.sourceId !== id);
-      state.sources = state.sources.filter((item) => item.id !== id);
-      for (const discussion of state.discussions) {
-        discussion.sourceIds = discussion.sourceIds.filter(
-          (sourceId) => sourceId !== id
-        );
-      }
-      state.workspace.updatedAt = now();
+      if (source.deletedAt) return;
+      const timestamp = now();
+      source.deletedAt = timestamp;
+      source.updatedAt = timestamp;
+      // Retain chunks and Discussion sourceIds so already-confirmed Briefs
+      // keep resolving their evidence references.
+      state.workspace.updatedAt = timestamp;
     });
   }
 

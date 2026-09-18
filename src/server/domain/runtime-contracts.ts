@@ -191,6 +191,7 @@ export const sourceSchema = z
     contentHash: identifier.optional(),
     chunkCount: z.number().int().nonnegative(),
     pendingContent: z.string().optional(),
+    deletedAt: timestamp.optional(),
     createdAt: timestamp,
     updatedAt: timestamp
   })
