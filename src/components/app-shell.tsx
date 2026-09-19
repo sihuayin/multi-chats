@@ -6,6 +6,7 @@ import {
   Boxes,
   Bot,
   Braces,
+  Coins,
   KeyRound,
   Languages,
   LayoutDashboard,
@@ -32,7 +33,8 @@ const navItems: Array<{
   { href: "/tools", label: "nav.tools", icon: Wrench },
   { href: "/sources", label: "nav.sources", icon: BookOpen },
   { href: "/providers", label: "nav.providers", icon: KeyRound },
-  { href: "/diagnostics", label: "nav.diagnostics", icon: Activity }
+  { href: "/diagnostics", label: "nav.diagnostics", icon: Activity },
+  { href: "/usage", label: "nav.usage", icon: Coins }
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
