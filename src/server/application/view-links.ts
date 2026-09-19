@@ -28,3 +28,10 @@ export function discussionHref(
 export function conversationHref(conversationId: string): string {
   return `/?${new URLSearchParams({ conversation: conversationId })}`;
 }
+
+export function taskHref(conversationId: string, taskId: string): string {
+  return `/?${new URLSearchParams({
+    conversation: conversationId,
+    task: taskId
+  })}`;
+}

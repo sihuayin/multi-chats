@@ -6,7 +6,8 @@ import {
   createFixtureDiscussion,
   createFixtureModelPricing,
   createFixtureProviderAttempt,
-  createFixtureState
+  createFixtureState,
+  createFixtureTask
 } from "@/server/test-support/fixtures";
 
 describe("Usage view", () => {
@@ -1082,5 +1083,168 @@ describe("Usage view", () => {
     expect(
       view.attempts.find((attempt) => attempt.id === "attempt-run")?.href
     ).toBe(`/?conversation=${run.conversationId}&task=${run.taskId}`);
+  });
+  it("attributes conversation-run spend through the Run's Task", () => {
+    const state = pricedState();
+    const { task, run } = addFixtureTaskRunCorrelation(state);
+    state.providerAttempts.push(
+      createFixtureProviderAttempt({
+        id: "attempt-run",
+        runId: run.id,
+        startedAt: "2026-02-09T01:00:00.000Z"
+      })
+    );
+
+    const view = buildUsageView(state, { clock });
+
+    expect(view.byTask).toEqual([
+      {
+        taskId: task.id,
+        title: task.title,
+        href: `/?conversation=${task.conversationId}&task=${task.id}`,
+        tokens: expect.objectContaining({ totalTokens: 1_100_000 }),
+        costTotals: [{ currency: "USD", costMicros: 4_500_000 }]
+      }
+    ]);
+  });
+
+  it("counts a Discussion's spend under both Tasks of its handoff", () => {
+    const state = pricedState();
+    state.tasks.push(
+      createFixtureTask({ id: "task-origin", title: "Origin" }),
+      createFixtureTask({ id: "task-product", title: "Product" })
+    );
+    const discussion = createFixtureDiscussion();
+    discussion.sourceTaskId = "task-origin";
+    discussion.confirmedTaskId = "task-product";
+    state.discussions.push(discussion);
+    state.providerAttempts.push(
+      createFixtureProviderAttempt({
+        id: "attempt-turn",
+        discussionId: discussion.id,
+        startedAt: "2026-02-09T01:00:00.000Z"
+      })
+    );
+
+    const view = buildUsageView(state, { clock });
+
+    expect(view.byTask.map((entry) => entry.taskId)).toEqual([
+      "task-origin",
+      "task-product"
+    ]);
+    for (const entry of view.byTask) {
+      expect(entry.tokens.totalTokens).toBe(1_100_000);
+    }
+    // Deliberately not a partition: the same spend sits under both Tasks,
+    // so the Task totals sum to more than the workspace total.
+    expect(
+      view.byTask.reduce(
+        (sum, entry) => sum + (entry.tokens.totalTokens ?? 0),
+        0
+      )
+    ).toBe(2_200_000);
+    expect(view.tokens.totalTokens).toBe(1_100_000);
+  });
+
+  it("counts a Discussion with the same Task at both ends once", () => {
+    const state = pricedState();
+    state.tasks.push(createFixtureTask({ id: "task-both", title: "Both ends" }));
+    const discussion = createFixtureDiscussion();
+    discussion.sourceTaskId = "task-both";
+    discussion.confirmedTaskId = "task-both";
+    state.discussions.push(discussion);
+    state.providerAttempts.push(
+      createFixtureProviderAttempt({
+        id: "attempt-turn",
+        discussionId: discussion.id,
+        startedAt: "2026-02-09T01:00:00.000Z"
+      })
+    );
+
+    const view = buildUsageView(state, { clock });
+
+    expect(view.byTask).toHaveLength(1);
+    expect(view.byTask[0].tokens.totalTokens).toBe(1_100_000);
+  });
+
+  it("leaves a Discussion with neither Task out of every Task total", () => {
+    const state = pricedState();
+    const discussion = createFixtureDiscussion();
+    state.discussions.push(discussion);
+    state.providerAttempts.push(
+      createFixtureProviderAttempt({
+        id: "attempt-orphan",
+        discussionId: discussion.id,
+        startedAt: "2026-02-09T01:00:00.000Z"
+      })
+    );
+
+    const view = buildUsageView(state, { clock });
+
+    expect(view.byTask).toEqual([]);
+    // Where spend lands does not change what the workspace spent.
+    expect(view.tokens.totalTokens).toBe(1_100_000);
+    expect(view.attemptCount).toBe(1);
+  });
+
+  it("attributes a Discussion turn that also carries a Run to its Tasks", () => {
+    const state = pricedState();
+    state.tasks.push(
+      createFixtureTask({ id: "task-origin", title: "Origin" }),
+      createFixtureTask({ id: "task-product", title: "Product" })
+    );
+    const discussion = createFixtureDiscussion();
+    discussion.sourceTaskId = "task-origin";
+    discussion.confirmedTaskId = "task-product";
+    state.discussions.push(discussion);
+    // The shape the recorder writes for a Discussion turn: the phase Run
+    // (which carries no Task) *and* the Discussion. Only the Discussion
+    // names the Tasks, so reading the Run alone loses them.
+    state.runs.push({
+      id: "run-phase",
+      workspaceId: state.workspace.id,
+      conversationId: discussion.conversationId,
+      triggerMessageId: "message-phase",
+      memberSnapshot: [],
+      status: "completed",
+      createdAt: "2026-02-09T00:00:00.000Z"
+    });
+    state.providerAttempts.push(
+      createFixtureProviderAttempt({
+        id: "attempt-phase-turn",
+        runId: "run-phase",
+        discussionId: discussion.id,
+        startedAt: "2026-02-09T01:00:00.000Z"
+      })
+    );
+
+    const view = buildUsageView(state, { clock });
+
+    expect(view.byTask.map((entry) => entry.taskId)).toEqual([
+      "task-origin",
+      "task-product"
+    ]);
+    expect(view.byDiscussion).toHaveLength(1);
+  });
+  it("keeps a Task that no longer resolves visible by its id", () => {
+    const state = pricedState();
+    const discussion = createFixtureDiscussion();
+    discussion.sourceTaskId = "task-deleted";
+    state.discussions.push(discussion);
+    state.providerAttempts.push(
+      createFixtureProviderAttempt({
+        id: "attempt-turn",
+        discussionId: discussion.id,
+        startedAt: "2026-02-09T01:00:00.000Z"
+      })
+    );
+
+    const view = buildUsageView(state, { clock });
+
+    expect(view.byTask).toHaveLength(1);
+    expect(view.byTask[0].taskId).toBe("task-deleted");
+    expect(view.byTask[0].title).toBe("task-deleted");
+    expect(view.byTask[0].href).toBeUndefined();
+    expect(view.byTask[0].tokens.totalTokens).toBe(1_100_000);
   });
 });

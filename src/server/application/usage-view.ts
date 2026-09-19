@@ -6,7 +6,8 @@ import {
 import {
   conversationHref,
   discussionHref,
-  runHref
+  runHref,
+  taskHref
 } from "@/server/application/view-links";
 import {
   aggregateModelUsage,
@@ -19,7 +20,8 @@ import type {
   Discussion,
   ModelUsage,
   ProviderAttempt,
-  Run
+  Run,
+  Task
 } from "@/server/domain/types";
 import {
   costIn,
@@ -33,6 +35,7 @@ import {
   type UsageModelBreakdown,
   type UsageProviderBreakdown,
   type UsageSeriesPoint,
+  type UsageTaskBreakdown,
   type UsageTokenTotals,
   type UsageView,
   type UsageWindow
@@ -88,6 +91,7 @@ type Lookups = {
   runs: Map<string, Run>;
   discussions: Map<string, Discussion>;
   conversations: Map<string, Conversation>;
+  tasks: Map<string, Task>;
 };
 
 function lookupsOf(state: AppState): Lookups {
@@ -98,7 +102,8 @@ function lookupsOf(state: AppState): Lookups {
     ),
     conversations: new Map(
       state.conversations.map((conversation) => [conversation.id, conversation])
-    )
+    ),
+    tasks: new Map(state.tasks.map((task) => [task.id, task]))
   };
 }
 
@@ -127,19 +132,48 @@ function conversationIdOf(
   return run?.conversationId ?? discussion?.conversationId;
 }
 
+/**
+ * Every Task an attempt accrues to: its Run's Task, plus both ends of its
+ * Discussion's handoff. A Discussion whose source and confirmed Task are the
+ * same yields it once.
+ *
+ * Both are read independently — unlike Conversation resolution, where the
+ * Run simply supersedes the Discussion, an attempt may touch both. A
+ * Discussion turn carries a Run *and* a Discussion, and only the Discussion
+ * names the Tasks.
+ */
+function taskIdsOf(attempt: ProviderAttempt, lookups: Lookups): string[] {
+  const taskIds = new Set<string>();
+  const run = attempt.runId ? lookups.runs.get(attempt.runId) : undefined;
+  if (run?.taskId) taskIds.add(run.taskId);
+  const discussion = attempt.discussionId
+    ? lookups.discussions.get(attempt.discussionId)
+    : undefined;
+  if (discussion?.sourceTaskId) taskIds.add(discussion.sourceTaskId);
+  if (discussion?.confirmedTaskId) taskIds.add(discussion.confirmedTaskId);
+  return [...taskIds];
+}
+
+/**
+ * Groups attempts by a key, or by each of several keys when an attempt
+ * belongs to more than one bucket — as it does for Tasks, where a
+ * Discussion's spend counts under both ends of its handoff.
+ */
 function groupAttemptsByKey(
   attempts: ProviderAttempt[],
-  keyOf: (attempt: ProviderAttempt) => string | undefined
+  keyOf: (attempt: ProviderAttempt) => string | string[] | undefined
 ): Map<string, ProviderAttempt[]> {
   const groups = new Map<string, ProviderAttempt[]>();
   for (const attempt of attempts) {
-    const key = keyOf(attempt);
-    if (key === undefined) continue;
-    const group = groups.get(key);
-    if (group) {
-      group.push(attempt);
-    } else {
-      groups.set(key, [attempt]);
+    const keys = keyOf(attempt);
+    if (keys === undefined) continue;
+    for (const key of Array.isArray(keys) ? keys : [keys]) {
+      const group = groups.get(key);
+      if (group) {
+        group.push(attempt);
+      } else {
+        groups.set(key, [attempt]);
+      }
     }
   }
   return groups;
@@ -293,8 +327,8 @@ function attemptRows(
 
 /**
  * Rolls Provider-attempt usage and cost up to workspace totals, to per-Model,
- * per-Provider, per-Discussion and per-Conversation breakdowns, and to a
- * daily series, over a window. Pure: reads only the given state, resolves no
+ * per-Provider, per-Discussion, per-Conversation and per-Task breakdowns, and
+ * to a daily series, over a window. Pure: reads only the given state, resolves no
  * I/O, and reuses the cost model rather than recomputing it.
  */
 export function buildUsageView(
@@ -384,6 +418,26 @@ export function buildUsageView(
     (entry) => entry.title
   );
 
+  const byTask: UsageTaskBreakdown[] = sortedBreakdown(
+    [
+      ...groupAttemptsByKey(attempts, (attempt) =>
+        taskIdsOf(attempt, lookups)
+      ).entries()
+    ].map(([taskId, group]) => {
+      const task = lookups.tasks.get(taskId);
+      return {
+        taskId,
+        // A Task that no longer resolves keeps its spend visible, named by
+        // its id, rather than vanishing from the panel.
+        title: task?.title ?? taskId,
+        ...(task ? { href: taskHref(task.conversationId, task.id) } : {}),
+        ...breakdownEntry(summarize(state, group))
+      };
+    }),
+    currency,
+    (entry) => entry.title
+  );
+
   // An attempt with unknown usage can never be priced, so every unknown-usage
   // attempt is already unpriced. Whatever remains unpriced beyond those is
   // spend whose model has no Pricing snapshot.
@@ -409,6 +463,7 @@ export function buildUsageView(
     byProvider,
     byDiscussion,
     byConversation,
+    byTask,
     attempts: attemptRows(state, attempts, lookups),
     series: usageSeries(state, attempts, { sinceMs, nowMs }),
     empty: totals.attemptCount === 0

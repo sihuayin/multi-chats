@@ -236,6 +236,22 @@ export function addFixtureTaskRunCorrelation(state: AppState): {
   return { task, message, run };
 }
 
+export function createFixtureTask(overrides: Partial<Task> = {}): Task {
+  return {
+    id: "task-1",
+    workspaceId: "00000000-0000-4000-8000-000000000001",
+    conversationId: "30000000-0000-4000-8000-000000000001",
+    title: "Fixture task",
+    goal: "Fixture goal",
+    assigneeIds: [],
+    status: "in_progress",
+    history: [],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    ...overrides
+  };
+}
+
 export function createFixtureModelPricing(
   overrides: Partial<ModelPricing> = {}
 ): ModelPricing {
