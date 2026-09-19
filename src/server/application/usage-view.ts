@@ -1,7 +1,13 @@
 import {
   aggregateAttemptCosts,
+  attemptCost,
   type AttemptCostAggregate
 } from "@/server/application/model-pricing";
+import {
+  conversationHref,
+  discussionHref,
+  runHref
+} from "@/server/application/view-links";
 import {
   aggregateModelUsage,
   type AggregatedModelUsage
@@ -11,6 +17,7 @@ import type {
   AppState,
   Conversation,
   Discussion,
+  ModelUsage,
   ProviderAttempt,
   Run
 } from "@/server/domain/types";
@@ -18,6 +25,7 @@ import {
   costIn,
   DEFAULT_USAGE_WINDOW,
   usageWindowHours,
+  type UsageAttempt,
   type UsageBreakdownEntry,
   type UsageConversationBreakdown,
   type UsageDiscussionBreakdown,
@@ -55,7 +63,10 @@ function summarize(
   };
 }
 
-function tokenTotals(usage: AggregatedModelUsage): UsageTokenTotals {
+/** Reads the token fields a per-attempt usage and an aggregate share. */
+function tokenTotals(
+  usage: ModelUsage | AggregatedModelUsage
+): UsageTokenTotals {
   return {
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
@@ -92,21 +103,28 @@ function lookupsOf(state: AppState): Lookups {
 }
 
 /**
- * An attempt reaches its Conversation through its Run; a model re-ranking
- * attempt carries no Run, so it reaches it through its Discussion instead.
+ * An attempt belongs to its Run where it has one; a model re-ranking attempt
+ * carries no Run, so it belongs to its Discussion instead. Both the
+ * Conversation roll-up and the deep links read that precedence from here.
  */
+function runOrDiscussionOf(
+  attempt: ProviderAttempt,
+  lookups: Lookups
+): { run?: Run; discussion?: Discussion } {
+  const run = attempt.runId ? lookups.runs.get(attempt.runId) : undefined;
+  if (run) return { run };
+  const discussion = attempt.discussionId
+    ? lookups.discussions.get(attempt.discussionId)
+    : undefined;
+  return discussion ? { discussion } : {};
+}
+
 function conversationIdOf(
   attempt: ProviderAttempt,
   lookups: Lookups
 ): string | undefined {
-  if (attempt.runId) {
-    const run = lookups.runs.get(attempt.runId);
-    if (run) return run.conversationId;
-  }
-  if (attempt.discussionId) {
-    return lookups.discussions.get(attempt.discussionId)?.conversationId;
-  }
-  return undefined;
+  const { run, discussion } = runOrDiscussionOf(attempt, lookups);
+  return run?.conversationId ?? discussion?.conversationId;
 }
 
 function groupAttemptsByKey(
@@ -234,6 +252,45 @@ function usageSeries(
   return series;
 }
 
+/** The drill-down list is capped; every total above still counts them all. */
+const MAX_ATTEMPT_ROWS = 200;
+
+function attemptHref(
+  attempt: ProviderAttempt,
+  lookups: Lookups
+): string | undefined {
+  const { run, discussion } = runOrDiscussionOf(attempt, lookups);
+  if (run) return runHref(run);
+  if (discussion) {
+    return discussionHref(discussion.conversationId, discussion.id);
+  }
+  return undefined;
+}
+
+function attemptRows(
+  state: AppState,
+  attempts: ProviderAttempt[],
+  lookups: Lookups
+): UsageAttempt[] {
+  return [...attempts]
+    .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
+    .slice(0, MAX_ATTEMPT_ROWS)
+    .map((attempt) => {
+      const href = attemptHref(attempt, lookups);
+      return {
+        id: attempt.id,
+        provider: attempt.provider,
+        modelId: attempt.modelId,
+        purpose: attempt.purpose,
+        status: attempt.status,
+        tokens: tokenTotals(attempt.usage),
+        cost: attemptCost(state, attempt),
+        startedAt: attempt.startedAt,
+        ...(href === undefined ? {} : { href })
+      };
+    });
+}
+
 /**
  * Rolls Provider-attempt usage and cost up to workspace totals, to per-Model,
  * per-Provider, per-Discussion and per-Conversation breakdowns, and to a
@@ -302,6 +359,7 @@ export function buildUsageView(
           discussionId,
           conversationId: discussion.conversationId,
           title: discussion.title,
+          href: discussionHref(discussion.conversationId, discussion.id),
           budget: discussionBudget(state, discussion),
           ...breakdownEntry(summarize(state, group))
         }
@@ -319,6 +377,7 @@ export function buildUsageView(
     ].map(([conversationId, group]) => ({
       conversationId,
       title: lookups.conversations.get(conversationId)?.title ?? conversationId,
+      href: conversationHref(conversationId),
       ...breakdownEntry(summarize(state, group))
     })),
     currency,
@@ -350,6 +409,7 @@ export function buildUsageView(
     byProvider,
     byDiscussion,
     byConversation,
+    attempts: attemptRows(state, attempts, lookups),
     series: usageSeries(state, attempts, { sinceMs, nowMs }),
     empty: totals.attemptCount === 0
   };

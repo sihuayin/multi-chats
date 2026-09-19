@@ -959,4 +959,128 @@ describe("Usage view", () => {
     expect(tokensOf(view.series)).toBe(view.tokens.totalTokens);
   });
 
+  it("lists attempts with their usage and cost, newest first", () => {
+    const state = pricedState();
+    state.providerAttempts.push(
+      createFixtureProviderAttempt({
+        id: "attempt-older",
+        startedAt: "2026-02-08T01:00:00.000Z"
+      }),
+      createFixtureProviderAttempt({
+        id: "attempt-newer",
+        purpose: "discussion_turn",
+        status: "failed",
+        startedAt: "2026-02-09T01:00:00.000Z"
+      })
+    );
+
+    const view = buildUsageView(state, { clock });
+
+    expect(view.attempts.map((attempt) => attempt.id)).toEqual([
+      "attempt-newer",
+      "attempt-older"
+    ]);
+    expect(view.attempts[0]).toMatchObject({
+      provider: "openai",
+      modelId: "test-model",
+      purpose: "discussion_turn",
+      status: "failed",
+      tokens: { totalTokens: 1_100_000, source: "provider" },
+      cost: { currency: "USD", costMicros: 4_500_000 },
+      startedAt: "2026-02-09T01:00:00.000Z"
+    });
+  });
+
+  it("reports an attempt's cost as unknown rather than zero", () => {
+    const state = pricedState();
+    state.providerAttempts.push(
+      createFixtureProviderAttempt({
+        id: "attempt-unpriced",
+        modelId: "unpriced-model",
+        startedAt: "2026-02-09T01:00:00.000Z"
+      })
+    );
+
+    const view = buildUsageView(state, { clock });
+    const attempt = view.attempts[0];
+
+    expect(attempt.cost).toBeNull();
+    expect(attempt.tokens.totalTokens).toBe(1_100_000);
+    expect(attempt.href).toBeUndefined();
+  });
+
+  it("scopes the attempt list to the window", () => {
+    const state = pricedState();
+    state.providerAttempts.push(
+      createFixtureProviderAttempt({
+        id: "attempt-in-window",
+        startedAt: "2026-02-09T01:00:00.000Z"
+      }),
+      createFixtureProviderAttempt({
+        id: "attempt-before-window",
+        startedAt: "2025-12-01T01:00:00.000Z"
+      })
+    );
+
+    const view = buildUsageView(state, { clock, window: "7d" });
+
+    expect(view.attempts.map((attempt) => attempt.id)).toEqual([
+      "attempt-in-window"
+    ]);
+  });
+
+  it("caps the attempt list while still counting them all", () => {
+    const state = pricedState();
+    for (let index = 0; index < 205; index += 1) {
+      state.providerAttempts.push(
+        createFixtureProviderAttempt({
+          id: `attempt-${index}`,
+          startedAt: "2026-02-09T01:00:00.000Z"
+        })
+      );
+    }
+
+    const view = buildUsageView(state, { clock });
+
+    // The list is capped, but nothing else is: the totals still see all 205.
+    expect(view.attempts).toHaveLength(200);
+    expect(view.attemptCount).toBe(205);
+    expect(view.tokens.totalTokens).toBe(205 * 1_100_000);
+  });
+
+  it("links entity rows and attempts to where they belong", () => {
+    const state = pricedState();
+    const discussion = createFixtureDiscussion();
+    state.discussions.push(discussion);
+    const { run } = addFixtureTaskRunCorrelation(state);
+    state.providerAttempts.push(
+      createFixtureProviderAttempt({
+        id: "attempt-discussion",
+        discussionId: discussion.id,
+        startedAt: "2026-02-09T01:00:00.000Z"
+      }),
+      createFixtureProviderAttempt({
+        id: "attempt-run",
+        runId: run.id,
+        startedAt: "2026-02-09T01:00:00.000Z"
+      })
+    );
+
+    const view = buildUsageView(state, { clock });
+
+    // Exact hrefs: a single-conversation fixture would let `toContain`
+    // pass for a link pointing anywhere at all.
+    expect(view.byDiscussion[0].href).toBe(
+      `/?view=discussion&conversation=${discussion.conversationId}&discussion=${discussion.id}`
+    );
+    expect(view.byConversation[0].href).toBe(
+      `/?conversation=${run.conversationId}`
+    );
+    expect(
+      view.attempts.find((attempt) => attempt.id === "attempt-discussion")?.href
+    ).toBe(view.byDiscussion[0].href);
+    expect(
+      view.attempts.find((attempt) => attempt.id === "attempt-run")?.href
+    ).toBe(`/?conversation=${run.conversationId}&task=${run.taskId}`);
+  });
 });

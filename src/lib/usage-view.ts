@@ -113,12 +113,49 @@ export type UsageDiscussionBreakdown = UsageBreakdownEntry & {
   discussionId: string;
   conversationId: string;
   title: string;
+  href: string;
   budget: UsageDiscussionBudget | null;
 };
 
 export type UsageConversationBreakdown = UsageBreakdownEntry & {
   conversationId: string;
   title: string;
+  href: string;
+};
+
+/** Mirrors the server's ProviderAttemptPurpose; drift fails the assignment. */
+export type UsageAttemptPurpose =
+  | "conversation"
+  | "discussion_turn"
+  | "discussion_synthesis"
+  | "discussion_compression"
+  | "discussion_rerank"
+  | "smoke_test";
+
+/** Mirrors the server's ProviderAttemptStatus. */
+export type UsageAttemptStatus =
+  | "started"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "interrupted"
+  | "ambiguous";
+
+/**
+ * One Provider attempt, for the drill-down behind the breakdowns. `cost` is
+ * null when the attempt could not be priced: an unknown cost is not zero.
+ */
+export type UsageAttempt = {
+  id: string;
+  provider: ProviderId;
+  modelId: string;
+  purpose: UsageAttemptPurpose;
+  status: UsageAttemptStatus;
+  tokens: UsageTokenTotals;
+  cost: UsageCostTotal | null;
+  startedAt: string;
+  /** Absent when the attempt belongs to neither a Run nor a Discussion. */
+  href?: string;
 };
 
 /**
@@ -153,6 +190,7 @@ export type UsageView = {
   byProvider: UsageProviderBreakdown[];
   byDiscussion: UsageDiscussionBreakdown[];
   byConversation: UsageConversationBreakdown[];
+  attempts: UsageAttempt[];
   series: UsageSeriesPoint[];
   empty: boolean;
 };
