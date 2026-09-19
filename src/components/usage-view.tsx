@@ -17,12 +17,16 @@ import { useI18n } from "@/components/i18n-provider";
 import { PageHeader } from "@/components/page-header";
 import { apiRequest } from "@/lib/api";
 import type { TranslationKey } from "@/lib/i18n";
-import type {
-  UsageBreakdownEntry,
-  UsageBudgetState,
-  UsageDiscussionBudget,
-  UsageView,
-  UsageWindow
+import {
+  costIn,
+  DEFAULT_USAGE_WINDOW,
+  USAGE_WINDOWS,
+  type UsageBreakdownEntry,
+  type UsageSeriesPoint,
+  type UsageBudgetState,
+  type UsageDiscussionBudget,
+  type UsageView,
+  type UsageWindow
 } from "@/lib/usage-view";
 
 const REFRESH_INTERVAL_MS = 15_000;
@@ -140,6 +144,105 @@ function DiscussionBudgetNote({
   return <small>{parts.join(" · ")}</small>;
 }
 
+function UsagePanel({
+  title,
+  icon,
+  isEmpty,
+  emptyLabel,
+  children
+}: {
+  title: string;
+  icon: ReactNode;
+  isEmpty: boolean;
+  emptyLabel: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="panel usage-panel">
+      <div className="panel-title">
+        {icon}
+        <h2>{title}</h2>
+      </div>
+      {isEmpty ? <p className="usage-empty">{emptyLabel}</p> : children}
+    </section>
+  );
+}
+
+function DailySeriesChart({
+  title,
+  icon,
+  entries,
+  measure,
+  formatValue,
+  emptyLabel
+}: {
+  title: string;
+  icon: ReactNode;
+  entries: UsageSeriesPoint[];
+  measure: (entry: UsageSeriesPoint) => number;
+  formatValue: (value: number) => string;
+  emptyLabel: string;
+}) {
+  const { t } = useI18n();
+  const [hovered, setHovered] = useState<string | null>(null);
+  const peak = entries.reduce(
+    (highest, entry) => Math.max(highest, measure(entry)),
+    0
+  );
+  const label = (entry: UsageSeriesPoint) =>
+    [
+      entry.day,
+      formatValue(measure(entry)),
+      t("usage.attempts", { count: entry.attemptCount }),
+      ...(entry.partial ? [t("usage.partialDay")] : [])
+    ].join(" · ");
+  return (
+    <UsagePanel
+      title={title}
+      icon={icon}
+      isEmpty={peak === 0}
+      emptyLabel={emptyLabel}
+    >
+      <>
+        <div className="usage-chart">
+          {entries.map((entry) => (
+            <div
+              key={entry.day}
+              className="usage-chart-column"
+              onMouseEnter={() => setHovered(entry.day)}
+              onMouseLeave={() => setHovered(null)}
+            >
+              {hovered === entry.day ? (
+                // Sighted-only echo of the bar's own label, so it is hidden
+                // from assistive tech rather than announced twice.
+                <span className="usage-chart-tip" aria-hidden="true">
+                  {label(entry)}
+                </span>
+              ) : null}
+              <div
+                className={[
+                  "usage-chart-bar",
+                  ...(measure(entry) === 0 ? ["zero"] : []),
+                  ...(entry.partial ? ["partial"] : [])
+                ].join(" ")}
+                style={{
+                  height: `max(${(measure(entry) / peak) * 100}%, 1px)`
+                }}
+                role="img"
+                aria-label={label(entry)}
+              />
+            </div>
+          ))}
+        </div>
+        <div className="usage-chart-axis">
+          <span>{entries[0]?.day}</span>
+          <span>{entries.at(-1)?.day}</span>
+        </div>
+      </>
+    </UsagePanel>
+  );
+}
+
 function BreakdownPanel<T extends UsageBreakdownEntry>({
   title,
   icon,
@@ -157,52 +260,53 @@ function BreakdownPanel<T extends UsageBreakdownEntry>({
 }) {
   const { t } = useI18n();
   return (
-    <section className="panel usage-panel">
-      <div className="panel-title">
-        {icon}
-        <h2>{title}</h2>
-      </div>
-      {entries.length === 0 ? (
-        <p className="usage-empty">{emptyLabel}</p>
-      ) : (
-        <div className="usage-breakdown-list">
-          <div className="usage-row-header">
-            <span />
-            <span>{t("usage.tokens")}</span>
-            <span>{t("usage.cost")}</span>
-          </div>
-          {entries.map((entry) => {
-            const identity = identify(entry);
-            return (
-              <div key={identity.id} className="usage-row">
-                <div className="usage-row-label">
-                  <strong>{identity.label}</strong>
-                  {identity.detail ? <small>{identity.detail}</small> : null}
-                  {renderNote ? renderNote(entry) : null}
-                </div>
-                <span className="usage-row-tokens">
-                  {formatTokens(entry.tokens.totalTokens)}
-                </span>
-                <span className="usage-row-cost">
-                  {entry.costTotals.length === 0
-                    ? "—"
-                    : entry.costTotals.map((total) => (
-                        <span key={total.currency}>
-                          {formatCost(total.costMicros, total.currency)}
-                        </span>
-                      ))}
-                </span>
-              </div>
-            );
-          })}
+    <UsagePanel
+      title={title}
+      icon={icon}
+      isEmpty={entries.length === 0}
+      emptyLabel={emptyLabel}
+    >
+      <div className="usage-breakdown-list">
+        <div className="usage-row-header">
+          <span />
+          <span>{t("usage.tokens")}</span>
+          <span>{t("usage.cost")}</span>
         </div>
-      )}
-    </section>
+        {entries.map((entry) => {
+          const identity = identify(entry);
+          return (
+            <div key={identity.id} className="usage-row">
+              <div className="usage-row-label">
+                <strong>{identity.label}</strong>
+                {identity.detail ? <small>{identity.detail}</small> : null}
+                {renderNote ? renderNote(entry) : null}
+              </div>
+              <span className="usage-row-tokens">
+                {formatTokens(entry.tokens.totalTokens)}
+              </span>
+              <span className="usage-row-cost">
+                {entry.costTotals.length === 0
+                  ? "—"
+                  : entry.costTotals.map((total) => (
+                      <span key={total.currency}>
+                        {formatCost(total.costMicros, total.currency)}
+                      </span>
+                    ))}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </UsagePanel>
   );
 }
 
 export function UsageWorkspace() {
   const { t } = useI18n();
+  const [selectedWindow, setSelectedWindow] = useState<UsageWindow>(
+    DEFAULT_USAGE_WINDOW
+  );
+  const endpoint = `/api/usage?window=${selectedWindow}`;
   const [view, setView] = useState<UsageView | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -213,7 +317,7 @@ export function UsageWorkspace() {
     async function load(silent = false) {
       if (!silent) setLoading(true);
       try {
-        const next = await apiRequest<UsageView>("/api/usage");
+        const next = await apiRequest<UsageView>(endpoint);
         if (!cancelled) {
           setView(next);
           setError(null);
@@ -234,12 +338,12 @@ export function UsageWorkspace() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [endpoint]);
 
   async function refresh() {
     setRefreshing(true);
     try {
-      setView(await apiRequest<UsageView>("/api/usage"));
+      setView(await apiRequest<UsageView>(endpoint));
       setError(null);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
@@ -283,6 +387,23 @@ export function UsageWorkspace() {
           </button>
         }
       />
+      <div
+        className="usage-window"
+        role="group"
+        aria-label={t("usage.windowLabel")}
+      >
+        {USAGE_WINDOWS.map(({ kind }) => (
+          <button
+            key={kind}
+            type="button"
+            className={kind === selectedWindow ? "active" : ""}
+            aria-pressed={kind === selectedWindow}
+            onClick={() => setSelectedWindow(kind)}
+          >
+            {t(windowKey(kind))}
+          </button>
+        ))}
+      </div>
       {error ? <div className="error-banner">{error}</div> : null}
       {view ? (
         <>
@@ -320,6 +441,28 @@ export function UsageWorkspace() {
               detail={`${t("usage.unknownUsage")} ${view.coverage.unknownUsageAttempts} · ${t("usage.unknownPricing")} ${view.coverage.unknownPricingAttempts}`}
             />
           </section>
+
+          <div className="usage-series">
+            <DailySeriesChart
+              title={t("usage.seriesTokens")}
+              icon={<Hash size={17} />}
+              entries={view.series}
+              measure={(entry) => entry.tokens.totalTokens ?? 0}
+              formatValue={formatTokens}
+              emptyLabel={t("usage.noTokens")}
+            />
+            {currencies.map((total) => (
+              <DailySeriesChart
+                key={total.currency}
+                title={t("usage.seriesCost", { currency: total.currency })}
+                icon={<Coins size={17} />}
+                entries={view.series}
+                measure={(entry) => costIn(entry, total.currency)}
+                formatValue={(micros) => formatCost(micros, total.currency)}
+                emptyLabel={t("usage.noCost")}
+              />
+            ))}
+          </div>
 
           {view.empty ? (
             <section className="panel usage-panel">

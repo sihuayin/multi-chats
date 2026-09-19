@@ -2391,6 +2391,100 @@ label textarea {
   white-space: nowrap;
 }
 
+.usage-window {
+  display: inline-flex;
+  gap: 3px;
+  margin-bottom: 14px;
+  padding: 3px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.usage-window button {
+  min-height: 26px;
+  padding: 0 11px;
+  color: var(--muted-foreground);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.usage-window button.active {
+  color: var(--accent-foreground);
+  background: var(--accent-soft);
+}
+
+.usage-series {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.usage-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 96px;
+  border-bottom: 1px solid var(--line);
+}
+
+.usage-chart-column {
+  position: relative;
+  display: flex;
+  flex: 1 1 0;
+  align-items: flex-end;
+  height: 100%;
+  min-width: 0;
+}
+
+.usage-chart-bar {
+  width: 100%;
+  background: var(--primary);
+  border-radius: 4px 4px 0 0;
+}
+
+.usage-chart-bar.zero {
+  background: rgb(255 255 255 / 8%);
+}
+
+/* A bucket the window cuts through covers less than a whole day. */
+.usage-chart-bar.partial {
+  opacity: 0.55;
+}
+
+.usage-chart-tip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  z-index: 2;
+  padding: 4px 7px;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 9px;
+  white-space: nowrap;
+  background: var(--popover);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.usage-chart-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  color: var(--muted-foreground);
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
 .usage-empty {
   margin: 0;
   padding: 18px 10px;
@@ -2688,7 +2782,8 @@ label textarea {
   .diagnostics-summary,
   .diagnostics-grid,
   .usage-summary,
-  .usage-grid {
+  .usage-grid,
+  .usage-series {
     grid-template-columns: 1fr;
   }
 

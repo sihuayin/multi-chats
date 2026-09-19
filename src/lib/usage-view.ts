@@ -1,6 +1,32 @@
 import type { ProviderId } from "@/lib/provider-catalog";
 
-export type UsageWindow = "7d" | "30d" | "all";
+/**
+ * The window set, stated once: the union, the hours each window covers, and
+ * the validity rule all derive from this list.
+ */
+export const USAGE_WINDOWS = [
+  { kind: "7d", hours: 168 },
+  { kind: "30d", hours: 720 },
+  { kind: "all", hours: null }
+] as const;
+
+export type UsageWindow = (typeof USAGE_WINDOWS)[number]["kind"];
+
+export const DEFAULT_USAGE_WINDOW: UsageWindow = "30d";
+
+export function isUsageWindow(
+  value: string | null | undefined
+): value is UsageWindow {
+  return (
+    typeof value === "string" &&
+    USAGE_WINDOWS.some((window) => window.kind === value)
+  );
+}
+
+/** Null means the window has no lower bound. */
+export function usageWindowHours(window: UsageWindow): number | null {
+  return USAGE_WINDOWS.find((entry) => entry.kind === window)?.hours ?? null;
+}
 
 export type UsageWindowView = {
   kind: UsageWindow;
@@ -26,6 +52,14 @@ export type UsageBreakdownEntry = {
   tokens: UsageTokenTotals;
   costTotals: UsageCostTotal[];
 };
+
+/** One entry's spend in a given currency, or zero when it has none. */
+export function costIn(entry: UsageBreakdownEntry, currency: string): number {
+  return (
+    entry.costTotals.find((total) => total.currency === currency)?.costMicros ??
+    0
+  );
+}
 
 export type UsageModelBreakdown = UsageBreakdownEntry & {
   provider: ProviderId;
@@ -87,6 +121,21 @@ export type UsageConversationBreakdown = UsageBreakdownEntry & {
   title: string;
 };
 
+/**
+ * One UTC calendar day of the series. `attemptCount` separates a genuinely
+ * quiet day from one whose attempts could not be measured or priced.
+ *
+ * `partial` marks a bucket that covers less than a whole day, for either of
+ * two reasons: the window's lower bound clips the day the window opens on,
+ * or the bucket is today and today is not over. Its total is therefore not
+ * comparable with an interior day's.
+ */
+export type UsageSeriesPoint = UsageBreakdownEntry & {
+  day: string;
+  attemptCount: number;
+  partial: boolean;
+};
+
 export type UsageView = {
   generatedAt: string;
   window: UsageWindowView;
@@ -104,5 +153,6 @@ export type UsageView = {
   byProvider: UsageProviderBreakdown[];
   byDiscussion: UsageDiscussionBreakdown[];
   byConversation: UsageConversationBreakdown[];
+  series: UsageSeriesPoint[];
   empty: boolean;
 };

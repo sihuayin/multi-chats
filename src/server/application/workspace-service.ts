@@ -28,7 +28,7 @@ import { availableTaskActions } from "@/server/application/task-actions";
 import { buildDiagnosticsView } from "@/server/application/diagnostics-view";
 import { buildUsageView } from "@/server/application/usage-view";
 import type { DiagnosticsView } from "@/lib/diagnostics-view";
-import type { UsageView } from "@/lib/usage-view";
+import type { UsageView, UsageWindow } from "@/lib/usage-view";
 import {
   createTaskArtifact,
   updateTaskArtifact
@@ -100,8 +100,8 @@ export class WorkspaceService {
     return this.store.read((state) => buildDiagnosticsView(state));
   }
 
-  async getUsageView(): Promise<UsageView> {
-    return this.store.read((state) => buildUsageView(state));
+  async getUsageView(window?: UsageWindow): Promise<UsageView> {
+    return this.store.read((state) => buildUsageView(state, { window }));
   }
 
   async updateWorkspace(input: unknown): Promise<WorkspaceView> {
