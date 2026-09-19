@@ -123,6 +123,18 @@ export type UsageConversationBreakdown = UsageBreakdownEntry & {
   href: string;
 };
 
+/**
+ * A Task's share. Unlike the other breakdowns this is not a partition: a
+ * Discussion's spend belongs to both ends of its handoff, so the same spend
+ * can sit under two Tasks.
+ */
+export type UsageTaskBreakdown = UsageBreakdownEntry & {
+  taskId: string;
+  title: string;
+  /** Absent when the Task no longer resolves. */
+  href?: string;
+};
+
 /** Mirrors the server's ProviderAttemptPurpose; drift fails the assignment. */
 export type UsageAttemptPurpose =
   | "conversation"
@@ -190,6 +202,7 @@ export type UsageView = {
   byProvider: UsageProviderBreakdown[];
   byDiscussion: UsageDiscussionBreakdown[];
   byConversation: UsageConversationBreakdown[];
+  byTask: UsageTaskBreakdown[];
   attempts: UsageAttempt[];
   series: UsageSeriesPoint[];
   empty: boolean;

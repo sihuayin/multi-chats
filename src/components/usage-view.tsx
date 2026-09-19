@@ -6,6 +6,7 @@ import {
   ChartColumn,
   Coins,
   Hash,
+  ListChecks,
   ListTree,
   LoaderCircle,
   MessagesSquare,
@@ -672,6 +673,21 @@ export function UsageWorkspace() {
                   })}
                   emptyLabel={t("usage.noConversations")}
                 />
+                <BreakdownPanel
+                  title={t("usage.byTask")}
+                  icon={<ListChecks size={17} />}
+                  entries={view.byTask}
+                  identify={(entry) => ({
+                    id: entry.taskId,
+                    label: entry.title,
+                    href: entry.href
+                  })}
+                  renderNote={() => (
+                    <small>{t("usage.taskNotPartition")}</small>
+                  )}
+                  emptyLabel={t("usage.noTasks")}
+                />
+
               </div>
               <AttemptsPanel
                 attempts={view.attempts}
