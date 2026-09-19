@@ -14,36 +14,29 @@ import type {
   ProviderAttempt,
   Run
 } from "@/server/domain/types";
-import type {
-  UsageBreakdownEntry,
-  UsageConversationBreakdown,
-  UsageDiscussionBreakdown,
-  UsageDiscussionBudget,
-  UsageModelBreakdown,
-  UsageProviderBreakdown,
-  UsageTokenTotals,
-  UsageView,
-  UsageWindow
+import {
+  costIn,
+  DEFAULT_USAGE_WINDOW,
+  usageWindowHours,
+  type UsageBreakdownEntry,
+  type UsageConversationBreakdown,
+  type UsageDiscussionBreakdown,
+  type UsageDiscussionBudget,
+  type UsageModelBreakdown,
+  type UsageProviderBreakdown,
+  type UsageSeriesPoint,
+  type UsageTokenTotals,
+  type UsageView,
+  type UsageWindow
 } from "@/lib/usage-view";
-
-export const DEFAULT_USAGE_WINDOW: UsageWindow = "30d";
 
 export type UsageViewOptions = {
   window?: UsageWindow;
   clock?: () => Date;
 };
 
-const WINDOW_HOURS: Record<Exclude<UsageWindow, "all">, number> = {
-  "7d": 7 * 24,
-  "30d": 30 * 24
-};
-
 /** Opaque Map key; never parsed back apart. */
 const GROUP_KEY_SEPARATOR = "\u0000";
-
-function windowHours(window: UsageWindow): number | null {
-  return window === "all" ? null : WINDOW_HOURS[window];
-}
 
 type AttemptSummary = {
   attemptCount: number;
@@ -160,13 +153,6 @@ function discussionBudget(
   };
 }
 
-function costIn(entry: UsageBreakdownEntry, currency: string): number {
-  return (
-    entry.costTotals.find((total) => total.currency === currency)?.costMicros ??
-    0
-  );
-}
-
 /**
  * Ranks a breakdown most expensive first. Cost is only comparable within a
  * currency, so cost ordering applies when the window holds a single
@@ -190,11 +176,69 @@ function sortedBreakdown<T extends UsageBreakdownEntry>(
   });
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function utcDay(stamp: number): string {
+  return new Date(stamp).toISOString().slice(0, 10);
+}
+
 /**
- * Rolls Provider-attempt usage and cost up to workspace totals and to
- * per-Model and per-Provider breakdowns over a window. Pure: reads only the
- * given state, resolves no I/O, and reuses the cost model rather than
- * recomputing it.
+ * One point per UTC calendar day the window touches, so a quiet day keeps
+ * its place on the axis rather than letting its neighbours collapse
+ * together. An all-time window starts at the earliest attempt rather than
+ * at the epoch.
+ *
+ * A rolling window starts mid-day, so its leading bucket holds only the
+ * attempts from `sinceMs` onward and is correspondingly short; every later
+ * bucket is a whole day.
+ *
+ * Callers pass attempts whose start time already parses — the window filter
+ * upstream is what decides that.
+ */
+function usageSeries(
+  state: AppState,
+  attempts: ProviderAttempt[],
+  bounds: { sinceMs: number | null; nowMs: number }
+): UsageSeriesPoint[] {
+  const { sinceMs, nowMs } = bounds;
+  const byDay = groupAttemptsByKey(attempts, (attempt) =>
+    utcDay(Date.parse(attempt.startedAt))
+  );
+
+  // The series spans every day an attempt falls on, not merely up to the
+  // clock: an attempt dated ahead of it is still counted in the totals, and
+  // the series has to reconcile with them.
+  let earliest = nowMs;
+  let latest = nowMs;
+  for (const attempt of attempts) {
+    const startedAt = Date.parse(attempt.startedAt);
+    if (startedAt < earliest) earliest = startedAt;
+    if (startedAt > latest) latest = startedAt;
+  }
+
+  const startMs = Math.floor((sinceMs ?? earliest) / DAY_MS) * DAY_MS;
+  const lastMs = Math.floor(latest / DAY_MS) * DAY_MS;
+  const series: UsageSeriesPoint[] = [];
+  for (let ms = startMs; ms <= lastMs; ms += DAY_MS) {
+    const day = utcDay(ms);
+    const group = byDay.get(day) ?? [];
+    series.push({
+      day,
+      attemptCount: group.length,
+      // Partial when the window's lower bound clips this day, or when the
+      // day is today and today is not over yet.
+      partial: (sinceMs !== null && sinceMs > ms) || nowMs < ms + DAY_MS,
+      ...breakdownEntry(summarize(state, group))
+    });
+  }
+  return series;
+}
+
+/**
+ * Rolls Provider-attempt usage and cost up to workspace totals, to per-Model,
+ * per-Provider, per-Discussion and per-Conversation breakdowns, and to a
+ * daily series, over a window. Pure: reads only the given state, resolves no
+ * I/O, and reuses the cost model rather than recomputing it.
  */
 export function buildUsageView(
   state: AppState,
@@ -202,11 +246,18 @@ export function buildUsageView(
 ): UsageView {
   const window = options.window ?? DEFAULT_USAGE_WINDOW;
   const now = (options.clock ?? (() => new Date()))();
-  const hours = windowHours(window);
-  const sinceMs = hours === null ? null : now.getTime() - hours * 60 * 60_000;
-  const attempts = state.providerAttempts.filter(
-    (attempt) => sinceMs === null || Date.parse(attempt.startedAt) >= sinceMs
-  );
+  const nowMs = now.getTime();
+  const hours = usageWindowHours(window);
+  const sinceMs = hours === null ? null : nowMs - hours * 60 * 60_000;
+  // The single point where the view decides which attempts it covers: an
+  // attempt must be placeable in time, and inside the window. Every figure
+  // below derives from this set, so the totals, the breakdowns and the
+  // series cannot disagree about what is in scope.
+  const attempts = state.providerAttempts.filter((attempt) => {
+    const startedAt = Date.parse(attempt.startedAt);
+    if (Number.isNaN(startedAt)) return false;
+    return sinceMs === null || startedAt >= sinceMs;
+  });
 
   const totals = summarize(state, attempts);
   const currency =
@@ -299,6 +350,7 @@ export function buildUsageView(
     byProvider,
     byDiscussion,
     byConversation,
+    series: usageSeries(state, attempts, { sinceMs, nowMs }),
     empty: totals.attemptCount === 0
   };
 }

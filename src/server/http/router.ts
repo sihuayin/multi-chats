@@ -15,6 +15,7 @@ import { getServices } from "@/server/application/services";
 import { logger } from "@/server/observability/logger";
 import { getStore } from "@/server/store";
 import { discussionEventView } from "@/server/application/discussion-view";
+import { isUsageWindow } from "@/lib/usage-view";
 
 function json(data: unknown, init?: ResponseInit): Response {
   return Response.json(data, init);
@@ -276,7 +277,17 @@ async function handleApiRoute(
   }
 
   if (request.method === "GET" && resource === "usage") {
-    return json(await workspace.getUsageView());
+    // Absent means the default window; a value we do not know is refused
+    // rather than silently answered with a different window's numbers.
+    const requested = new URL(request.url).searchParams.get("window");
+    if (requested !== null && !isUsageWindow(requested)) {
+      throw new ApiError(400, `Unknown usage window: ${requested}`, "invalid_window");
+    }
+    return json(
+      await workspace.getUsageView(
+        isUsageWindow(requested) ? requested : undefined
+      )
+    );
   }
 
   if (request.method === "PATCH" && resource === "workspace") {
