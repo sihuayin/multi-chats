@@ -2,18 +2,24 @@
 
 import {
   AlertTriangle,
+  Boxes,
   ChartColumn,
   Coins,
   Hash,
   LoaderCircle,
-  RefreshCw
+  RefreshCw,
+  Server
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { useI18n } from "@/components/i18n-provider";
 import { PageHeader } from "@/components/page-header";
 import { apiRequest } from "@/lib/api";
 import type { TranslationKey } from "@/lib/i18n";
-import type { UsageView, UsageWindow } from "@/lib/usage-view";
+import type {
+  UsageBreakdownEntry,
+  UsageView,
+  UsageWindow
+} from "@/lib/usage-view";
 
 const REFRESH_INTERVAL_MS = 15_000;
 
@@ -62,6 +68,70 @@ function StatCard({
       <strong>{value}</strong>
       <small>{detail}</small>
     </article>
+  );
+}
+
+type BreakdownIdentity = {
+  id: string;
+  label: string;
+  detail?: string;
+};
+
+function BreakdownPanel<T extends UsageBreakdownEntry>({
+  title,
+  icon,
+  entries,
+  identify,
+  emptyLabel
+}: {
+  title: string;
+  icon: ReactNode;
+  entries: T[];
+  identify: (entry: T) => BreakdownIdentity;
+  emptyLabel: string;
+}) {
+  const { t } = useI18n();
+  return (
+    <section className="panel usage-panel">
+      <div className="panel-title">
+        {icon}
+        <h2>{title}</h2>
+      </div>
+      {entries.length === 0 ? (
+        <p className="usage-empty">{emptyLabel}</p>
+      ) : (
+        <div className="usage-breakdown-list">
+          <div className="usage-row-header">
+            <span />
+            <span>{t("usage.tokens")}</span>
+            <span>{t("usage.cost")}</span>
+          </div>
+          {entries.map((entry) => {
+            const identity = identify(entry);
+            return (
+              <div key={identity.id} className="usage-row">
+                <div className="usage-row-label">
+                  <strong>{identity.label}</strong>
+                  {identity.detail ? <small>{identity.detail}</small> : null}
+                </div>
+                <span className="usage-row-tokens">
+                  {formatTokens(entry.tokens.totalTokens)}
+                </span>
+                <span className="usage-row-cost">
+                  {entry.costTotals.length === 0
+                    ? "—"
+                    : entry.costTotals.map((total) => (
+                        <span key={total.currency}>
+                          {formatCost(total.costMicros, total.currency)}
+                        </span>
+                      ))}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -238,6 +308,29 @@ export function UsageWorkspace() {
                 </div>
                 <p className="usage-note">{t("usage.perCurrencyNote")}</p>
               </section>
+
+              <BreakdownPanel
+                title={t("usage.byModel")}
+                icon={<Boxes size={17} />}
+                entries={view.byModel}
+                identify={(entry) => ({
+                  id: `${entry.provider}/${entry.modelId}`,
+                  label: entry.modelId,
+                  detail: entry.provider
+                })}
+                emptyLabel={t("usage.noModels")}
+              />
+
+              <BreakdownPanel
+                title={t("usage.byProvider")}
+                icon={<Server size={17} />}
+                entries={view.byProvider}
+                identify={(entry) => ({
+                  id: entry.provider,
+                  label: entry.provider
+                })}
+                emptyLabel={t("usage.noProviders")}
+              />
             </div>
           )}
           <p className="usage-updated">
