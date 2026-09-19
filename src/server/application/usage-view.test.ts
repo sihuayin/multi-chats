@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { buildUsageView } from "@/server/application/usage-view";
 import type { UsageBreakdownEntry } from "@/lib/usage-view";
 import {
+  addFixtureTaskRunCorrelation,
+  createFixtureDiscussion,
   createFixtureModelPricing,
   createFixtureProviderAttempt,
   createFixtureState
@@ -15,6 +17,18 @@ describe("Usage view", () => {
     state.modelPricing.push(createFixtureModelPricing());
     return state;
   }
+
+  const costOf = (entries: UsageBreakdownEntry[], currency: string) =>
+    entries.reduce(
+      (sum, entry) =>
+        sum +
+        (entry.costTotals.find((total) => total.currency === currency)
+          ?.costMicros ?? 0),
+      0
+    );
+
+  const tokensOf = (entries: UsageBreakdownEntry[]) =>
+    entries.reduce((sum, entry) => sum + (entry.tokens.totalTokens ?? 0), 0);
 
   it("totals tokens and cost per currency over the default window", () => {
     const state = pricedState();
@@ -448,22 +462,240 @@ describe("Usage view", () => {
 
     const view = buildUsageView(state, { clock });
 
-    const costOf = (entries: UsageBreakdownEntry[], currency: string) =>
-      entries.reduce(
-        (sum, entry) =>
-          sum +
-          (entry.costTotals.find((total) => total.currency === currency)
-            ?.costMicros ?? 0),
-        0
-      );
-    const tokensOf = (entries: UsageBreakdownEntry[]) =>
-      entries.reduce((sum, entry) => sum + (entry.tokens.totalTokens ?? 0), 0);
-
     for (const total of view.cost.totals) {
       expect(costOf(view.byModel, total.currency)).toBe(total.costMicros);
       expect(costOf(view.byProvider, total.currency)).toBe(total.costMicros);
     }
     expect(tokensOf(view.byModel)).toBe(view.tokens.totalTokens);
     expect(tokensOf(view.byProvider)).toBe(view.tokens.totalTokens);
+  });
+
+  it("groups spend by Discussion and carries its budget", () => {
+    const state = pricedState();
+    const discussion = createFixtureDiscussion();
+    discussion.budget = {
+      maxTotalTokens: 10_000_000,
+      softTotalTokens: 1_000_000,
+      maxTotalCostMicros: 1_000_000,
+      currency: "USD"
+    };
+    state.discussions.push(discussion);
+    state.providerAttempts.push(
+      createFixtureProviderAttempt({
+        id: "attempt-turn",
+        discussionId: discussion.id,
+        startedAt: "2026-02-09T00:00:00.000Z"
+      })
+    );
+
+    const view = buildUsageView(state, { clock });
+
+    expect(view.byDiscussion).toHaveLength(1);
+    expect(view.byDiscussion[0]).toMatchObject({
+      discussionId: discussion.id,
+      conversationId: discussion.conversationId,
+      title: discussion.title,
+      tokens: expect.objectContaining({ totalTokens: 1_100_000 }),
+      costTotals: [{ currency: "USD", costMicros: 4_500_000 }],
+      budget: {
+        source: "discussion",
+        tokens: {
+          used: 1_100_000,
+          soft: 1_000_000,
+          hard: 10_000_000,
+          unknownAttempts: 0,
+          state: "soft"
+        },
+        cost: {
+          usedMicros: 4_500_000,
+          hardMicros: 1_000_000,
+          unknownAttempts: 0,
+          state: "hard",
+          currency: "USD"
+        }
+      }
+    });
+  });
+
+  it("renders a Discussion with no budget without a budget indication", () => {
+    const state = pricedState();
+    const discussion = createFixtureDiscussion();
+    state.discussions.push(discussion);
+    state.providerAttempts.push(
+      createFixtureProviderAttempt({
+        id: "attempt-turn",
+        discussionId: discussion.id,
+        startedAt: "2026-02-09T00:00:00.000Z"
+      })
+    );
+
+    const view = buildUsageView(state, { clock });
+
+    expect(view.byDiscussion[0].budget).toBeNull();
+  });
+
+  it("resolves a Discussion budget from workspace defaults", () => {
+    const state = pricedState();
+    state.workspace.discussionBudgetDefaults = {
+      maxTotalTokens: 10_000_000,
+      currency: "USD"
+    };
+    const discussion = createFixtureDiscussion();
+    state.discussions.push(discussion);
+    state.providerAttempts.push(
+      createFixtureProviderAttempt({
+        id: "attempt-turn",
+        discussionId: discussion.id,
+        startedAt: "2026-02-09T00:00:00.000Z"
+      })
+    );
+
+    const view = buildUsageView(state, { clock });
+
+    expect(view.byDiscussion[0].budget).toMatchObject({
+      source: "workspace_defaults",
+      tokens: { used: 1_100_000, hard: 10_000_000, state: "ok" }
+    });
+  });
+
+  it("keeps row spend windowed while the budget stays lifetime", () => {
+    const state = pricedState();
+    const discussion = createFixtureDiscussion();
+    discussion.budget = { maxTotalTokens: 10_000_000, currency: "USD" };
+    state.discussions.push(discussion);
+    state.providerAttempts.push(
+      createFixtureProviderAttempt({
+        id: "attempt-in-window",
+        discussionId: discussion.id,
+        startedAt: "2026-02-09T00:00:00.000Z"
+      }),
+      createFixtureProviderAttempt({
+        id: "attempt-before-window",
+        discussionId: discussion.id,
+        startedAt: "2026-01-01T00:00:00.000Z"
+      })
+    );
+
+    const view = buildUsageView(state, { clock, window: "7d" });
+
+    expect(view.byDiscussion).toHaveLength(1);
+    // The row's spend is the window's; the budget counts the whole lifetime.
+    expect(view.byDiscussion[0].tokens.totalTokens).toBe(1_100_000);
+    expect(view.byDiscussion[0].budget?.tokens.used).toBe(2_200_000);
+  });
+
+  it("rolls Discussion spend, including re-ranking, into its Conversation", () => {
+    const state = pricedState();
+    const discussion = createFixtureDiscussion();
+    state.discussions.push(discussion);
+    state.providerAttempts.push(
+      createFixtureProviderAttempt({
+        id: "attempt-turn",
+        discussionId: discussion.id,
+        startedAt: "2026-02-09T00:00:00.000Z"
+      }),
+      // Carries no Run: only its Discussion connects it to a Conversation.
+      createFixtureProviderAttempt({
+        id: "attempt-rerank",
+        discussionId: discussion.id,
+        purpose: "discussion_rerank",
+        startedAt: "2026-02-09T00:00:00.000Z"
+      })
+    );
+
+    const view = buildUsageView(state, { clock });
+
+    expect(view.byConversation).toHaveLength(1);
+    expect(view.byConversation[0]).toMatchObject({
+      conversationId: discussion.conversationId,
+      title: "Launch planning",
+      tokens: expect.objectContaining({ totalTokens: 2_200_000 }),
+      costTotals: [{ currency: "USD", costMicros: 9_000_000 }]
+    });
+  });
+
+  it("attributes a conversation Run's spend through its Run", () => {
+    const state = pricedState();
+    const { run } = addFixtureTaskRunCorrelation(state);
+    state.providerAttempts.push(
+      createFixtureProviderAttempt({
+        id: "attempt-chat",
+        runId: run.id,
+        startedAt: "2026-02-09T00:00:00.000Z"
+      })
+    );
+
+    const view = buildUsageView(state, { clock });
+
+    expect(view.byConversation).toHaveLength(1);
+    expect(view.byConversation[0].conversationId).toBe(run.conversationId);
+    expect(view.byConversation[0].tokens.totalTokens).toBe(1_100_000);
+  });
+
+  it("keeps separate Conversations apart", () => {
+    const state = pricedState();
+    const { run } = addFixtureTaskRunCorrelation(state);
+    const other = {
+      ...state.conversations[0],
+      id: "30000000-0000-4000-8000-000000000002",
+      title: "Second planning"
+    };
+    state.conversations.push(other);
+    state.runs.push({ ...run, id: "run-other", conversationId: other.id });
+    state.providerAttempts.push(
+      createFixtureProviderAttempt({
+        id: "attempt-first",
+        runId: run.id,
+        startedAt: "2026-02-09T00:00:00.000Z"
+      }),
+      createFixtureProviderAttempt({
+        id: "attempt-second",
+        runId: "run-other",
+        startedAt: "2026-02-09T00:00:00.000Z"
+      })
+    );
+
+    const view = buildUsageView(state, { clock });
+
+    expect(view.byConversation.map((entry) => entry.conversationId)).toEqual([
+      "30000000-0000-4000-8000-000000000001",
+      "30000000-0000-4000-8000-000000000002"
+    ]);
+  });
+
+  it("reconciles the Discussion and Conversation breakdowns", () => {
+    const state = pricedState();
+    const discussion = createFixtureDiscussion();
+    state.discussions.push(discussion);
+    const { run } = addFixtureTaskRunCorrelation(state);
+    state.providerAttempts.push(
+      createFixtureProviderAttempt({
+        id: "attempt-turn",
+        discussionId: discussion.id,
+        startedAt: "2026-02-09T00:00:00.000Z"
+      }),
+      createFixtureProviderAttempt({
+        id: "attempt-rerank",
+        discussionId: discussion.id,
+        purpose: "discussion_rerank",
+        startedAt: "2026-02-09T00:00:00.000Z"
+      }),
+      createFixtureProviderAttempt({
+        id: "attempt-chat",
+        runId: run.id,
+        startedAt: "2026-02-09T00:00:00.000Z"
+      })
+    );
+
+    const view = buildUsageView(state, { clock });
+
+    // Every attempt resolves to a Conversation, so that roll-up is complete.
+    for (const total of view.cost.totals) {
+      expect(costOf(view.byConversation, total.currency)).toBe(total.costMicros);
+    }
+    expect(tokensOf(view.byConversation)).toBe(view.tokens.totalTokens);
+
+    // The Discussion breakdown covers only the Discussion-scoped attempts.
+    expect(tokensOf(view.byDiscussion)).toBe(2_200_000);
   });
 });
