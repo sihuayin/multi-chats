@@ -6,21 +6,34 @@ import {
   ChartColumn,
   Coins,
   Hash,
+  ListTree,
   LoaderCircle,
   MessagesSquare,
   RefreshCw,
   Server,
   UsersRound
 } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
 import { useI18n } from "@/components/i18n-provider";
 import { PageHeader } from "@/components/page-header";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from "@/components/ui/table";
 import { apiRequest } from "@/lib/api";
 import type { TranslationKey } from "@/lib/i18n";
 import {
   costIn,
   DEFAULT_USAGE_WINDOW,
   USAGE_WINDOWS,
+  type UsageAttempt,
+  type UsageAttemptPurpose,
+  type UsageAttemptStatus,
   type UsageBreakdownEntry,
   type UsageSeriesPoint,
   type UsageBudgetState,
@@ -41,6 +54,14 @@ function sourceKey(
   return `usage.source.${source}`;
 }
 
+function purposeKey(purpose: UsageAttemptPurpose): TranslationKey {
+  return `usage.purpose.${purpose}`;
+}
+
+function attemptStatusKey(status: UsageAttemptStatus): TranslationKey {
+  return `usage.status.${status}`;
+}
+
 function formatTokens(value: number | undefined): string {
   if (value === undefined) return "—";
   return new Intl.NumberFormat().format(value);
@@ -56,6 +77,11 @@ function formatCost(costMicros: number, currency: string): string {
 
 function formatTime(value: string): string {
   return new Date(value).toLocaleTimeString();
+}
+
+/** The attempt table spans whole windows, so its stamps carry the date too. */
+function formatStamp(value: string): string {
+  return new Date(value).toLocaleString();
 }
 
 function StatCard({
@@ -83,6 +109,7 @@ type BreakdownIdentity = {
   id: string;
   label: string;
   detail?: string;
+  href?: string;
 };
 
 /**
@@ -277,7 +304,13 @@ function BreakdownPanel<T extends UsageBreakdownEntry>({
           return (
             <div key={identity.id} className="usage-row">
               <div className="usage-row-label">
-                <strong>{identity.label}</strong>
+                <strong>
+                  {identity.href ? (
+                    <Link href={identity.href}>{identity.label}</Link>
+                  ) : (
+                    identity.label
+                  )}
+                </strong>
                 {identity.detail ? <small>{identity.detail}</small> : null}
                 {renderNote ? renderNote(entry) : null}
               </div>
@@ -298,6 +331,77 @@ function BreakdownPanel<T extends UsageBreakdownEntry>({
         })}
       </div>
     </UsagePanel>
+  );
+}
+
+function AttemptsPanel({
+  attempts,
+  totalAttempts
+}: {
+  attempts: UsageAttempt[];
+  totalAttempts: number;
+}) {
+  const { t } = useI18n();
+  return (
+    <section className="panel usage-panel">
+      <div className="panel-title">
+        <ListTree size={17} />
+        <h2>{t("usage.attemptsTitle")}</h2>
+      </div>
+      {attempts.length < totalAttempts ? (
+        <p className="usage-note">
+          {t("usage.attemptsCapped", {
+            shown: attempts.length,
+            total: totalAttempts
+          })}
+        </p>
+      ) : null}
+      <Table className="usage-attempt-table">
+        <TableHeader>
+          <TableRow>
+            <TableHead>{t("usage.startedAt")}</TableHead>
+            <TableHead>{t("usage.provider")}</TableHead>
+            <TableHead>{t("usage.model")}</TableHead>
+            <TableHead>{t("usage.purpose")}</TableHead>
+            <TableHead>{t("usage.status")}</TableHead>
+            <TableHead>{t("usage.tokens")}</TableHead>
+            <TableHead>{t("usage.cost")}</TableHead>
+            <TableHead>{t("usage.open")}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {attempts.map((attempt) => (
+            <TableRow key={attempt.id}>
+              <TableCell>{formatStamp(attempt.startedAt)}</TableCell>
+              <TableCell>{attempt.provider}</TableCell>
+              <TableCell>{attempt.modelId}</TableCell>
+              <TableCell>{t(purposeKey(attempt.purpose))}</TableCell>
+              <TableCell>{t(attemptStatusKey(attempt.status))}</TableCell>
+              <TableCell>
+                <span>{formatTokens(attempt.tokens.totalTokens)}</span>
+                <small>
+                  {t("usage.tokenSplit", {
+                    input: formatTokens(attempt.tokens.inputTokens),
+                    output: formatTokens(attempt.tokens.outputTokens)
+                  })}
+                </small>
+                <small>{t(sourceKey(attempt.tokens.source))}</small>
+              </TableCell>
+              <TableCell>
+                {attempt.cost === null
+                  ? t("usage.costUnknown")
+                  : formatCost(attempt.cost.costMicros, attempt.cost.currency)}
+              </TableCell>
+              <TableCell>
+                {attempt.href ? (
+                  <Link href={attempt.href}>{t("usage.open")}</Link>
+                ) : null}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </section>
   );
 }
 
@@ -469,103 +573,111 @@ export function UsageWorkspace() {
               <p className="usage-empty">{t("usage.empty")}</p>
             </section>
           ) : (
-            <div className="usage-grid">
-              <section className="panel usage-panel">
-                <div className="panel-title">
-                  <Hash size={17} />
-                  <h2>{t("usage.tokens")}</h2>
-                </div>
-                <dl className="usage-breakdown">
-                  <div>
-                    <dt>{t("usage.inputTokens")}</dt>
-                    <dd>{formatTokens(view.tokens.inputTokens)}</dd>
+            <>
+              <div className="usage-grid">
+                <section className="panel usage-panel">
+                  <div className="panel-title">
+                    <Hash size={17} />
+                    <h2>{t("usage.tokens")}</h2>
                   </div>
-                  <div>
-                    <dt>{t("usage.outputTokens")}</dt>
-                    <dd>{formatTokens(view.tokens.outputTokens)}</dd>
-                  </div>
-                  <div>
-                    <dt>{t("usage.cachedInputTokens")}</dt>
-                    <dd>{formatTokens(view.tokens.cachedInputTokens)}</dd>
-                  </div>
-                  <div>
-                    <dt>{t("usage.reasoningTokens")}</dt>
-                    <dd>{formatTokens(view.tokens.reasoningTokens)}</dd>
-                  </div>
-                  <div>
-                    <dt>{t("usage.totalTokens")}</dt>
-                    <dd>{formatTokens(view.tokens.totalTokens)}</dd>
-                  </div>
-                </dl>
-              </section>
-
-              <section className="panel usage-panel">
-                <div className="panel-title">
-                  <Coins size={17} />
-                  <h2>{t("usage.cost")}</h2>
-                </div>
-                <div className="usage-currencies">
-                  {currencies.map((total) => (
-                    <div key={total.currency} className="usage-currency">
-                      <span>{total.currency}</span>
-                      <strong>{formatAmount(total.costMicros)}</strong>
+                  <dl className="usage-breakdown">
+                    <div>
+                      <dt>{t("usage.inputTokens")}</dt>
+                      <dd>{formatTokens(view.tokens.inputTokens)}</dd>
                     </div>
-                  ))}
-                  {currencies.length === 0 ? (
-                    <p className="usage-empty">{t("usage.noCost")}</p>
-                  ) : null}
-                </div>
-                <p className="usage-note">{t("usage.perCurrencyNote")}</p>
-              </section>
+                    <div>
+                      <dt>{t("usage.outputTokens")}</dt>
+                      <dd>{formatTokens(view.tokens.outputTokens)}</dd>
+                    </div>
+                    <div>
+                      <dt>{t("usage.cachedInputTokens")}</dt>
+                      <dd>{formatTokens(view.tokens.cachedInputTokens)}</dd>
+                    </div>
+                    <div>
+                      <dt>{t("usage.reasoningTokens")}</dt>
+                      <dd>{formatTokens(view.tokens.reasoningTokens)}</dd>
+                    </div>
+                    <div>
+                      <dt>{t("usage.totalTokens")}</dt>
+                      <dd>{formatTokens(view.tokens.totalTokens)}</dd>
+                    </div>
+                  </dl>
+                </section>
 
-              <BreakdownPanel
-                title={t("usage.byModel")}
-                icon={<Boxes size={17} />}
-                entries={view.byModel}
-                identify={(entry) => ({
-                  id: `${entry.provider}/${entry.modelId}`,
-                  label: entry.modelId,
-                  detail: entry.provider
-                })}
-                emptyLabel={t("usage.noModels")}
-              />
+                <section className="panel usage-panel">
+                  <div className="panel-title">
+                    <Coins size={17} />
+                    <h2>{t("usage.cost")}</h2>
+                  </div>
+                  <div className="usage-currencies">
+                    {currencies.map((total) => (
+                      <div key={total.currency} className="usage-currency">
+                        <span>{total.currency}</span>
+                        <strong>{formatAmount(total.costMicros)}</strong>
+                      </div>
+                    ))}
+                    {currencies.length === 0 ? (
+                      <p className="usage-empty">{t("usage.noCost")}</p>
+                    ) : null}
+                  </div>
+                  <p className="usage-note">{t("usage.perCurrencyNote")}</p>
+                </section>
 
-              <BreakdownPanel
-                title={t("usage.byProvider")}
-                icon={<Server size={17} />}
-                entries={view.byProvider}
-                identify={(entry) => ({
-                  id: entry.provider,
-                  label: entry.provider
-                })}
-                emptyLabel={t("usage.noProviders")}
-              />
+                <BreakdownPanel
+                  title={t("usage.byModel")}
+                  icon={<Boxes size={17} />}
+                  entries={view.byModel}
+                  identify={(entry) => ({
+                    id: `${entry.provider}/${entry.modelId}`,
+                    label: entry.modelId,
+                    detail: entry.provider
+                  })}
+                  emptyLabel={t("usage.noModels")}
+                />
 
-              <BreakdownPanel
-                title={t("usage.byDiscussion")}
-                icon={<UsersRound size={17} />}
-                entries={view.byDiscussion}
-                identify={(entry) => ({
-                  id: entry.discussionId,
-                  label: entry.title
-                })}
-                renderNote={(entry) => (
-                  <DiscussionBudgetNote budget={entry.budget} />
-                )}
-                emptyLabel={t("usage.noDiscussions")}
-              />
+                <BreakdownPanel
+                  title={t("usage.byProvider")}
+                  icon={<Server size={17} />}
+                  entries={view.byProvider}
+                  identify={(entry) => ({
+                    id: entry.provider,
+                    label: entry.provider
+                  })}
+                  emptyLabel={t("usage.noProviders")}
+                />
 
-              <BreakdownPanel
-                title={t("usage.byConversation")}
-                icon={<MessagesSquare size={17} />}
-                entries={view.byConversation}
-                identify={(entry) => ({
-                  id: entry.conversationId,
-                  label: entry.title
-                })}
-                emptyLabel={t("usage.noConversations")}
+                <BreakdownPanel
+                  title={t("usage.byDiscussion")}
+                  icon={<UsersRound size={17} />}
+                  entries={view.byDiscussion}
+                  identify={(entry) => ({
+                    id: entry.discussionId,
+                    label: entry.title,
+                    href: entry.href
+                  })}
+                  renderNote={(entry) => (
+                    <DiscussionBudgetNote budget={entry.budget} />
+                  )}
+                  emptyLabel={t("usage.noDiscussions")}
+                />
+
+                <BreakdownPanel
+                  title={t("usage.byConversation")}
+                  icon={<MessagesSquare size={17} />}
+                  entries={view.byConversation}
+                  identify={(entry) => ({
+                    id: entry.conversationId,
+                    label: entry.title,
+                    href: entry.href
+                  })}
+                  emptyLabel={t("usage.noConversations")}
+                />
+              </div>
+              <AttemptsPanel
+                attempts={view.attempts}
+                totalAttempts={view.attemptCount}
               />
-            </div>
+            </>
           )}
           <p className="usage-updated">
             {t("usage.generatedAt", { time: formatTime(view.generatedAt) })}

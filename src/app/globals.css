@@ -2485,6 +2485,34 @@ label textarea {
   font-size: 9px;
 }
 
+.usage-attempt-table [data-slot="table-head"] {
+  color: var(--muted-foreground);
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.usage-attempt-table [data-slot="table-cell"] {
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.usage-attempt-table [data-slot="table-cell"] small {
+  display: block;
+  color: var(--muted-foreground);
+  font-size: 9px;
+}
+
+.usage-attempt-table a {
+  color: var(--accent-strong);
+  text-decoration: none;
+}
+
+.usage-attempt-table a:hover {
+  text-decoration: underline;
+}
+
 .usage-empty {
   margin: 0;
   padding: 18px 10px;

@@ -1,4 +1,8 @@
 import { attemptCost } from "@/server/application/model-pricing";
+import {
+  discussionHref,
+  runHref
+} from "@/server/application/view-links";
 import { availableTaskActions } from "@/server/application/task-actions";
 import { evaluateDiscussionBudget } from "@/server/application/discussion-budget";
 import { availableDiscussionActions } from "@/server/application/discussion-view";
@@ -49,16 +53,6 @@ function command(
   href: string
 ): DiagnosticsCommand {
   return { kind, method, href };
-}
-
-function runHref(run: AppState["runs"][number]): string {
-  const query = new URLSearchParams({ conversation: run.conversationId });
-  if (run.taskId) query.set("task", run.taskId);
-  if (run.discussionId) {
-    query.set("view", "discussion");
-    query.set("discussion", run.discussionId);
-  }
-  return `/?${query.toString()}`;
 }
 
 function discussionCommands(
@@ -273,11 +267,7 @@ function discussionSummaries(state: AppState): DiagnosticsDiscussion[] {
         currentRound: discussion.currentRound,
         maxRounds: discussion.maxRounds,
         ...(reason ? { reason } : {}),
-        href: `/?${new URLSearchParams({
-          view: "discussion",
-          conversation: discussion.conversationId,
-          discussion: discussion.id
-        })}`,
+        href: discussionHref(discussion.conversationId, discussion.id),
         actions: discussionCommands(discussion),
         pendingInterventionCount: state.discussionInterventions.filter(
           (intervention) =>
