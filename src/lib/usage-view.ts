@@ -1,3 +1,5 @@
+import type { ProviderId } from "@/lib/provider-catalog";
+
 export type UsageWindow = "7d" | "30d" | "all";
 
 export type UsageWindowView = {
@@ -20,6 +22,20 @@ export type UsageCostTotal = {
   costMicros: number;
 };
 
+export type UsageBreakdownEntry = {
+  tokens: UsageTokenTotals;
+  costTotals: UsageCostTotal[];
+};
+
+export type UsageModelBreakdown = UsageBreakdownEntry & {
+  provider: ProviderId;
+  modelId: string;
+};
+
+export type UsageProviderBreakdown = UsageBreakdownEntry & {
+  provider: ProviderId;
+};
+
 export type UsageView = {
   generatedAt: string;
   window: UsageWindowView;
@@ -33,5 +49,7 @@ export type UsageView = {
     unknownUsageAttempts: number;
     unknownPricingAttempts: number;
   };
+  byModel: UsageModelBreakdown[];
+  byProvider: UsageProviderBreakdown[];
   empty: boolean;
 };
