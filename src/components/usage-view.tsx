@@ -7,8 +7,10 @@ import {
   Coins,
   Hash,
   LoaderCircle,
+  MessagesSquare,
   RefreshCw,
-  Server
+  Server,
+  UsersRound
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { useI18n } from "@/components/i18n-provider";
@@ -17,6 +19,8 @@ import { apiRequest } from "@/lib/api";
 import type { TranslationKey } from "@/lib/i18n";
 import type {
   UsageBreakdownEntry,
+  UsageBudgetState,
+  UsageDiscussionBudget,
   UsageView,
   UsageWindow
 } from "@/lib/usage-view";
@@ -77,17 +81,78 @@ type BreakdownIdentity = {
   detail?: string;
 };
 
+/**
+ * Renders the Discussion's budget. Limits are enforced across the
+ * Discussion's whole lifetime, not the window the rest of the page shows,
+ * so the note names its scope rather than leaving the two side by side
+ * unlabelled. Returns nothing when no budget is configured, so such a row
+ * carries no budget indication at all.
+ */
+function DiscussionBudgetNote({
+  budget
+}: {
+  budget: UsageDiscussionBudget | null;
+}) {
+  const { t } = useI18n();
+  if (!budget) return null;
+
+  // Each dimension reports its own state, so a hard cost breach is never
+  // masked by a soft token threshold on the same row.
+  const withState = (text: string, state: UsageBudgetState) =>
+    state === "unbounded"
+      ? text
+      : `${text} · ${t(`usage.budgetState.${state}` as TranslationKey)}`;
+
+  const parts = [
+    t("usage.budgetScope"),
+    withState(
+      budget.tokens.hard !== undefined
+        ? t("chat.tokenBudgetUsed", {
+            used: formatTokens(budget.tokens.used),
+            limit: formatTokens(budget.tokens.hard)
+          })
+        : t("chat.tokenBudgetUsedOnly", {
+            used: formatTokens(budget.tokens.used)
+          }),
+      budget.tokens.state
+    )
+  ];
+
+  if (budget.cost.hardMicros !== undefined) {
+    parts.push(
+      withState(
+        t("chat.costBudgetUsed", {
+          used: formatAmount(budget.cost.usedMicros),
+          limit: formatAmount(budget.cost.hardMicros),
+          currency: budget.cost.currency ?? ""
+        }),
+        budget.cost.state
+      )
+    );
+  }
+
+  const unknownAttempts =
+    budget.tokens.unknownAttempts + budget.cost.unknownAttempts;
+  if (unknownAttempts > 0) {
+    parts.push(t("chat.budgetUnknownCoverage", { count: unknownAttempts }));
+  }
+
+  return <small>{parts.join(" · ")}</small>;
+}
+
 function BreakdownPanel<T extends UsageBreakdownEntry>({
   title,
   icon,
   entries,
   identify,
+  renderNote,
   emptyLabel
 }: {
   title: string;
   icon: ReactNode;
   entries: T[];
   identify: (entry: T) => BreakdownIdentity;
+  renderNote?: (entry: T) => ReactNode;
   emptyLabel: string;
 }) {
   const { t } = useI18n();
@@ -113,6 +178,7 @@ function BreakdownPanel<T extends UsageBreakdownEntry>({
                 <div className="usage-row-label">
                   <strong>{identity.label}</strong>
                   {identity.detail ? <small>{identity.detail}</small> : null}
+                  {renderNote ? renderNote(entry) : null}
                 </div>
                 <span className="usage-row-tokens">
                   {formatTokens(entry.tokens.totalTokens)}
@@ -330,6 +396,31 @@ export function UsageWorkspace() {
                   label: entry.provider
                 })}
                 emptyLabel={t("usage.noProviders")}
+              />
+
+              <BreakdownPanel
+                title={t("usage.byDiscussion")}
+                icon={<UsersRound size={17} />}
+                entries={view.byDiscussion}
+                identify={(entry) => ({
+                  id: entry.discussionId,
+                  label: entry.title
+                })}
+                renderNote={(entry) => (
+                  <DiscussionBudgetNote budget={entry.budget} />
+                )}
+                emptyLabel={t("usage.noDiscussions")}
+              />
+
+              <BreakdownPanel
+                title={t("usage.byConversation")}
+                icon={<MessagesSquare size={17} />}
+                entries={view.byConversation}
+                identify={(entry) => ({
+                  id: entry.conversationId,
+                  label: entry.title
+                })}
+                emptyLabel={t("usage.noConversations")}
               />
             </div>
           )}

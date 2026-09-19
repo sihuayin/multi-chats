@@ -36,6 +36,57 @@ export type UsageProviderBreakdown = UsageBreakdownEntry & {
   provider: ProviderId;
 };
 
+/**
+ * Mirrors the server's budget dimension state. Assigning a server budget
+ * evaluation into these types stops compiling if that union gains a member.
+ */
+export type UsageBudgetState =
+  | "unbounded"
+  | "ok"
+  | "soft"
+  | "hard"
+  | "unknown";
+
+export type UsageBudgetTokens = {
+  used: number;
+  soft?: number;
+  hard?: number;
+  unknownAttempts: number;
+  state: UsageBudgetState;
+};
+
+export type UsageBudgetCost = {
+  usedMicros: number;
+  softMicros?: number;
+  hardMicros?: number;
+  currency?: string;
+  unknownAttempts: number;
+  state: UsageBudgetState;
+};
+
+export type UsageDiscussionBudget = {
+  source: "discussion" | "workspace_defaults";
+  tokens: UsageBudgetTokens;
+  cost: UsageBudgetCost;
+};
+
+/**
+ * Spend is scoped to the visible window, but `budget` reports the
+ * Discussion's whole lifetime — that is what the limits are enforced
+ * against. A Discussion with no budget resolves to `null`.
+ */
+export type UsageDiscussionBreakdown = UsageBreakdownEntry & {
+  discussionId: string;
+  conversationId: string;
+  title: string;
+  budget: UsageDiscussionBudget | null;
+};
+
+export type UsageConversationBreakdown = UsageBreakdownEntry & {
+  conversationId: string;
+  title: string;
+};
+
 export type UsageView = {
   generatedAt: string;
   window: UsageWindowView;
@@ -51,5 +102,7 @@ export type UsageView = {
   };
   byModel: UsageModelBreakdown[];
   byProvider: UsageProviderBreakdown[];
+  byDiscussion: UsageDiscussionBreakdown[];
+  byConversation: UsageConversationBreakdown[];
   empty: boolean;
 };

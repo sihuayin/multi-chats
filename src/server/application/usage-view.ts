@@ -6,10 +6,19 @@ import {
   aggregateModelUsage,
   type AggregatedModelUsage
 } from "@/server/application/model-usage";
-import type { AppState, ProviderAttempt } from "@/server/domain/types";
-import type { ProviderId } from "@/lib/provider-catalog";
+import { evaluateDiscussionBudget } from "@/server/application/discussion-budget";
+import type {
+  AppState,
+  Conversation,
+  Discussion,
+  ProviderAttempt,
+  Run
+} from "@/server/domain/types";
 import type {
   UsageBreakdownEntry,
+  UsageConversationBreakdown,
+  UsageDiscussionBreakdown,
+  UsageDiscussionBudget,
   UsageModelBreakdown,
   UsageProviderBreakdown,
   UsageTokenTotals,
@@ -71,53 +80,84 @@ function breakdownEntry(summary: AttemptSummary): UsageBreakdownEntry {
   };
 }
 
-type ModelGroup = {
-  provider: ProviderId;
-  modelId: string;
-  attempts: ProviderAttempt[];
+type Lookups = {
+  runs: Map<string, Run>;
+  discussions: Map<string, Discussion>;
+  conversations: Map<string, Conversation>;
 };
 
-type ProviderGroup = {
-  provider: ProviderId;
-  attempts: ProviderAttempt[];
-};
-
-/**
- * A Model is identified by the Provider that serves it as well as its model
- * id, matching how ModelPricing and the cost aggregate key a model.
- */
-function groupByModel(attempts: ProviderAttempt[]): ModelGroup[] {
-  const groups = new Map<string, ModelGroup>();
-  for (const attempt of attempts) {
-    const key = `${attempt.provider}${GROUP_KEY_SEPARATOR}${attempt.modelId}`;
-    const group = groups.get(key);
-    if (group) {
-      group.attempts.push(attempt);
-    } else {
-      groups.set(key, {
-        provider: attempt.provider,
-        modelId: attempt.modelId,
-        attempts: [attempt]
-      });
-    }
-  }
-  return [...groups.values()];
+function lookupsOf(state: AppState): Lookups {
+  return {
+    runs: new Map(state.runs.map((run) => [run.id, run])),
+    discussions: new Map(
+      state.discussions.map((discussion) => [discussion.id, discussion])
+    ),
+    conversations: new Map(
+      state.conversations.map((conversation) => [conversation.id, conversation])
+    )
+  };
 }
 
-function groupByProvider(attempts: ProviderAttempt[]): ProviderGroup[] {
-  const groups = new Map<ProviderId, ProviderAttempt[]>();
+/**
+ * An attempt reaches its Conversation through its Run; a model re-ranking
+ * attempt carries no Run, so it reaches it through its Discussion instead.
+ */
+function conversationIdOf(
+  attempt: ProviderAttempt,
+  lookups: Lookups
+): string | undefined {
+  if (attempt.runId) {
+    const run = lookups.runs.get(attempt.runId);
+    if (run) return run.conversationId;
+  }
+  if (attempt.discussionId) {
+    return lookups.discussions.get(attempt.discussionId)?.conversationId;
+  }
+  return undefined;
+}
+
+function groupAttemptsByKey(
+  attempts: ProviderAttempt[],
+  keyOf: (attempt: ProviderAttempt) => string | undefined
+): Map<string, ProviderAttempt[]> {
+  const groups = new Map<string, ProviderAttempt[]>();
   for (const attempt of attempts) {
-    const group = groups.get(attempt.provider);
+    const key = keyOf(attempt);
+    if (key === undefined) continue;
+    const group = groups.get(key);
     if (group) {
       group.push(attempt);
     } else {
-      groups.set(attempt.provider, [attempt]);
+      groups.set(key, [attempt]);
     }
   }
-  return [...groups.entries()].map(([provider, group]) => ({
-    provider,
-    attempts: group
-  }));
+  return groups;
+}
+
+function discussionBudget(
+  state: AppState,
+  discussion: Discussion
+): UsageDiscussionBudget | null {
+  const evaluation = evaluateDiscussionBudget(state, discussion);
+  if (evaluation.source === "none") return null;
+  return {
+    source: evaluation.source,
+    tokens: {
+      used: evaluation.tokens.used,
+      soft: evaluation.tokens.soft,
+      hard: evaluation.tokens.hard,
+      unknownAttempts: evaluation.tokens.unknownUsageAttemptCount,
+      state: evaluation.tokens.state
+    },
+    cost: {
+      usedMicros: evaluation.cost.usedMicros,
+      softMicros: evaluation.cost.softMicros,
+      hardMicros: evaluation.cost.hardMicros,
+      currency: evaluation.cost.currency,
+      unknownAttempts: evaluation.cost.unknownCostAttemptCount,
+      state: evaluation.cost.state
+    }
+  };
 }
 
 function costIn(entry: UsageBreakdownEntry, currency: string): number {
@@ -171,24 +211,67 @@ export function buildUsageView(
   const totals = summarize(state, attempts);
   const currency =
     totals.cost.totals.length === 1 ? totals.cost.totals[0].currency : null;
+  const lookups = lookupsOf(state);
 
   const byModel: UsageModelBreakdown[] = sortedBreakdown(
-    groupByModel(attempts).map((group) => ({
-      provider: group.provider,
-      modelId: group.modelId,
-      ...breakdownEntry(summarize(state, group.attempts))
+    [
+      ...groupAttemptsByKey(
+        attempts,
+        (attempt) =>
+          `${attempt.provider}${GROUP_KEY_SEPARATOR}${attempt.modelId}`
+      ).values()
+    ].map((group) => ({
+      provider: group[0].provider,
+      modelId: group[0].modelId,
+      ...breakdownEntry(summarize(state, group))
     })),
     currency,
     (entry) => `${entry.provider} ${entry.modelId}`
   );
 
   const byProvider: UsageProviderBreakdown[] = sortedBreakdown(
-    groupByProvider(attempts).map((group) => ({
-      provider: group.provider,
-      ...breakdownEntry(summarize(state, group.attempts))
-    })),
+    [...groupAttemptsByKey(attempts, (attempt) => attempt.provider).values()].map(
+      (group) => ({
+        provider: group[0].provider,
+        ...breakdownEntry(summarize(state, group))
+      })
+    ),
     currency,
     (entry) => entry.provider
+  );
+
+  const byDiscussion: UsageDiscussionBreakdown[] = sortedBreakdown(
+    [
+      ...groupAttemptsByKey(attempts, (attempt) => attempt.discussionId).entries()
+    ].flatMap(([discussionId, group]) => {
+      const discussion = lookups.discussions.get(discussionId);
+      if (!discussion) return [];
+      return [
+        {
+          discussionId,
+          conversationId: discussion.conversationId,
+          title: discussion.title,
+          budget: discussionBudget(state, discussion),
+          ...breakdownEntry(summarize(state, group))
+        }
+      ];
+    }),
+    currency,
+    (entry) => entry.title
+  );
+
+  const byConversation: UsageConversationBreakdown[] = sortedBreakdown(
+    [
+      ...groupAttemptsByKey(attempts, (attempt) =>
+        conversationIdOf(attempt, lookups)
+      ).entries()
+    ].map(([conversationId, group]) => ({
+      conversationId,
+      title: lookups.conversations.get(conversationId)?.title ?? conversationId,
+      ...breakdownEntry(summarize(state, group))
+    })),
+    currency,
+    (entry) => entry.title
   );
 
   // An attempt with unknown usage can never be priced, so every unknown-usage
@@ -214,6 +297,8 @@ export function buildUsageView(
     coverage: { unknownUsageAttempts, unknownPricingAttempts },
     byModel,
     byProvider,
+    byDiscussion,
+    byConversation,
     empty: totals.attemptCount === 0
   };
 }
