@@ -26,7 +26,9 @@ import { transitionTask } from "@/server/application/task-ledger";
 import { createDraftTask } from "@/server/application/task-factory";
 import { availableTaskActions } from "@/server/application/task-actions";
 import { buildDiagnosticsView } from "@/server/application/diagnostics-view";
+import { buildUsageView } from "@/server/application/usage-view";
 import type { DiagnosticsView } from "@/lib/diagnostics-view";
+import type { UsageView } from "@/lib/usage-view";
 import {
   createTaskArtifact,
   updateTaskArtifact
@@ -96,6 +98,10 @@ export class WorkspaceService {
 
   async getDiagnosticsView(): Promise<DiagnosticsView> {
     return this.store.read((state) => buildDiagnosticsView(state));
+  }
+
+  async getUsageView(): Promise<UsageView> {
+    return this.store.read((state) => buildUsageView(state));
   }
 
   async updateWorkspace(input: unknown): Promise<WorkspaceView> {
