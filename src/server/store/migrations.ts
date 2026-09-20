@@ -1,12 +1,13 @@
-import type { AppState } from "@/server/domain/types";
+import type { AppState, Tool } from "@/server/domain/types";
 import { isArtifactType } from "@/lib/artifact-types";
+import { BUILT_IN_TOOLS } from "@/server/store/initial-state";
 import { validateRuntimeContracts } from "@/server/domain/runtime-contracts";
 import {
   validateDiscussion,
   validateDiscussionReferences
 } from "@/server/application/discussion-domain";
 
-export const CURRENT_SCHEMA_VERSION = 5;
+export const CURRENT_SCHEMA_VERSION = 6;
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -142,6 +143,24 @@ function validateCurrentState(state: Record<string, unknown>): void {
   if (!Array.isArray(state.employees)) {
     throw new Error("Workspace Employees are invalid");
   }
+  // Every Tool a Skill allows must resolve. Skills are live configuration, not
+  // history, so write-time validation is what keeps this true; reaching it here
+  // means a bad restore or a bug, and refusing to load is safer than running a
+  // Skill that references nothing.
+  const toolNames = new Set(
+    (state.tools as unknown[]).map((item) => record(item).name)
+  );
+  for (const value of state.skills as unknown[]) {
+    const skill = record(value);
+    const names = Array.isArray(skill.toolNames) ? skill.toolNames : [];
+    for (const name of names) {
+      if (typeof name !== "string" || !toolNames.has(name)) {
+        throw new Error(
+          `Workspace Skill ${String(skill.name ?? skill.id)} references unknown Tool ${String(name)}`
+        );
+      }
+    }
+  }
   const workspace = record(state.workspace);
   const workspaceId = workspace.id;
   if (typeof workspaceId !== "string" || !workspaceId) {
@@ -157,6 +176,53 @@ function validateCurrentState(state: Record<string, unknown>): void {
   });
 }
 
+/**
+ * The built-ins as registry entries, built from the code constant that stays
+ * the authority: because these entries cannot be edited, a later migration may
+ * safely overwrite them from here.
+ *
+ * Lives beside the migration rather than in `initial-state` so the seeding and
+ * the schema version move together, and `initial-state` keeps its one-way
+ * import.
+ */
+export function seedBuiltInTools(
+  workspaceId: string,
+  timestamp: string
+): Tool[] {
+  return BUILT_IN_TOOLS.map((tool) => ({
+    ...structuredClone(tool),
+    id: `builtin:${tool.name}`,
+    workspaceId,
+    builtIn: true,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  }));
+}
+
+function migrateV5ToV6(state: Record<string, unknown>): void {
+  state.tools ??= [];
+  if (!Array.isArray(state.tools)) {
+    throw new Error("Workspace Tools are invalid");
+  }
+  const workspace = record(state.workspace);
+  const workspaceId = typeof workspace.id === "string" ? workspace.id : "";
+  const timestamp =
+    typeof workspace.updatedAt === "string" && workspace.updatedAt
+      ? workspace.updatedAt
+      : typeof workspace.createdAt === "string" && workspace.createdAt
+        ? workspace.createdAt
+        : new Date().toISOString();
+
+  const seeded = new Set(
+    state.tools.map((item) => record(item).id)
+  );
+  for (const tool of seedBuiltInTools(workspaceId, timestamp)) {
+    if (!seeded.has(tool.id)) state.tools.push(tool);
+  }
+  workspace.egressAllowlist ??= [];
+  state.schemaVersion = CURRENT_SCHEMA_VERSION;
+}
+
 export function migrateAppState(input: unknown): AppState {
   const state = structuredClone(record(input));
   const version = state.schemaVersion;
@@ -166,6 +232,7 @@ export function migrateAppState(input: unknown): AppState {
   if (state.schemaVersion === 2) migrateV2ToV3(state);
   if (state.schemaVersion === 3) migrateV3ToV4(state);
   if (state.schemaVersion === 4) migrateV4ToV5(state);
+  if (state.schemaVersion === 5) migrateV5ToV6(state);
   if (version !== CURRENT_SCHEMA_VERSION) {
     if (state.schemaVersion !== CURRENT_SCHEMA_VERSION) {
       throw new Error(

@@ -1,3 +1,4 @@
+import { CURRENT_SCHEMA_VERSION } from "@/server/store/migrations";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -319,7 +320,7 @@ describe("Workspace backup and restore", () => {
     }
 
     expect(parseWorkspaceBackup(JSON.stringify(legacy))).toMatchObject({
-      schemaVersion: 5,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
       providerAttempts: [],
       evidenceReferences: [],
       discussionCompressions: [],
@@ -327,5 +328,18 @@ describe("Workspace backup and restore", () => {
       discussionContextRevisions: [],
       modelPricing: []
     });
+  });
+
+  it("restores a backup taken before the Tool registry existed", () => {
+    const legacy = createFixtureState() as unknown as Record<string, unknown>;
+    legacy.schemaVersion = 5;
+    delete legacy.tools;
+
+    const restored = parseWorkspaceBackup(JSON.stringify(legacy));
+
+    // It restores because the migration backfills the collection, not because
+    // validation was loosened.
+    expect(restored.tools).toHaveLength(5);
+    expect(restored.workspace.egressAllowlist).toEqual([]);
   });
 });

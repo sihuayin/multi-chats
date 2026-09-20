@@ -1,5 +1,14 @@
-import type { AppState, IsoDate, Skill, ToolDefinition, Workspace } from "@/server/domain/types";
-import { CURRENT_SCHEMA_VERSION } from "@/server/store/migrations";
+import type {
+  AppState,
+  IsoDate,
+  Skill,
+  ToolDefinition,
+  Workspace
+} from "@/server/domain/types";
+import {
+  CURRENT_SCHEMA_VERSION,
+  seedBuiltInTools
+} from "@/server/store/migrations";
 
 export const BUILT_IN_TOOLS: ToolDefinition[] = [
   {
@@ -144,6 +153,7 @@ export function createInitialState(workspaceId = crypto.randomUUID()): AppState 
         toolNames: []
       })
     ],
+    tools: seedBuiltInTools(workspace.id, now),
     groups: [],
     conversations: [],
     messages: [],

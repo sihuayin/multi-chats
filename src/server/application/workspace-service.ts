@@ -35,7 +35,6 @@ import {
 } from "@/server/application/artifact-ledger";
 import type { WorkspaceView } from "@/lib/workspace-view";
 import type { CredentialCipher } from "@/server/security/credential-cipher";
-import { BUILT_IN_TOOLS } from "@/server/store/initial-state";
 import { publicSource } from "@/server/application/source-service";
 import type { StateStore } from "@/server/store/store";
 
@@ -79,7 +78,7 @@ export class WorkspaceService {
       providers: state.providers.map(publicProvider),
       employees: state.employees,
       skills: state.skills,
-      tools: BUILT_IN_TOOLS,
+      tools: state.tools,
       groups: state.groups,
       conversations: state.conversations,
       messages: state.messages,
@@ -113,6 +112,9 @@ export class WorkspaceService {
       }
       if (parsed.rerankChunks !== undefined) {
         state.workspace.rerankChunks = parsed.rerankChunks;
+      }
+      if (parsed.egressAllowlist !== undefined) {
+        state.workspace.egressAllowlist = parsed.egressAllowlist;
       }
       state.workspace.updatedAt = new Date().toISOString();
     });
@@ -307,7 +309,7 @@ export class WorkspaceService {
   async createSkill(input: unknown): Promise<Skill> {
     const parsed = skillInputSchema.parse(input);
     return this.store.update((state) => {
-      const knownTools = new Set(BUILT_IN_TOOLS.map((tool) => tool.name));
+      const knownTools = new Set(state.tools.map((tool) => tool.name));
       if (parsed.toolNames.some((name) => !knownTools.has(name))) {
         throw new ApiError(400, "Skill references an unknown Tool", "invalid_tool");
       }
@@ -334,7 +336,7 @@ export class WorkspaceService {
       if (skill.builtIn) {
         throw new ApiError(409, "Built-in Skills cannot be edited", "builtin_skill");
       }
-      const knownTools = new Set(BUILT_IN_TOOLS.map((tool) => tool.name));
+      const knownTools = new Set(state.tools.map((tool) => tool.name));
       if (parsed.toolNames.some((name) => !knownTools.has(name))) {
         throw new ApiError(400, "Skill references an unknown Tool", "invalid_tool");
       }

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import { PostgresStore } from "@/server/store/postgres-store";
 import { createFixtureDiscussion } from "@/server/test-support/fixtures";
+import { CURRENT_SCHEMA_VERSION } from "@/server/store/migrations";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const describeWithDatabase = databaseUrl ? describe : describe.skip;
@@ -136,7 +137,7 @@ describeWithDatabase("PostgresStore", () => {
           discussions: state.discussions
         }))
       ).toEqual({
-        schemaVersion: 5,
+        schemaVersion: CURRENT_SCHEMA_VERSION,
         discussions: []
       });
     } finally {

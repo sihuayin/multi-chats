@@ -14,7 +14,6 @@ import type {
   Task,
   ToolDefinition
 } from "@/server/domain/types";
-import { BUILT_IN_TOOLS } from "@/server/store/initial-state";
 import type { StateStore } from "@/server/store/store";
 
 export const toolExecutionErrorKinds = [
@@ -86,13 +85,12 @@ function findRunTask(
 }
 
 export class RegisteredToolGateway implements ToolGateway {
-  private readonly toolsByName: Map<string, ToolDefinition>;
   private readonly validators = new Map<string, ValidateFunction>();
-
+  private readonly ajv: Ajv;
   private readonly egress: EgressClient;
 
   constructor(private readonly store: StateStore, egress?: EgressClient) {
-    this.egress = egress ?? createWorkspaceEgressClient();
+    this.egress = egress ?? createWorkspaceEgressClient(store);
     const ajv = new Ajv({ allErrors: true, strict: false });
     ajv.addFormat("uri", {
       type: "string",
@@ -105,16 +103,23 @@ export class RegisteredToolGateway implements ToolGateway {
         }
       }
     });
-    this.toolsByName = new Map(
-      BUILT_IN_TOOLS.map((tool) => [tool.name, tool])
-    );
-    for (const tool of BUILT_IN_TOOLS) {
-      this.validators.set(tool.name, ajv.compile(tool.inputSchema));
-    }
+    this.ajv = ajv;
+  }
+
+  /** Compiled on first use: the registry is read per execution, so a Tool
+   *  registered or edited at runtime is picked up without a restart. */
+  private validatorFor(tool: ToolDefinition): ValidateFunction {
+    const cached = this.validators.get(tool.name);
+    if (cached) return cached;
+    const compiled = this.ajv.compile(tool.inputSchema);
+    this.validators.set(tool.name, compiled);
+    return compiled;
   }
 
   async execute(request: ToolExecutionRequest): Promise<ToolExecutionResult> {
-    const definition = this.toolsByName.get(request.tool.name);
+    const definition = await this.store.read((state) =>
+      state.tools.find((item) => item.name === request.tool.name)
+    );
     if (
       !definition ||
       !request.context.allowedToolNames.includes(request.tool.name)
@@ -132,14 +137,7 @@ export class RegisteredToolGateway implements ToolGateway {
         errorKind: "cancelled"
       };
     }
-    const validate = this.validators.get(definition.name);
-    if (!validate) {
-      return {
-        content: `Tool ${definition.name} has no validator.`,
-        isError: true,
-        errorKind: "execution"
-      };
-    }
+    const validate = this.validatorFor(definition);
     if (!validate(request.args)) {
       return {
         content: validationMessage(validate),

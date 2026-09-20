@@ -17,6 +17,7 @@ const stateArrayKeys = Object.keys({
   providers: true,
   employees: true,
   skills: true,
+  tools: true,
   groups: true,
   conversations: true,
   messages: true,

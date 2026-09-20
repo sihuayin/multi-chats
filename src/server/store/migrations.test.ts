@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { migrateAppState } from "@/server/store/migrations";
+import { migrateAppState, CURRENT_SCHEMA_VERSION } from "@/server/store/migrations";
 import { createInitialState } from "@/server/store/initial-state";
 import {
   addFixtureTaskRunCorrelation,
@@ -29,7 +29,7 @@ describe("AppState migrations", () => {
 
     const migrated = migrateAppState(legacy);
 
-    expect(migrated.schemaVersion).toBe(5);
+    expect(migrated.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
     expect(migrated.discussions).toEqual([]);
     expect(migrated.artifacts[0]).toMatchObject({
       id: "artifact-1",
@@ -76,7 +76,7 @@ describe("AppState migrations", () => {
     expect(migrated.messages[0].taskId).toBe(task.id);
     expect(migrated.runs[0].taskId).toBe(task.id);
     expect(migrated.artifacts[0].runId).toBe(run.id);
-    expect(migrated.schemaVersion).toBe(5);
+    expect(migrated.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
     expect(migratedAgain).toEqual(migrated);
   });
 
@@ -211,7 +211,7 @@ describe("AppState migrations", () => {
     const migrated = migrateAppState(legacy);
 
     expect(migrated).toMatchObject({
-      schemaVersion: 5,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
       providerAttempts: [],
       evidenceReferences: [],
       discussionCompressions: [],
@@ -253,7 +253,7 @@ describe("AppState migrations", () => {
 
     const migrated = migrateAppState(state);
 
-    expect(migrated.schemaVersion).toBe(5);
+    expect(migrated.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
     expect(migrated.discussionCompressions[0]).toMatchObject({
       sourceSpanHash: "legacy:legacy-content",
       strategy: "extractive",
@@ -273,7 +273,7 @@ describe("AppState migrations", () => {
 
     const migrated = migrateAppState(state);
 
-    expect(migrated.schemaVersion).toBe(5);
+    expect(migrated.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
     expect(migrated.sources).toEqual([]);
     expect(migrated.chunks).toEqual([]);
     expect(migrated.discussions[0].sourceIds).toEqual([]);
@@ -529,6 +529,54 @@ describe("AppState migrations", () => {
 
     expect(() => migrateAppState(state)).toThrow(
       "Unsupported Workspace schema version"
+    );
+  });
+
+  it("seeds the built-in Tools when a Workspace has no registry", () => {
+    const state = structuredClone(
+      createFixtureState()
+    ) as unknown as Record<string, unknown>;
+    state.schemaVersion = 5;
+    delete state.tools;
+    (state.workspace as Record<string, unknown>).egressAllowlist = undefined;
+
+    const migrated = migrateAppState(state);
+
+    expect(migrated.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    expect(migrated.tools.map((tool) => tool.id)).toEqual([
+      "builtin:current_time",
+      "builtin:fetch_url",
+      "builtin:post_webhook",
+      "builtin:update_task",
+      "builtin:attach_artifact"
+    ]);
+    expect(migrated.tools.every((tool) => tool.builtIn)).toBe(true);
+    expect(migrated.workspace.egressAllowlist).toEqual([]);
+  });
+
+  it("does not duplicate built-ins a Workspace already carries", () => {
+    const state = structuredClone(
+      createFixtureState()
+    ) as unknown as Record<string, unknown>;
+    state.schemaVersion = 5;
+
+    const migrated = migrateAppState(state);
+
+    expect(migrated.tools).toHaveLength(5);
+    expect(new Set(migrated.tools.map((tool) => tool.id)).size).toBe(5);
+  });
+
+  it("refuses to load a Workspace whose Skill references a missing Tool", () => {
+    const state = structuredClone(
+      createFixtureState()
+    ) as unknown as Record<string, unknown>;
+    (state.skills as Array<Record<string, unknown>>)[0].toolNames = [
+      "fetch_url",
+      "missing_tool"
+    ];
+
+    expect(() => migrateAppState(state)).toThrow(
+      /references unknown Tool missing_tool/
     );
   });
 });

@@ -1,5 +1,6 @@
 import type { DiscussionBudget } from "@/server/domain/types";
 import type {
+  Tool,
   Approval,
   Artifact,
   Conversation,
@@ -13,8 +14,7 @@ import type {
   Skill,
   Source,
   Task,
-  TaskAction,
-  ToolDefinition
+  TaskAction
 } from "@/server/domain/types";
 
 export type PublicProvider = Omit<
@@ -34,7 +34,7 @@ export type WorkspaceView = {
   providers: PublicProvider[];
   employees: Employee[];
   skills: Skill[];
-  tools: ToolDefinition[];
+  tools: Tool[];
   groups: Group[];
   conversations: Conversation[];
   messages: Message[];

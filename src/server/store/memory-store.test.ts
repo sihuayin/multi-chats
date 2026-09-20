@@ -1,3 +1,4 @@
+import { CURRENT_SCHEMA_VERSION } from "@/server/store/migrations";
 import { describe, expect, it } from "vitest";
 import {
   createFixtureDiscussion,
@@ -23,7 +24,9 @@ describe("MemoryStore runtime contracts", () => {
 
     const store = new MemoryStore(legacy as never);
 
-    expect(await store.read((state) => state.schemaVersion)).toBe(5);
+    expect(await store.read((state) => state.schemaVersion)).toBe(
+      CURRENT_SCHEMA_VERSION
+    );
     expect(await store.read((state) => state.providerAttempts)).toEqual([]);
   });
 

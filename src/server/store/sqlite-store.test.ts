@@ -1,3 +1,4 @@
+import { CURRENT_SCHEMA_VERSION } from "@/server/store/migrations";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -177,7 +178,7 @@ describe("SqliteStore", () => {
         artifact: state.artifacts[0]
       }))
     ).toEqual({
-      schemaVersion: 5,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
       discussions: [],
       artifact: expect.objectContaining({
         ownerType: "task",
@@ -197,7 +198,7 @@ describe("SqliteStore", () => {
     };
     migratedDatabase.close();
 
-    expect(persisted.schemaVersion).toBe(5);
+    expect(persisted.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
     expect(persisted.discussions).toEqual([]);
     expect(persisted.artifacts[0]).toMatchObject({
       ownerType: "task",

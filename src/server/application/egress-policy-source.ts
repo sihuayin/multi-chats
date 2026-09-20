@@ -1,27 +1,27 @@
+import type { AppState } from "@/server/domain/types";
 import {
   createEgressClient,
   type EgressClient
 } from "@/server/adapters/http/egress-client";
-import {
-  EMPTY_EGRESS_POLICY,
-  type EgressPolicy
-} from "@/server/security/egress-policy";
+import type { EgressPolicy } from "@/server/security/egress-policy";
+import type { StateStore } from "@/server/store/store";
 
 /**
  * The Workspace's egress policy.
  *
- * The Workspace does not carry one yet, so every Workspace denies the private
- * space — exactly what the previous hostname guard did. Putting the allowlist
- * into Workspace state is the registry ticket's work; this is the one place
- * that changes when it lands.
+ * A Workspace is closed by default: public hosts are reachable without being
+ * listed, and the private space is denied until the operator lists a host.
  */
-export function workspaceEgressPolicy(): EgressPolicy {
-  return EMPTY_EGRESS_POLICY;
+export function workspaceEgressPolicy(
+  state: Readonly<AppState>
+): EgressPolicy {
+  return { allowedHosts: state.workspace.egressAllowlist ?? [] };
 }
 
 /** The single outbound HTTP path: every Tool call and Source fetch goes here. */
-export function createWorkspaceEgressClient(): EgressClient {
+export function createWorkspaceEgressClient(store: StateStore): EgressClient {
   return createEgressClient({
-    resolvePolicy: () => workspaceEgressPolicy()
+    // Read per request, so an allowlist edit takes effect at once.
+    resolvePolicy: () => store.read((state) => workspaceEgressPolicy(state))
   });
 }

@@ -229,7 +229,23 @@ export const modelPricingSchema = z
   })
   .strict();
 
+export const toolSchema = z.object({
+  id: identifier,
+  workspaceId: identifier,
+  name: identifier,
+  label: identifier,
+  description: z.string(),
+  risk: z.enum(["read", "write"]),
+  requiresApproval: z.boolean(),
+  replay: z.enum(["never", "safe"]),
+  inputSchema: z.record(z.string(), z.unknown()),
+  builtIn: z.boolean(),
+  createdAt: identifier,
+  updatedAt: identifier
+});
+
 const runtimeLedgers = [
+  ["tools", toolSchema],
   ["providerAttempts", providerAttemptSchema],
   ["evidenceReferences", evidenceReferenceSchema],
   ["discussionCompressions", discussionCompressionSchema],
