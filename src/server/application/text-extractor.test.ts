@@ -21,16 +21,16 @@ describe("DefaultTextExtractor", () => {
     expect(text).toBe("Title Body text.");
   });
 
-  it("rejects private-network URLs during URL extraction", async () => {
-    const extractor = new DefaultTextExtractor({
-      fetchImpl: (async () => {
-        throw new Error("should not fetch");
-      }) as typeof fetch
-    });
+  // The private-network refusal moved into the egress client, which owns the
+  // Workspace's egress policy now; see src/server/adapters/http/egress-client.test.ts.
+  // What remains here is the fail-closed property: a URL is never fetched by
+  // the ambient `fetch`, which would bypass that policy.
+  it("refuses to fetch a URL without an egress client", async () => {
+    const extractor = new DefaultTextExtractor({});
 
     await expect(
-      extractor.extract({ kind: "url", location: "http://192.168.1.1/doc" })
-    ).rejects.toThrow("Private network URLs are not allowed");
+      extractor.extract({ kind: "url", location: "https://example.com/article" })
+    ).rejects.toThrow("URL extraction requires an egress client");
   });
 
   it("routes PDF files to the isolated pdfToText port", async () => {

@@ -1,4 +1,4 @@
-import { assertSafeHttpUrl } from "@/server/security/ssrf";
+import type { EgressFetch } from "@/server/adapters/http/egress-client";
 
 export type SourceTextInput =
   | { kind: "url"; location: string }
@@ -42,28 +42,31 @@ export function htmlToText(html: string): string {
 }
 
 export type DefaultTextExtractorOptions = {
-  fetchImpl?: typeof fetch;
+  fetchImpl?: EgressFetch;
   htmlToTextImpl?: (html: string) => string;
   pdfToText?: (content: string) => Promise<string>;
 };
 
 export class DefaultTextExtractor implements TextExtractor {
-  private readonly fetchImpl: typeof fetch;
+  private readonly fetchImpl?: EgressFetch;
   private readonly htmlToTextImpl: (html: string) => string;
   private readonly pdfToText?: (content: string) => Promise<string>;
 
   constructor(options: DefaultTextExtractorOptions = {}) {
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.fetchImpl = options.fetchImpl;
     this.htmlToTextImpl = options.htmlToTextImpl ?? htmlToText;
     this.pdfToText = options.pdfToText;
   }
 
   async extract(input: SourceTextInput): Promise<string> {
     if (input.kind === "url") {
-      const url = assertSafeHttpUrl(input.location);
-      const response = await this.fetchImpl(url, {
-        headers: { "user-agent": "multi-chats/0.1" }
-      });
+      // Fail closed: fetching without the egress client would bypass the
+      // Workspace's egress policy entirely, so a URL is never fetched by the
+      // ambient `fetch`.
+      if (!this.fetchImpl) {
+        throw new Error("URL extraction requires an egress client");
+      }
+      const response = await this.fetchImpl(input.location, {});
       if (!response.ok) {
         throw new Error(`Fetch failed with HTTP ${response.status}`);
       }

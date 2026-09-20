@@ -1,5 +1,6 @@
 import { ConversationRunService } from "@/server/application/conversation-run-service";
 import { DiscussionOrchestrator } from "@/server/application/discussion-orchestrator";
+import { createWorkspaceEgressClient } from "@/server/application/egress-policy-source";
 import { SourceService } from "@/server/application/source-service";
 import { DefaultTextExtractor } from "@/server/application/text-extractor";
 import { extractPdfText } from "@/server/application/pdf-extractor";
@@ -25,7 +26,10 @@ async function main(): Promise<void> {
   const discussions = new DiscussionOrchestrator(store, runs);
   const sources = new SourceService(
     store,
-    new DefaultTextExtractor({ pdfToText: extractPdfText })
+    new DefaultTextExtractor({
+      pdfToText: extractPdfText,
+      fetchImpl: createWorkspaceEgressClient()
+    })
   );
   await runs.recoverInterruptedRuns();
   await discussions.reconcileDiscussions();

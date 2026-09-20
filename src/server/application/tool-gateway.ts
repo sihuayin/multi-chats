@@ -6,7 +6,8 @@ import {
 } from "@/server/application/task-ledger";
 import { createTaskArtifact } from "@/server/application/artifact-ledger";
 import { ApiError } from "@/server/application/errors";
-import { assertSafeHttpUrl } from "@/server/security/ssrf";
+import type { EgressClient } from "@/server/adapters/http/egress-client";
+import { createWorkspaceEgressClient } from "@/server/application/egress-policy-source";
 import type {
   AppState,
   Run,
@@ -88,7 +89,10 @@ export class RegisteredToolGateway implements ToolGateway {
   private readonly toolsByName: Map<string, ToolDefinition>;
   private readonly validators = new Map<string, ValidateFunction>();
 
-  constructor(private readonly store: StateStore) {
+  private readonly egress: EgressClient;
+
+  constructor(private readonly store: StateStore, egress?: EgressClient) {
+    this.egress = egress ?? createWorkspaceEgressClient();
     const ajv = new Ajv({ allErrors: true, strict: false });
     ajv.addFormat("uri", {
       type: "string",
@@ -186,11 +190,8 @@ export class RegisteredToolGateway implements ToolGateway {
     }
 
     if (tool.name === "fetch_url") {
-      const url = assertSafeHttpUrl(String(args.url));
-      const response = await fetch(url, {
-        signal,
-        headers: { "user-agent": "multi-chats/0.1" }
-      });
+      const url = new URL(String(args.url));
+      const response = await this.egress(url, { signal });
       const text = (await response.text()).slice(0, 50_000);
       return {
         content: text,
@@ -199,14 +200,11 @@ export class RegisteredToolGateway implements ToolGateway {
     }
 
     if (tool.name === "post_webhook") {
-      const url = assertSafeHttpUrl(String(args.url));
-      const response = await fetch(url, {
+      const url = new URL(String(args.url));
+      const response = await this.egress(url, {
         method: "POST",
         signal,
-        headers: {
-          "content-type": "application/json",
-          "user-agent": "multi-chats/0.1"
-        },
+        headers: { "content-type": "application/json" },
         body: JSON.stringify(args.body ?? {})
       });
       return {
