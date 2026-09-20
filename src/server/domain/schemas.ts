@@ -122,6 +122,40 @@ export const discussionExtendSchema = z
   })
   .strict();
 
+export const toolRequestSchema = z
+  .object({
+    method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
+    urlTemplate: z.string().trim().min(1).max(2048),
+    headers: z.record(z.string(), z.string()).optional(),
+    bodyTemplate: z.string().max(20_000).optional()
+  })
+  .strict();
+
+/**
+ * A Tool draft. `requiresApproval` and `replay` carry no default: the coherent
+ * pair is a decision the operator makes, not one the server makes for them.
+ */
+export const toolDraftSchema = z
+  .object({
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .max(60)
+      .regex(/^[a-z][a-z0-9_]*$/, "Use lowercase letters, digits, and underscores"),
+    label: z.string().trim().min(1).max(80),
+    description: z.string().trim().min(1).max(400),
+    risk: z.enum(["read", "write"]),
+    requiresApproval: z.boolean(),
+    replay: z.enum(["never", "safe"]),
+    inputSchema: z.record(z.string(), z.unknown()),
+    request: toolRequestSchema,
+    active: z.boolean().optional(),
+    /** Absent leaves the stored credential alone; null clears it. */
+    credential: z.string().min(1).max(4096).nullable().optional()
+  })
+  .strict();
+
 export const workspacePatchSchema = z
   .object({
     discussionBudgetDefaults: discussionBudgetSchema.nullable(),

@@ -337,6 +337,21 @@ async function handleApiRoute(
       }
   }
 
+  if (resource === "tools") {
+      if (request.method === "POST" && !id) {
+        return json(await workspace.createTool(await body(request)), {
+          status: 201
+        });
+      }
+      if (request.method === "PUT" && id) {
+        return json(await workspace.updateTool(id, await body(request)));
+      }
+      if (request.method === "DELETE" && id && !child) {
+        await workspace.deleteTool(id);
+        return json({ ok: true });
+      }
+  }
+
   if (resource === "groups") {
       if (request.method === "POST" && !id) {
         return json(await workspace.createGroup(await body(request)), {

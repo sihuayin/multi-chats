@@ -240,6 +240,16 @@ export const toolSchema = z.object({
   replay: z.enum(["never", "safe"]),
   inputSchema: z.record(z.string(), z.unknown()),
   builtIn: z.boolean(),
+  active: z.boolean(),
+  request: z
+    .object({
+      method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
+      urlTemplate: identifier,
+      headers: z.record(z.string(), z.string()).optional(),
+      bodyTemplate: z.string().optional()
+    })
+    .optional(),
+  encryptedCredential: identifier.optional(),
   createdAt: identifier,
   updatedAt: identifier
 });

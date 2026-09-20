@@ -7,7 +7,7 @@ import {
   validateDiscussionReferences
 } from "@/server/application/discussion-domain";
 
-export const CURRENT_SCHEMA_VERSION = 6;
+export const CURRENT_SCHEMA_VERSION = 7;
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -194,6 +194,7 @@ export function seedBuiltInTools(
     id: `builtin:${tool.name}`,
     workspaceId,
     builtIn: true,
+    active: true,
     createdAt: timestamp,
     updatedAt: timestamp
   }));
@@ -220,6 +221,17 @@ function migrateV5ToV6(state: Record<string, unknown>): void {
     if (!seeded.has(tool.id)) state.tools.push(tool);
   }
   workspace.egressAllowlist ??= [];
+  state.schemaVersion = 6;
+}
+
+function migrateV6ToV7(state: Record<string, unknown>): void {
+  if (!Array.isArray(state.tools)) {
+    throw new Error("Workspace Tools are invalid");
+  }
+  for (const value of state.tools) {
+    const tool = record(value);
+    tool.active ??= true;
+  }
   state.schemaVersion = CURRENT_SCHEMA_VERSION;
 }
 
@@ -233,6 +245,7 @@ export function migrateAppState(input: unknown): AppState {
   if (state.schemaVersion === 3) migrateV3ToV4(state);
   if (state.schemaVersion === 4) migrateV4ToV5(state);
   if (state.schemaVersion === 5) migrateV5ToV6(state);
+  if (state.schemaVersion === 6) migrateV6ToV7(state);
   if (version !== CURRENT_SCHEMA_VERSION) {
     if (state.schemaVersion !== CURRENT_SCHEMA_VERSION) {
       throw new Error(

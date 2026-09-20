@@ -1722,6 +1722,29 @@ select:focus {
   font-size: 13px;
 }
 
+.tool-dialog {
+  width: min(calc(100vw - 2rem), 680px);
+  height: min(760px, 88dvh);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.tool-dialog-form {
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 16px;
+}
+
+.tool-dialog-body {
+  display: grid;
+  min-height: 0;
+  align-content: start;
+  gap: 14px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
 .skill-dialog {
   width: min(calc(100vw - 2rem), 680px);
   height: min(760px, 88dvh);
