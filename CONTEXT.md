@@ -20,6 +20,14 @@ _Avoid_: Plugin, action
 An external action or data source that a skill may invoke.
 _Avoid_: Capability, integration
 
+**Built-in Tool**:
+A Tool the application ships rather than the operator creating it. It cannot be edited or deleted.
+_Avoid_: System tool, default tool
+
+**Registered Tool**:
+A Tool the operator creates in the Workspace, which the Workspace owns and stores.
+_Avoid_: Custom tool, user tool, plugin
+
 **Group**:
 A reusable team template that defines a default set of employees for new conversations.
 _Avoid_: Team
