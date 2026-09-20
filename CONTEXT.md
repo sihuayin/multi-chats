@@ -20,6 +20,14 @@ _Avoid_: Plugin, action
 An external action or data source that a skill may invoke.
 _Avoid_: Capability, integration
 
+**Tool credential**:
+A secret stored for a Tool that the Tool injects into its request when it is called. It is write-only: nothing reads it back after storage.
+_Avoid_: API key, token, secret
+
+**Request template**:
+The declared shape of a Tool's HTTP request — method, URL, headers, and body — whose placeholders are filled from Tool arguments and the Tool credential when the Tool is called. What a call actually sends is the _rendered request_, which does not outlive the call.
+_Avoid_: Request definition, payload
+
 **Group**:
 A reusable team template that defines a default set of employees for new conversations.
 _Avoid_: Team
@@ -147,6 +155,10 @@ _Avoid_: Provider mode, environment preset
 **Approval**:
 A user decision required before an employee invokes a side-effecting tool.
 _Avoid_: Permission, confirmation
+
+**Tool definition snapshot**:
+The copy of a Tool's definition captured on an Approval, so that the request an approver saw is the request that runs even if the Tool is edited while the Run waits.
+_Avoid_: Tool version, approval copy
 
 **Artifact**:
 A structured result owned by a Task or Discussion, limited to text, Markdown, or JSON in v1.
