@@ -268,10 +268,22 @@ export type ToolDefinition = {
  * Tools carry a generated id. `ToolDefinition` stays the shape a Skill and the
  * model see.
  */
+export type ToolRequest = {
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  urlTemplate: string;
+  headers?: Record<string, string>;
+  bodyTemplate?: string;
+};
+
 export type Tool = ToolDefinition & {
   id: string;
   workspaceId: string;
   builtIn: boolean;
+  active: boolean;
+  /** Registered Tools only: built-ins carry their request in code. */
+  request?: ToolRequest;
+  /** Registered Tools only, and write-only: never read back out. */
+  encryptedCredential?: string;
   createdAt: IsoDate;
   updatedAt: IsoDate;
 };

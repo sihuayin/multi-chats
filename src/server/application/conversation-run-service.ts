@@ -504,7 +504,9 @@ function toolDefinitionsForEmployee(
       .filter((skill) => skillIds.has(skill.id))
       .flatMap((skill) => skill.toolNames)
   );
-  return state.tools.filter((tool) => allowedTools.has(tool.name));
+  return state.tools.filter(
+    (tool) => tool.active && allowedTools.has(tool.name)
+  );
 }
 
 function settleApproval(

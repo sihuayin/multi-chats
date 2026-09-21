@@ -1,4 +1,5 @@
 import type {
+  Tool,
   Approval,
   ApprovalDecision,
   Artifact,
@@ -16,6 +17,7 @@ import {
   providerInputSchema,
   providerUpdateSchema,
   skillInputSchema,
+  toolDraftSchema,
   taskInputSchema,
   taskPatchSchema,
   workspacePatchSchema
@@ -33,7 +35,7 @@ import {
   createTaskArtifact,
   updateTaskArtifact
 } from "@/server/application/artifact-ledger";
-import type { WorkspaceView } from "@/lib/workspace-view";
+import type { PublicTool, WorkspaceView } from "@/lib/workspace-view";
 import type { CredentialCipher } from "@/server/security/credential-cipher";
 import { publicSource } from "@/server/application/source-service";
 import type { StateStore } from "@/server/store/store";
@@ -42,6 +44,15 @@ export type PublicProvider = WorkspaceView["providers"][number];
 
 function now(): string {
   return new Date().toISOString();
+}
+
+/**
+ * A Tool as the client sees it. The credential is replaced by whether one is
+ * configured — the same shape `publicProvider` gives a Provider credential.
+ */
+function publicTool(tool: Tool): PublicTool {
+  const { encryptedCredential, ...rest } = structuredClone(tool);
+  return { ...rest, configured: encryptedCredential !== undefined };
 }
 
 function publicProvider(provider: ProviderCredential): PublicProvider {
@@ -78,7 +89,7 @@ export class WorkspaceService {
       providers: state.providers.map(publicProvider),
       employees: state.employees,
       skills: state.skills,
-      tools: state.tools,
+      tools: state.tools.map(publicTool),
       groups: state.groups,
       conversations: state.conversations,
       messages: state.messages,
@@ -343,6 +354,97 @@ export class WorkspaceService {
       Object.assign(skill, parsed, { updatedAt: now() });
       state.workspace.updatedAt = skill.updatedAt;
       return skill;
+    });
+  }
+
+  async createTool(input: unknown): Promise<PublicTool> {
+    const parsed = toolDraftSchema.parse(input);
+    return this.store.update((state) => {
+      if (state.tools.some((tool) => tool.name === parsed.name)) {
+        throw new ApiError(
+          409,
+          "A Tool with that name already exists",
+          "tool_name_taken"
+        );
+      }
+      const timestamp = now();
+      const { credential, active, ...draft } = parsed;
+      const tool: Tool = {
+        id: crypto.randomUUID(),
+        workspaceId: state.workspace.id,
+        ...draft,
+        builtIn: false,
+        active: active ?? true,
+        ...(credential ? { encryptedCredential: this.cipher.encrypt(credential) } : {}),
+        createdAt: timestamp,
+        updatedAt: timestamp
+      };
+      state.tools.push(tool);
+      state.workspace.updatedAt = timestamp;
+      return publicTool(tool);
+    });
+  }
+
+  async updateTool(id: string, input: unknown): Promise<PublicTool> {
+    const parsed = toolDraftSchema.parse(input);
+    return this.store.update((state) => {
+      const tool = state.tools.find((item) => item.id === id);
+      if (!tool) notFound("Tool");
+      if (tool.builtIn) {
+        throw new ApiError(
+          409,
+          "Built-in Tools cannot be edited",
+          "builtin_tool"
+        );
+      }
+      // Renaming is create-plus-delete: a Skill allows a Tool by name, so a
+      // silent rename would change what an existing Skill calls.
+      if (parsed.name !== tool.name) {
+        throw new ApiError(
+          409,
+          "A Tool's name cannot change; create a new Tool instead",
+          "tool_rename"
+        );
+      }
+      const { credential, active, ...draft } = parsed;
+      Object.assign(tool, draft);
+      if (active !== undefined) tool.active = active;
+      if (credential === null) delete tool.encryptedCredential;
+      else if (credential !== undefined) {
+        tool.encryptedCredential = this.cipher.encrypt(credential);
+      }
+      tool.updatedAt = now();
+      state.workspace.updatedAt = tool.updatedAt;
+      return publicTool(tool);
+    });
+  }
+
+  async deleteTool(id: string): Promise<void> {
+    return this.store.update((state) => {
+      const index = state.tools.findIndex((item) => item.id === id);
+      if (index === -1) notFound("Tool");
+      const tool = state.tools[index];
+      if (tool.builtIn) {
+        throw new ApiError(
+          409,
+          "Built-in Tools cannot be deleted",
+          "builtin_tool"
+        );
+      }
+      // Skills are live configuration, not history: refusing the delete is what
+      // keeps every Skill's toolNames resolvable, without a tombstone.
+      const referencing = state.skills.filter((skill) =>
+        skill.toolNames.includes(tool.name)
+      );
+      if (referencing.length > 0) {
+        throw new ApiError(
+          409,
+          `Still allowed by ${referencing.map((skill) => skill.name).join(", ")}`,
+          "tool_in_use"
+        );
+      }
+      state.tools.splice(index, 1);
+      state.workspace.updatedAt = now();
     });
   }
 

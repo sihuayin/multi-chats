@@ -431,3 +431,110 @@ describe("Workspace Configuration", () => {
     expect(view.tools.every((tool) => tool.workspaceId === view.workspace.id)).toBe(true);
   });
 });
+
+describe("Tool registry", () => {
+  function service() {
+    return new WorkspaceService(
+      new MemoryStore(createFixtureState()),
+      new AesCredentialCipher(TEST_KEY),
+      noopProviderRegistry
+    );
+  }
+
+  const draft = {
+    name: "home_status",
+    label: "Home Assistant status",
+    description: "Read a Home Assistant entity state.",
+    risk: "read",
+    requiresApproval: false,
+    replay: "safe",
+    inputSchema: { type: "object", properties: {} },
+    request: {
+      method: "GET",
+      urlTemplate: "http://nas.local:8123/api/states/{entity}"
+    },
+    credential: "super-secret-token"
+  } as const;
+
+  it("rejects a Tool created without an approval decision", async () => {
+    const { requiresApproval, ...withoutDecision } = draft;
+
+    await expect(service().createTool(withoutDecision)).rejects.toThrow();
+    expect(requiresApproval).toBe(false);
+  });
+
+  it("never returns a credential, only whether one is configured", async () => {
+    const workspace = service();
+    const created = await workspace.createTool(draft);
+    const view = await workspace.getWorkspaceView();
+    const tool = view.tools.find((item) => item.id === created.id);
+
+    expect(tool?.configured).toBe(true);
+    expect(tool).not.toHaveProperty("encryptedCredential");
+    expect(JSON.stringify(view)).not.toContain("super-secret-token");
+  });
+
+  it("refuses a name a built-in already holds", async () => {
+    await expect(
+      service().createTool({ ...draft, name: "fetch_url" })
+    ).rejects.toThrow(/already exists/);
+  });
+
+  it("cannot edit or delete a built-in", async () => {
+    const workspace = service();
+    const builtIn = (await workspace.getWorkspaceView()).tools.find(
+      (tool) => tool.name === "fetch_url"
+    );
+
+    await expect(
+      workspace.updateTool(builtIn!.id, { ...draft, name: "fetch_url" })
+    ).rejects.toThrow(/Built-in Tools cannot be edited/);
+    await expect(workspace.deleteTool(builtIn!.id)).rejects.toThrow(
+      /Built-in Tools cannot be deleted/
+    );
+  });
+
+  it("refuses to rename a Tool", async () => {
+    const workspace = service();
+    const created = await workspace.createTool(draft);
+
+    await expect(
+      workspace.updateTool(created.id, { ...draft, name: "other_name" })
+    ).rejects.toThrow(/name cannot change/);
+  });
+
+  it("refuses to delete a Tool a Skill still allows, and disabling works", async () => {
+    const workspace = service();
+    const created = await workspace.createTool(draft);
+    await workspace.createSkill({
+      name: "Home",
+      description: "Reads the house.",
+      instructions: "Report the entity state.",
+      inputs: ["entity"],
+      outputs: ["state"],
+      toolNames: [created.name]
+    });
+
+    await expect(workspace.deleteTool(created.id)).rejects.toThrow(
+      /Still allowed by Home/
+    );
+
+    const disabled = await workspace.updateTool(created.id, {
+      ...draft,
+      active: false
+    });
+    expect(disabled.active).toBe(false);
+  });
+
+  it("clears a credential when the operator asks for it", async () => {
+    const workspace = service();
+    const created = await workspace.createTool(draft);
+
+    const cleared = await workspace.updateTool(created.id, {
+      ...draft,
+      credential: null
+    });
+
+    expect(cleared.configured).toBe(false);
+  });
+});

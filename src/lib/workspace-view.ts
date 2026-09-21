@@ -1,6 +1,13 @@
-import type { DiscussionBudget } from "@/server/domain/types";
+import type { DiscussionBudget, Tool } from "@/server/domain/types";
+
+/**
+ * A Tool as the client sees it: the credential is replaced by whether one is
+ * configured, mirroring `PublicProvider`.
+ */
+export type PublicTool = Omit<Tool, "encryptedCredential"> & {
+  configured: boolean;
+};
 import type {
-  Tool,
   Approval,
   Artifact,
   Conversation,
@@ -34,7 +41,7 @@ export type WorkspaceView = {
   providers: PublicProvider[];
   employees: Employee[];
   skills: Skill[];
-  tools: Tool[];
+  tools: PublicTool[];
   groups: Group[];
   conversations: Conversation[];
   messages: Message[];
