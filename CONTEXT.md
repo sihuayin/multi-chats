@@ -104,8 +104,12 @@ _Avoid_: Provider call, invocation
 The exact, estimated, or unknown input, output, cached, reasoning, and total token counts for a Provider attempt.
 _Avoid_: Token count, metrics
 
+**Tool result**:
+The content one Tool call returned, recorded on the Run that made the call.
+_Avoid_: Tool output, tool response
+
 **Evidence reference**:
-A stable reference from a claim or compression record to its supporting Message, Turn, Task, Artifact, Tool result, or external source.
+A stable reference from a claim, a compression record, or a Message to the Message, Turn, Task, Artifact, Tool result, or external source that supports it.
 _Avoid_: Citation, source text
 
 **Discussion intervention**:
@@ -173,12 +177,24 @@ A structured result owned by a Task or Discussion, limited to text, Markdown, or
 _Avoid_: Attachment, file, output
 
 **Source**:
-An ingested external document or web page, stored as citable text Chunks, that a user attaches to a Discussion as evidence.
+An ingested external document or web page, stored as citable text Chunks.
 _Avoid_: Document, file, knowledge base
+
+**Source attachment**:
+A user's declaration that a Source is evidence for one Discussion; a Discussion's attached Sources are the only external evidence its claims may cite.
+_Avoid_: Source link, document link
 
 **Chunk**:
 A citable unit of extracted text within a Source, addressed by an `external:<chunkId>` Evidence reference.
 _Avoid_: Passage, fragment, snippet
+
+**Retrieved chunk**:
+A Chunk returned to a Run by a Tool call, and thereby citable within that Run. The role is per-Run: the same Chunk may be retrieved in one Run and not in the next.
+_Avoid_: Search result, hit, match
+
+**Citable set**:
+The Chunks a Conversation may cite: those already cited by one of its Messages, together with those retrieved by the Run being resolved.
+_Avoid_: Evidence pool, allowed evidence
 
 **Source revision**:
 A versioned chunk set of a Source; a refresh produces a new revision whose chunks supersede the prior set while the prior chunks remain resolvable by confirmed Briefs.
