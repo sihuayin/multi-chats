@@ -1,6 +1,20 @@
 # Multi-Chats
 
+**English** · [简体中文](README_zh.md)
+
 A self-hosted workspace for configuring AI Employees, organizing them into Groups, and collaborating on Tasks in Conversations.
+
+![The Conversation Center: a conversation with mentioned Employees, each replying in the thread, and its Tasks, Artifacts, and Run timeline alongside.](docs/images/conversation.png)
+
+## Screenshots
+
+| Discussions | Employees |
+| --- | --- |
+| ![A Discussion in review: Participants with their roles, per-Round phase progress, the token and cost budget, and the versioned Brief with its recommended option and evidence index.](docs/images/discussion.png) | ![Employees: each Employee binds a model configuration and a set of Skills, with ordered fallback targets.](docs/images/employees.png) |
+| **Groups** | **Skills** |
+| ![Groups: reusable member templates that new Conversations copy their membership from.](docs/images/groups.png) | ![Skills: declarative instructions and Tool allowlists, built-in or operator-authored.](docs/images/skills.png) |
+| **Tools** | **Providers** |
+| ![Tools: the registry every external action must exist in before a Skill can call it, showing built-in and registered Tools with their risk, approval, and replay posture.](docs/images/tools.png) | ![Providers: stored credentials for the model Providers that Employees run on.](docs/images/providers.png) |
 
 ## Development
 
