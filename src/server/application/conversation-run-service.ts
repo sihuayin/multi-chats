@@ -108,7 +108,6 @@ import {
   phaseRunInputSchema
 } from "@/server/domain/schemas";
 import type { CredentialCipher } from "@/server/security/credential-cipher";
-import { BUILT_IN_TOOLS } from "@/server/store/initial-state";
 import type { StateStore } from "@/server/store/store";
 import { logger } from "@/server/observability/logger";
 import { mentionSlug } from "@/lib/mentions";
@@ -505,7 +504,7 @@ function toolDefinitionsForEmployee(
       .filter((skill) => skillIds.has(skill.id))
       .flatMap((skill) => skill.toolNames)
   );
-  return BUILT_IN_TOOLS.filter((tool) => allowedTools.has(tool.name));
+  return state.tools.filter((tool) => allowedTools.has(tool.name));
 }
 
 function settleApproval(

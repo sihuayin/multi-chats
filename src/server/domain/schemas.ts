@@ -125,7 +125,8 @@ export const discussionExtendSchema = z
 export const workspacePatchSchema = z
   .object({
     discussionBudgetDefaults: discussionBudgetSchema.nullable(),
-    rerankChunks: z.boolean().optional()
+    rerankChunks: z.boolean().optional(),
+    egressAllowlist: z.array(z.string().trim().min(1)).optional()
   })
   .strict();
 

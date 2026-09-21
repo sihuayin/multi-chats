@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { WorkspaceService } from "@/server/application/workspace-service";
+import { BUILT_IN_TOOLS } from "@/server/store/initial-state";
 import { AesCredentialCipher } from "@/server/security/credential-cipher";
 import { MemoryStore } from "@/server/store/memory-store";
 import {
@@ -407,5 +408,26 @@ describe("Workspace Configuration", () => {
       noopProviderRegistry
     ).listProviders();
     expect(providers[0]).not.toHaveProperty("encryptedCredential");
+  });
+
+  it("serves the Tool registry from Workspace state", async () => {
+    const service = new WorkspaceService(
+      new MemoryStore(createFixtureState()),
+      new AesCredentialCipher(TEST_KEY),
+      noopProviderRegistry
+    );
+
+    const view = await service.getWorkspaceView();
+
+    // Same registry the code constant used to supply, now owned by the
+    // Workspace and carrying seeded identities.
+    expect(view.tools.map((tool) => tool.name)).toEqual(
+      BUILT_IN_TOOLS.map((tool) => tool.name)
+    );
+    expect(view.tools.map((tool) => tool.id)).toEqual(
+      BUILT_IN_TOOLS.map((tool) => `builtin:${tool.name}`)
+    );
+    expect(view.tools.every((tool) => tool.builtIn)).toBe(true);
+    expect(view.tools.every((tool) => tool.workspaceId === view.workspace.id)).toBe(true);
   });
 });

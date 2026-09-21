@@ -48,7 +48,7 @@ export function getServices(): AppServices {
         store,
         new DefaultTextExtractor({
           pdfToText: extractPdfText,
-          fetchImpl: createWorkspaceEgressClient()
+          fetchImpl: createWorkspaceEgressClient(store)
         })
       )
     };

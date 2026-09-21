@@ -28,7 +28,7 @@ async function main(): Promise<void> {
     store,
     new DefaultTextExtractor({
       pdfToText: extractPdfText,
-      fetchImpl: createWorkspaceEgressClient()
+      fetchImpl: createWorkspaceEgressClient(store)
     })
   );
   await runs.recoverInterruptedRuns();

@@ -18,6 +18,11 @@ export type Workspace = {
   workerHeartbeatAt?: IsoDate;
   discussionBudgetDefaults?: DiscussionBudget;
   rerankChunks?: boolean;
+  /**
+   * Exact hosts, optionally with a port, that may resolve to a private
+   * address. Public hosts are reachable without being listed.
+   */
+  egressAllowlist?: string[];
   createdAt: IsoDate;
   updatedAt: IsoDate;
 };
@@ -255,6 +260,20 @@ export type ToolDefinition = {
   requiresApproval: boolean;
   replay: "never" | "safe";
   inputSchema: Record<string, unknown>;
+};
+
+/**
+ * A Tool the Workspace owns. The five built-ins are seeded entries
+ * (`builtin:<name>`) that cannot be edited or deleted; operator-registered
+ * Tools carry a generated id. `ToolDefinition` stays the shape a Skill and the
+ * model see.
+ */
+export type Tool = ToolDefinition & {
+  id: string;
+  workspaceId: string;
+  builtIn: boolean;
+  createdAt: IsoDate;
+  updatedAt: IsoDate;
 };
 
 export type Group = {
@@ -668,6 +687,7 @@ export type AppState = {
   providers: ProviderCredential[];
   employees: Employee[];
   skills: Skill[];
+  tools: Tool[];
   groups: Group[];
   conversations: Conversation[];
   messages: Message[];
