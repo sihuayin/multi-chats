@@ -36,6 +36,10 @@ _Avoid_: API key, token, secret
 The declared shape of a Tool's HTTP request — method, URL, headers, and body — whose placeholders are filled from Tool arguments and the Tool credential when the Tool is called. What a call actually sends is the _rendered request_, which does not outlive the call.
 _Avoid_: Request definition, payload
 
+**Withheld Tool**:
+A Tool the Workspace owns and an Employee's Skill allows, but which is not offered in a Discussion Turn. Whether a Tool is withheld is per-context, not a property of the Tool: the same Tool is offered in a Conversation and withheld in a Discussion.
+_Avoid_: Disabled tool, blocked tool
+
 **Group**:
 A reusable team template that defines a default set of employees for new conversations.
 _Avoid_: Team
