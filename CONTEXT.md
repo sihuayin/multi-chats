@@ -196,8 +196,16 @@ _Avoid_: Passage, fragment, snippet
 A Chunk returned to a Run by a Tool call, and thereby citable within that Run. The role is per-Run: the same Chunk may be retrieved in one Run and not in the next.
 _Avoid_: Search result, hit, match
 
+**History item**:
+A Message, Task, or Artifact belonging to one of the Workspace's Conversations, and the unit that cross-Conversation retrieval returns. Every History item is Conversation-owned: a Message and a Task each carry a Conversation, and an Artifact is owned by a Task or Discussion that belongs to one.
+_Avoid_: Record, memory, document
+
+**Retrieved item**:
+A History item returned to a Run by a Tool call, and thereby citable within that Run. The role is per-Run, exactly as **Retrieved chunk** is: the same History item may be retrieved in one Run and not in the next.
+_Avoid_: Search result, hit, match
+
 **Citable set**:
-The Chunks a Conversation may cite: those already cited by one of its Messages, together with those retrieved by the Run being resolved.
+The items a Conversation may cite: those belonging to the Conversation itself, those retrieved by the Run being resolved, and those from another Conversation that one of its Messages has already cited.
 _Avoid_: Evidence pool, allowed evidence
 
 **Source revision**:
