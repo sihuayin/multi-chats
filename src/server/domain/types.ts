@@ -303,6 +303,12 @@ export type Conversation = {
   title: string;
   groupId?: string;
   memberIds: string[];
+  /**
+   * Whether another Conversation's cross-Conversation retrieval cannot return
+   * this one's History items. Exclusion only: this Conversation still searches
+   * everyone else.
+   */
+  retrievalExcluded: boolean;
   createdAt: IsoDate;
   updatedAt: IsoDate;
 };

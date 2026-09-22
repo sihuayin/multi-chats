@@ -537,4 +537,68 @@ describe("Tool registry", () => {
 
     expect(cleared.configured).toBe(false);
   });
+
+  it("creates a Conversation that is not excluded from retrieval", async () => {
+    const service = new WorkspaceService(
+      new MemoryStore(createFixtureState()),
+      new AesCredentialCipher(TEST_KEY),
+      noopProviderRegistry
+    );
+
+    const conversation = await service.createConversation({
+      title: "Release scope"
+    });
+
+    expect(conversation.retrievalExcluded).toBe(false);
+  });
+
+  it("excludes a Conversation from retrieval without changing anything else", async () => {
+    const store = new MemoryStore(createFixtureState());
+    const service = new WorkspaceService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      noopProviderRegistry
+    );
+    const created = await service.createConversation({ title: "Scratch notes" });
+
+    const excluded = await service.updateConversation(created.id, {
+      retrievalExcluded: true
+    });
+
+    expect(excluded.retrievalExcluded).toBe(true);
+    await expect(
+      store.read((state) =>
+        state.conversations.find((item) => item.id === created.id)
+      )
+    ).resolves.toMatchObject({
+      title: created.title,
+      memberIds: created.memberIds,
+      createdAt: created.createdAt,
+      retrievalExcluded: true
+    });
+
+    const restored = await service.updateConversation(created.id, {
+      retrievalExcluded: false
+    });
+    expect(restored.retrievalExcluded).toBe(false);
+  });
+
+  it("applies both fields of a Conversation patch, dropping neither", async () => {
+    const service = new WorkspaceService(
+      new MemoryStore(createFixtureState()),
+      new AesCredentialCipher(TEST_KEY),
+      noopProviderRegistry
+    );
+    const created = await service.createConversation({ title: "Both fields" });
+
+    const updated = await service.updateConversation(created.id, {
+      memberIds: ["20000000-0000-4000-8000-000000000001"],
+      retrievalExcluded: true
+    });
+
+    expect(updated.memberIds).toEqual([
+      "20000000-0000-4000-8000-000000000001"
+    ]);
+    expect(updated.retrievalExcluded).toBe(true);
+  });
 });

@@ -93,6 +93,18 @@ describe("Workspace backup and restore", () => {
       }),
       JSON.stringify({
         ...valid,
+        conversations: [
+          {
+            id: "conversation-invalid",
+            workspaceId: valid.workspace.id,
+            title: "Invalid",
+            memberIds: [],
+            retrievalExcluded: "yes"
+          }
+        ]
+      }),
+      JSON.stringify({
+        ...valid,
         runs: [
           {
             id: "run-invalid",
@@ -341,5 +353,21 @@ describe("Workspace backup and restore", () => {
     // validation was loosened.
     expect(restored.tools).toHaveLength(5);
     expect(restored.workspace.egressAllowlist).toEqual([]);
+  });
+
+  it("restores a backup whose Conversations predate the retrieval opt-out", () => {
+    const legacy = createFixtureState() as unknown as Record<string, unknown>;
+    for (const conversation of legacy.conversations as Record<
+      string,
+      unknown
+    >[]) {
+      delete conversation.retrievalExcluded;
+    }
+
+    const restored = parseWorkspaceBackup(JSON.stringify(legacy));
+
+    // Absent is the pre-migration state rather than a malformed backup: the
+    // v8→v9 bump is what backfills it.
+    expect(restored.conversations[0].retrievalExcluded).toBeUndefined();
   });
 });

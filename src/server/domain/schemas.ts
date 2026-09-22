@@ -56,6 +56,17 @@ export const conversationInputSchema = z.object({
   memberIds: z.array(z.string()).default([])
 });
 
+export const conversationPatchSchema = z
+  .object({
+    memberIds: z.array(z.string()).optional(),
+    retrievalExcluded: z.boolean().optional()
+  })
+  .refine(
+    (value) =>
+      value.memberIds !== undefined || value.retrievalExcluded !== undefined,
+    { message: "memberIds or retrievalExcluded is required" }
+  );
+
 export const messageInputSchema = z.object({
   content: z.string().trim().min(1).max(20_000)
 });

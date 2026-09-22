@@ -895,6 +895,7 @@ export async function runProviderSmokeMatrixAgainstProviders(
         workspaceId: state.workspace.id,
         title: `Provider smoke conversation ${conversationCount}`,
         memberIds: [ANALYST_EMPLOYEE_ID, FACILITATOR_EMPLOYEE_ID],
+        retrievalExcluded: false,
         createdAt: clock(),
         updatedAt: clock()
       });

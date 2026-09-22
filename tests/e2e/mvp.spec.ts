@@ -807,3 +807,66 @@ test("shows a redacted diagnostics surface on desktop and mobile", async ({
     )
   ).toBe(true);
 });
+
+test("excludes a Conversation from retrieval and leaves it readable", async ({
+  page
+}) => {
+  await page.context().addCookies([
+    { name: "locale", value: "en", url: "http://localhost:3000" }
+  ]);
+  await page.goto("/");
+
+  await page.getByTitle("New conversation").click();
+
+  const railRow = page.locator(".conversation-item").last();
+  await expect(railRow).toBeVisible();
+  await expect(railRow.locator(".conversation-excluded")).toBeHidden();
+
+  const deleteButton = railRow.locator(".conversation-delete");
+  const insetBefore = await rightInset(railRow, deleteButton);
+
+  const control = page.getByTitle(
+    "Don't let other conversations find this one.",
+    { exact: true }
+  );
+  await expect(control).toHaveAttribute("aria-pressed", "false");
+
+  await control.click();
+
+  await expect(control).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    page.getByText("Other conversations can't find this one")
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "Other conversations won't find this one's messages, tasks, or artifacts. Nothing changes here."
+    )
+  ).toBeVisible();
+  await expect(railRow.locator(".conversation-excluded")).toBeVisible();
+
+  // The rail marker takes its own column, so the row's own controls do not
+  // move when the state flips.
+  expect(await rightInset(railRow, deleteButton)).toBe(insetBefore);
+
+  // Exclusion narrows retrieval only: the Conversation stays readable.
+  await expect(page.locator(".conversation-header h2")).toBeVisible();
+  await expect(railRow).toBeVisible();
+
+  await control.click();
+
+  await expect(control).toHaveAttribute("aria-pressed", "false");
+  await expect(railRow.locator(".conversation-excluded")).toBeHidden();
+  expect(await rightInset(railRow, deleteButton)).toBe(insetBefore);
+});
+
+async function rightInset(
+  row: ReturnType<Page["locator"]>,
+  control: ReturnType<Page["locator"]>
+): Promise<number> {
+  const rowBox = await row.boundingBox();
+  const controlBox = await control.boundingBox();
+  if (!rowBox || !controlBox) throw new Error("rail row is not laid out");
+  return Math.round(
+    rowBox.x + rowBox.width - (controlBox.x + controlBox.width)
+  );
+}

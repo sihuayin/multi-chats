@@ -102,6 +102,14 @@ function optionalStringField(
   if (field !== undefined && (typeof field !== "string" || !field)) invalid();
 }
 
+function optionalBooleanField(
+  value: Record<string, unknown>,
+  key: string
+): void {
+  const field = value[key];
+  if (field !== undefined && typeof field !== "boolean") invalid();
+}
+
 function stringArrayField(
   value: Record<string, unknown>,
   key: string
@@ -168,6 +176,8 @@ function validateState(candidate: Record<string, unknown>): void {
   workspaceRecords("conversations").forEach((conversation) => {
     stringField(conversation, "title");
     stringArrayField(conversation, "memberIds");
+    // Absent until the migration adds it; present, it must be a boolean.
+    optionalBooleanField(conversation, "retrievalExcluded");
   });
   workspaceRecords("messages").forEach((message) => {
     stringField(message, "conversationId");
