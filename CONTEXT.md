@@ -200,6 +200,10 @@ _Avoid_: Search result, hit, match
 A Message, Task, or Artifact belonging to one of the Workspace's Conversations, and the unit that cross-Conversation retrieval returns. Every History item is Conversation-owned: a Message and a Task each carry a Conversation, and an Artifact is owned by a Task or Discussion that belongs to one.
 _Avoid_: Record, memory, document
 
+**Searchable history**:
+The History items a Run's cross-conversation retrieval draws on: the complete Messages, Tasks, and Artifacts of every Conversation the user has not excluded from retrieval, together with those of the searching Conversation itself. A Message written by a Discussion Participant, and a Message that never finished, are not part of it.
+_Avoid_: Corpus, knowledge base, index
+
 **Retrieved item**:
 A History item returned to a Run by a Tool call, and thereby citable within that Run. The role is per-Run, exactly as **Retrieved chunk** is: the same History item may be retrieved in one Run and not in the next.
 _Avoid_: Search result, hit, match
@@ -221,5 +225,5 @@ A URL Source whose fetched content no longer matches its ingested content, detec
 _Avoid_: Outdated Source, dirty Source
 
 **Dangling evidence reference**:
-An Evidence reference whose target Chunk no longer resolves; the failure mode that Source refresh and deletion must never cause.
+An Evidence reference whose target no longer resolves.
 _Avoid_: Broken citation, orphaned reference
