@@ -208,6 +208,10 @@ _Avoid_: Search result, hit, match
 The items a Conversation may cite: those belonging to the Conversation itself, those retrieved by the Run being resolved, and those from another Conversation that one of its Messages has already cited.
 _Avoid_: Evidence pool, allowed evidence
 
+**Excluded Conversation**:
+A Conversation whose History items cross-Conversation retrieval does not return; whether a Conversation is excluded is a property of the Conversation, not per-context, so it is excluded from every other Conversation's retrieval and unaffected in its own.
+_Avoid_: Private conversation, withheld conversation, archived conversation
+
 **Source revision**:
 A versioned chunk set of a Source; a refresh produces a new revision whose chunks supersede the prior set while the prior chunks remain resolvable by confirmed Briefs.
 _Avoid_: Source version, snapshot
