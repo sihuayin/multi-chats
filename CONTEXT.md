@@ -225,5 +225,5 @@ A URL Source whose fetched content no longer matches its ingested content, detec
 _Avoid_: Outdated Source, dirty Source
 
 **Dangling evidence reference**:
-An Evidence reference whose target Chunk no longer resolves; the failure mode that Source refresh and deletion must never cause.
+An Evidence reference whose target no longer resolves.
 _Avoid_: Broken citation, orphaned reference
