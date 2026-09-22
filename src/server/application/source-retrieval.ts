@@ -1,6 +1,7 @@
 import type { AppState, Chunk } from "@/server/domain/types";
 
-function tokenize(value: string): string[] {
+/** Shared with the sibling history ranker, which tokenises the same way. */
+export function tokenize(value: string): string[] {
   return value
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s]/gu, " ")
@@ -51,8 +52,13 @@ export function attachedReadyChunks(
  * and ≥2 only when two or more query terms sit adjacent in the chunk — the
  * exact-phrase signal that separates "the persistence model" from
  * "persistence … model".
+ *
+ * Shared with the sibling history ranker, which boosts the same way.
  */
-function longestPhraseMatch(tokens: string[], queryTerms: string[]): number {
+export function longestPhraseMatch(
+  tokens: string[],
+  queryTerms: string[]
+): number {
   const startsByTerm = new Map<string, number[]>();
   queryTerms.forEach((term, index) => {
     const starts = startsByTerm.get(term) ?? [];
