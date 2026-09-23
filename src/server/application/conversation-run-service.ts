@@ -186,6 +186,12 @@ type ToolCallContext = {
   toolCallId: string;
   args: Record<string, unknown>;
   signal?: AbortSignal;
+  /**
+   * UTF-8 bytes the live request has left for this result (#206), computed
+   * per call at the ModelTool site. Retrieval Tools bound their result by
+   * it; every other Tool ignores it.
+   */
+  resultByteCeiling?: number;
 };
 
 type ProviderTarget = {
@@ -2812,6 +2818,50 @@ export class ConversationRunService {
     }
 
     const allowedToolNames = context.tools.map((tool) => tool.name);
+    // Live request accounting (#206): the request grows as assistant text
+    // streams and Tool results land, and only the live number is what the
+    // provider will actually see. Nothing here is persisted — the ledger
+    // keeps the call's facts, not the budget arithmetic.
+    const liveAccounting = { toolResultBytes: 0 };
+    const countTokensLive = this.options.tokenCounter ?? estimateTokenCount;
+    const liveResultByteCeiling = (): number => {
+      const target =
+        context.providerTargets[targetIndex] ?? context.providerTargets[0];
+      if (!target) return 0;
+      const targetModelContext = this.options.modelContext?.({
+        provider: target.provider,
+        modelId: target.modelId
+      });
+      // Mirrors providerTargetCompatibility's no-plan arithmetic exactly:
+      // inputBudget = window − output reserve − safety margin − tool defs.
+      const contextWindow = Math.max(
+        1,
+        Math.floor(
+          targetModelContext?.contextWindow ?? DEFAULT_MODEL_CONTEXT_WINDOW
+        )
+      );
+      const maxOutputTokens = Math.max(
+        1,
+        Math.min(
+          DEFAULT_MAX_OUTPUT_TOKENS,
+          targetModelContext?.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS
+        )
+      );
+      const safetyMarginTokens = Math.max(
+        MIN_SAFETY_MARGIN_TOKENS,
+        Math.ceil(contextWindow * TOKEN_SAFETY_MARGIN_RATIO)
+      );
+      const inputBudget =
+        contextWindow -
+        maxOutputTokens -
+        safetyMarginTokens -
+        context.toolOverheadTokens;
+      const liveInputTokens =
+        context.promptInputTokens +
+        countTokensLive(finalText) +
+        Math.ceil(liveAccounting.toolResultBytes / 3);
+      return Math.max(0, (inputBudget - liveInputTokens) * 3);
+    };
     // Choke point: every Tool call in every Run is constructed here, and
     // executeTool below is the ONLY writer of tool_completed run events.
     // Do not record completions from gateway model events.
@@ -2821,8 +2871,8 @@ export class ConversationRunService {
       description: tool.description,
       inputSchema: tool.inputSchema,
       replay: tool.replay,
-      execute: (toolCallId, args, toolSignal) =>
-        this.executeTool({
+      execute: async (toolCallId, args, toolSignal) => {
+        const result = await this.executeTool({
           runId,
           requestId: context.run.requestId,
           messageId: message.id,
@@ -2831,8 +2881,15 @@ export class ConversationRunService {
           tool,
           toolCallId,
           args,
-          signal: toolSignal
-        })
+          signal: toolSignal,
+          resultByteCeiling: liveResultByteCeiling()
+        });
+        liveAccounting.toolResultBytes += Buffer.byteLength(
+          result.content,
+          "utf8"
+        );
+        return result;
+      }
     }));
 
     let finalText = "";
@@ -3833,7 +3890,10 @@ export class ConversationRunService {
           runId,
           messageId,
           employeeId,
-          allowedToolNames
+          allowedToolNames,
+          ...(context.resultByteCeiling !== undefined
+            ? { resultByteCeiling: context.resultByteCeiling }
+            : {})
         },
         signal: context.signal
       });
