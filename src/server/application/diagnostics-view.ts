@@ -28,6 +28,7 @@ const WINDOW_HOURS = 24;
 const WORKER_STALE_MS = 15_000;
 const MAX_PROVIDER_ATTEMPTS = 50;
 const MAX_RECOVERABLE_RUNS = 20;
+const MAX_SEARCH_DURATION_SAMPLES = 20;
 const FAILURE_STATUSES = new Set<ProviderAttempt["status"]>([
   "failed",
   "cancelled",
@@ -430,6 +431,34 @@ export function buildDiagnosticsView(
     }
   }
 
+  // The corpus a search would consider: every current chunk of every ready,
+  // non-deleted Source — the same candidate set search_sources assembles,
+  // counted without assembling it. A Workspace with no Sources shows zero.
+  const searchableSourceIds = new Set(
+    state.sources
+      .filter((source) => source.status === "ready" && !source.deletedAt)
+      .map((source) => source.id)
+  );
+  const searchableChunkCount = state.chunks.filter(
+    (chunk) => !chunk.superseded && searchableSourceIds.has(chunk.sourceId)
+  ).length;
+  let recentSearchCount = 0;
+  const recentSearchDurationsMs: number[] = [];
+  for (let index = state.runEvents.length - 1; index >= 0; index -= 1) {
+    const event = state.runEvents[index];
+    if (event.type !== "tool_completed") continue;
+    if (event.payload.toolName !== "search_sources") continue;
+    recentSearchCount += 1;
+    const durationMs = event.payload.durationMs;
+    if (
+      recentSearchDurationsMs.length < MAX_SEARCH_DURATION_SAMPLES &&
+      typeof durationMs === "number" &&
+      Number.isFinite(durationMs)
+    ) {
+      recentSearchDurationsMs.push(durationMs);
+    }
+  }
+
   return {
     generatedAt: now.toISOString(),
     worker: {
@@ -464,6 +493,11 @@ export function buildDiagnosticsView(
           attempt.targetOrder > 0 || Boolean(attempt.fallbackFromAttemptId)
       ).length
     },
-    failures: failureSummaries(state, recentAttempts)
+    failures: failureSummaries(state, recentAttempts),
+    retrieval: {
+      searchableChunkCount,
+      recentSearchCount,
+      recentSearchDurationsMs
+    }
   };
 }

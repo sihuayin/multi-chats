@@ -740,6 +740,12 @@ test("shows a redacted diagnostics surface on desktop and mobile", async ({
     page.getByRole("heading", { name: "24-hour usage", exact: true })
   ).toBeVisible();
   await expect(
+    page.getByRole("heading", { name: "Retrieval", exact: true })
+  ).toBeVisible();
+  // A Workspace with no Sources shows zero — not an error, not an empty state.
+  await expect(page.getByTestId("searchable-chunk-count")).toHaveText("0");
+  await expect(page.getByTestId("search-duration-median")).toHaveText("—");
+  await expect(
     page.getByRole("heading", { name: "Recent Provider failures", exact: true })
   ).toBeVisible();
   await expect(page.locator("body")).not.toContainText(credential);

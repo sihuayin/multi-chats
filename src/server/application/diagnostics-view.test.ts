@@ -333,3 +333,130 @@ describe("Diagnostics view", () => {
     });
   });
 });
+
+describe("Diagnostics retrieval", () => {
+  const clock = () => new Date("2026-09-16T12:00:00.000Z");
+
+  function seedCorpus(state: ReturnType<typeof createFixtureState>) {
+    const now = "2026-01-01T00:00:00.000Z";
+    const base = { workspaceId: state.workspace.id, createdAt: now, updatedAt: now };
+    state.sources.push(
+      {
+        ...base,
+        id: "source-ready",
+        title: "Ready",
+        kind: "file",
+        location: "ready.md",
+        status: "ready",
+        chunkCount: 2
+      },
+      {
+        ...base,
+        id: "source-tombstoned",
+        title: "Tombstoned",
+        kind: "file",
+        location: "old.md",
+        status: "ready",
+        chunkCount: 1,
+        deletedAt: now
+      },
+      {
+        ...base,
+        id: "source-ingesting",
+        title: "Ingesting",
+        kind: "file",
+        location: "new.md",
+        status: "ingesting",
+        chunkCount: 1
+      }
+    );
+    const chunk = (id: string, sourceId: string, index: number, superseded?: boolean) => ({
+      ...base,
+      id,
+      sourceId,
+      index,
+      content: `Content of ${id}.`,
+      contentHash: `hash-${id}`,
+      ...(superseded ? { superseded: true } : {})
+    });
+    state.chunks.push(
+      chunk("chunk-current", "source-ready", 0),
+      chunk("chunk-superseded", "source-ready", 1, true),
+      chunk("chunk-tombstoned", "source-tombstoned", 0),
+      chunk("chunk-ingesting", "source-ingesting", 0)
+    );
+  }
+
+  function searchEvent(
+    state: ReturnType<typeof createFixtureState>,
+    id: string,
+    sequence: number,
+    toolName: string,
+    durationMs?: number
+  ) {
+    state.runEvents.push({
+      id,
+      workspaceId: state.workspace.id,
+      runId: "run-search",
+      sequence,
+      type: "tool_completed",
+      payload: {
+        toolName,
+        isError: false,
+        ...(durationMs !== undefined ? { durationMs } : {})
+      },
+      createdAt: "2026-09-16T11:00:00.000Z"
+    });
+  }
+
+  it("shows how many chunks a search would consider, and how long recent searches took", () => {
+    const state = createFixtureState();
+    seedCorpus(state);
+    searchEvent(state, "event-1", 1, "search_sources", 10);
+    searchEvent(state, "event-other", 2, "current_time", 999);
+    searchEvent(state, "event-2", 3, "search_sources", 20);
+    searchEvent(state, "event-3", 4, "search_sources", 30);
+    // A completion from before durations were recorded still counts.
+    searchEvent(state, "event-4", 5, "search_sources");
+
+    const retrieval = buildDiagnosticsView(state, clock).retrieval;
+
+    // Only the current chunk of the ready, non-deleted Source counts.
+    expect(retrieval.searchableChunkCount).toBe(1);
+    expect(retrieval.recentSearchCount).toBe(4);
+    // Newest first; the other Tool's duration is not a search.
+    expect(retrieval.recentSearchDurationsMs).toEqual([30, 20, 10]);
+  });
+
+  it("caps the duration sample while keeping the true call count", () => {
+    const state = createFixtureState();
+    for (let index = 0; index < 25; index += 1) {
+      searchEvent(state, `event-${index}`, index, "search_sources", index);
+    }
+    const retrieval = buildDiagnosticsView(state, clock).retrieval;
+    expect(retrieval.recentSearchCount).toBe(25);
+    expect(retrieval.recentSearchDurationsMs).toHaveLength(20);
+    expect(retrieval.recentSearchDurationsMs[0]).toBe(24);
+  });
+
+  it("shows zero rather than an error for a Workspace with no Sources", () => {
+    const state = createFixtureState();
+    const retrieval = buildDiagnosticsView(state, clock).retrieval;
+    expect(retrieval).toEqual({
+      searchableChunkCount: 0,
+      recentSearchCount: 0,
+      recentSearchDurationsMs: []
+    });
+  });
+
+  it("carries no recall or quality figure and raises no alert", () => {
+    const state = createFixtureState();
+    seedCorpus(state);
+    const retrieval = buildDiagnosticsView(state, clock).retrieval;
+    expect(Object.keys(retrieval).sort()).toEqual([
+      "recentSearchCount",
+      "recentSearchDurationsMs",
+      "searchableChunkCount"
+    ]);
+  });
+});
