@@ -509,6 +509,30 @@ function toolDefinitionsForEmployee(
   );
 }
 
+const TOOL_DETAILS_MAX_CHARS = 8_000;
+const TOOL_DETAILS_PREVIEW_CHARS = 1_000;
+
+/**
+ * Verbatim below the guard; above it, an explicit truncation marker so a
+ * reader can never mistake a partial set for the whole. The serialized form
+ * is what is measured, because that is what the ledger stores.
+ */
+function guardedToolDetails(details: unknown): unknown {
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(details) ?? String(details);
+  } catch {
+    serialized = String(details);
+  }
+  if (serialized.length <= TOOL_DETAILS_MAX_CHARS) {
+    return details;
+  }
+  return {
+    truncated: true,
+    preview: serialized.slice(0, TOOL_DETAILS_PREVIEW_CHARS)
+  };
+}
+
 function settleApproval(
   state: AppState,
   runId: string,
@@ -2767,6 +2791,9 @@ export class ConversationRunService {
     }
 
     const allowedToolNames = context.tools.map((tool) => tool.name);
+    // Choke point: every Tool call in every Run is constructed here, and
+    // executeTool below is the ONLY writer of tool_completed run events.
+    // Do not record completions from gateway model events.
     const modelTools: ModelTool[] = context.tools.map((tool) => ({
       name: tool.name,
       label: tool.label,
@@ -3616,23 +3643,10 @@ export class ConversationRunService {
           ...event
         });
       }
-      if (event.type === "tool_completed") {
-        appendEvent(state, run, "tool_completed", {
-          ...attribution,
-          ...event
-        });
-        if (event.isError) {
-          appendEvent(
-            state,
-            run,
-            event.errorKind === "cancelled" ? "tool_cancelled" : "tool_error",
-            {
-              ...attribution,
-              ...event
-            }
-          );
-        }
-      }
+      // tool_completed model events are deliberately not recorded:
+      // executeTool is the single writer of the tool_completed ledger event
+      // (with durationMs and guarded details the gateway stream never
+      // carries). tool_started above stays gateway-sourced.
       if (event.type === "error") {
         appendEvent(state, run, "model_error", {
           ...attribution,
@@ -3680,7 +3694,79 @@ export class ConversationRunService {
     });
   }
 
+  /**
+   * The single execution path for every Tool call in every Run, and the
+   * single writer of the tool_completed ledger event (plus the paired
+   * tool_error / tool_cancelled). It is constructed exactly once, at the
+   * ModelTool site in processEmployeeTurn; gateway tool_completed model
+   * events are deliberately never recorded.
+   */
   private async executeTool(
+    context: ToolCallContext
+  ): Promise<ToolExecutionResult> {
+    const startedAt = Date.now();
+    let outcome: ToolExecutionResult | undefined;
+    try {
+      outcome = await this.runToolCall(context);
+      return outcome;
+    } finally {
+      // A throw (approval mismatch, store failure) produces no completion
+      // event, exactly as before the ledger became single-written.
+      if (outcome) {
+        await this.recordToolCompletion(
+          context,
+          outcome,
+          Date.now() - startedAt
+        ).catch((error) => {
+          logger.error("tool.ledger_failed", {
+            requestId: context.requestId,
+            runId: context.runId,
+            toolCallId: context.toolCallId,
+            toolName: context.tool.name,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        });
+      }
+    }
+  }
+
+  private async recordToolCompletion(
+    context: ToolCallContext,
+    result: ToolExecutionResult,
+    durationMs: number
+  ): Promise<void> {
+    const { runId, messageId, employeeId, tool, toolCallId } = context;
+    await this.store.update((state) => {
+      const run = state.runs.find((item) => item.id === runId);
+      if (!run) return;
+      const payload = {
+        messageId,
+        employeeId,
+        toolCallId,
+        toolName: tool.name,
+        isError: Boolean(result.isError),
+        ...(result.errorKind ? { errorKind: result.errorKind } : {}),
+        // durationMs is a sibling of details so the guard can never
+        // truncate it, and covers the whole round trip, approval wait
+        // included.
+        durationMs,
+        ...(result.details !== undefined
+          ? { details: guardedToolDetails(result.details) }
+          : {})
+      };
+      appendEvent(state, run, "tool_completed", payload);
+      if (result.isError) {
+        appendEvent(
+          state,
+          run,
+          result.errorKind === "cancelled" ? "tool_cancelled" : "tool_error",
+          payload
+        );
+      }
+    });
+  }
+
+  private async runToolCall(
     context: ToolCallContext
   ): Promise<ToolExecutionResult> {
     const { runId, messageId, employeeId, allowedToolNames, tool, args } =

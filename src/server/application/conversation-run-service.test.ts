@@ -3480,12 +3480,141 @@ describe("ConversationRun", () => {
     expect(
       events.find((event) => event.type === "tool_completed")?.payload.isError
     ).toBe(true);
-    expect(
-      events.find((event) => event.type === "tool_completed")?.payload
-    ).toMatchObject({
-      result: "The user rejected this Tool call.",
-      errorKind: "unauthorized"
+    const completion = events.find(
+      (event) => event.type === "tool_completed"
+    )?.payload;
+    expect(completion).toMatchObject({ errorKind: "unauthorized" });
+    expect(completion).not.toHaveProperty("result");
+    expect(completion?.details).toMatchObject({ approvalId: approval!.id });
+    expect(typeof completion?.durationMs).toBe("number");
+    expect(completion?.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("writes exactly one tool_completed per Tool call and ignores gateway completion events", async () => {
+    const store = new MemoryStoreFixture();
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      toolModelGateway("current_time", {}, (content) => content)
+    );
+    const started = await runs.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice use the current time Tool" }
+    );
+    await runs.processRun(started.run!.id);
+
+    const events = await runs.listRunEvents(started.run!.id);
+    const completions = events.filter(
+      (event) => event.type === "tool_completed"
+    );
+    expect(completions).toHaveLength(1);
+    const payload = completions[0].payload;
+    expect(typeof payload.durationMs).toBe("number");
+    expect(payload).not.toHaveProperty("result");
+    expect(payload).not.toHaveProperty("details");
+    expect(payload).toMatchObject({
+      toolName: "current_time",
+      toolCallId: "test-tool-call",
+      isError: false
     });
+  });
+
+  it("stores Tool details verbatim on the completion event", async () => {
+    const store = new MemoryStoreFixture();
+    const details = { status: 200, url: "https://example.com" };
+    const toolGateway: ToolGateway = {
+      async execute() {
+        return { content: "ok", details };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      toolModelGateway("current_time", {}, (content) => content),
+      { toolGateway }
+    );
+    const started = await runs.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice use the current time Tool" }
+    );
+    await runs.processRun(started.run!.id);
+
+    const events = await runs.listRunEvents(started.run!.id);
+    const completion = events.find(
+      (event) => event.type === "tool_completed"
+    );
+    expect(completion?.payload.details).toEqual(details);
+  });
+
+  it("truncates oversized Tool details with an explicit marker", async () => {
+    const store = new MemoryStoreFixture();
+    const details = { blob: "x".repeat(9_000) };
+    const toolGateway: ToolGateway = {
+      async execute() {
+        return { content: "ok", details };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      toolModelGateway("current_time", {}, (content) => content),
+      { toolGateway }
+    );
+    const started = await runs.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice use the current time Tool" }
+    );
+    await runs.processRun(started.run!.id);
+
+    const events = await runs.listRunEvents(started.run!.id);
+    const stored = events.find(
+      (event) => event.type === "tool_completed"
+    )?.payload.details as { truncated: boolean; preview: string };
+    expect(stored.truncated).toBe(true);
+    expect(typeof stored.preview).toBe("string");
+    expect(stored.preview.length).toBeLessThanOrEqual(1_000);
+    expect(JSON.stringify(details).startsWith(stored.preview)).toBe(true);
+    // The duration sibling survives the guard.
+    expect(
+      typeof events.find((event) => event.type === "tool_completed")?.payload
+        .durationMs
+    ).toBe("number");
+  });
+
+  it("measures durationMs across the approval wait", async () => {
+    const state = createFixtureState();
+    addApprovalSkill(state, "40000000-0000-4000-8000-000000000010");
+    const store = new MemoryStore(state);
+    const cipher = new AesCredentialCipher(TEST_KEY);
+    const toolGateway: ToolGateway = {
+      async execute() {
+        return { content: "Webhook accepted." };
+      }
+    };
+    const runService = new ConversationRunService(
+      store,
+      cipher,
+      new ToolCallingModelGateway(),
+      { toolGateway }
+    );
+    const workspace = new WorkspaceService(store, cipher, noopProviderRegistry);
+
+    const started = await runService.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice publish the update" }
+    );
+    const processing = runService.processRun(started.run!.id);
+    const approval = await waitForPendingApproval(store, started.run!.id);
+    await workspace.resolveApproval(approval.id, "approved");
+    await processing;
+
+    const events = await runService.listRunEvents(started.run!.id);
+    const payload = events.find(
+      (event) => event.type === "tool_completed"
+    )?.payload;
+    // requestApproval polls at 100 ms, so an approved call always waits
+    // at least one poll interval inside executeTool.
+    expect(payload?.durationMs).toBeGreaterThanOrEqual(100);
   });
 
   it("executes a side-effecting Tool after approval", async () => {
