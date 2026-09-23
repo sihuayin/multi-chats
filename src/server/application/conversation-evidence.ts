@@ -15,6 +15,8 @@ export type MessageCitation = {
   messageId: string;
   alias: string;
   resolved: boolean;
+  /** The originating Conversation of a resolved History-item citation. */
+  locator?: string;
   chunkId?: string;
   sourceTitle?: string;
   /** The chunk's current text, read live — correct because chunk text is
@@ -46,7 +48,13 @@ export function conversationEvidenceScope(
   message: Message
 ): EvidenceScope {
   const citableChunkIds = new Set<string>();
+  const citableIds = new Set<string>();
 
+  // Re-citable tier: anything one of this Conversation's published Messages
+  // before this one has already cited — History items now alongside Chunks.
+  // A linear scan, not the ledger: reference rows are deterministic and
+  // global and carry no Conversation. No existence filter — the citable set
+  // is a rule, not a snapshot.
   for (const item of state.messages) {
     if (item.id === message.id) break;
     if (item.conversationId !== conversation.id || !isPublished(item)) {
@@ -55,31 +63,42 @@ export function conversationEvidenceScope(
     for (const alias of citationAliasesIn(item.content)) {
       if (alias.startsWith("external:")) {
         citableChunkIds.add(alias.slice("external:".length));
+      } else if (/^(?:message|task|artifact):/.test(alias)) {
+        citableIds.add(alias.slice(alias.indexOf(":") + 1));
       }
     }
   }
 
+  // Retrieved tier: what this message's own Run retrieved, from both
+  // retrieval Tools' completion-event details.
   const runIds = message.runId ? [message.runId] : [];
   for (const event of state.runEvents) {
     if (event.type !== "tool_completed" || !runIds.includes(event.runId)) {
       continue;
     }
     const details = event.payload.details as
-      | { returnedChunkIds?: unknown }
+      | { returnedChunkIds?: unknown; returnedItemIds?: unknown }
       | undefined;
-    if (!details || !Array.isArray(details.returnedChunkIds)) continue;
-    for (const id of details.returnedChunkIds) {
-      if (typeof id === "string") citableChunkIds.add(id);
+    if (!details) continue;
+    if (Array.isArray(details.returnedChunkIds)) {
+      for (const id of details.returnedChunkIds) {
+        if (typeof id === "string") citableChunkIds.add(id);
+      }
+    }
+    if (Array.isArray(details.returnedItemIds)) {
+      for (const id of details.returnedItemIds) {
+        if (typeof id === "string") citableIds.add(id);
+      }
     }
   }
 
   return {
     conversationId: conversation.id,
-    ownerId: conversation.id,
     turns: [],
     runIds,
     citableSourceIds: new Set<string>(),
-    citableChunkIds
+    citableChunkIds,
+    citableIds
   };
 }
 
@@ -148,6 +167,9 @@ export function resolveConversationCitations(
           messageId: message.id,
           alias,
           resolved: true,
+          ...(reference.locator !== undefined
+            ? { locator: reference.locator }
+            : {}),
           evidenceReferenceId: reference.id
         };
         if (

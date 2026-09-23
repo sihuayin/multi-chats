@@ -123,6 +123,37 @@ function retrievalEvent(
   });
 }
 
+function historyRetrievalEvent(
+  state: AppState,
+  runId: string,
+  returnedItemIds: string[]
+): void {
+  state.runs.push({
+    id: runId,
+    workspaceId: state.workspace.id,
+    conversationId: state.conversations[0].id,
+    triggerMessageId: "trigger",
+    memberSnapshot: [],
+    status: "completed",
+    createdAt: NOW,
+    completedAt: NOW
+  });
+  state.runEvents.push({
+    id: `event-${runId}`,
+    workspaceId: state.workspace.id,
+    runId,
+    sequence: 1,
+    type: "tool_completed",
+    payload: {
+      toolName: "search_history",
+      isError: false,
+      durationMs: 3,
+      details: { query: "persistence", returnedItemIds, truncated: false }
+    },
+    createdAt: NOW
+  });
+}
+
 describe("citationAliasesIn", () => {
   it("finds bracketed aliases in prose, deduped in order", () => {
     expect(
@@ -511,5 +542,182 @@ describe("citation invariance", () => {
       (chunk) => !before.some((old) => old.id === chunk.id)
     );
     expect(appended.length).toBeGreaterThan(0);
+  });
+});
+
+
+describe("History-item citations", () => {
+  const OTHER = "30000000-0000-4000-8000-000000000002";
+
+  function stateWithOtherMessage(): {
+    state: AppState;
+    conversationId: string;
+  } {
+    const state = createFixtureState();
+    const conversationId = state.conversations[0].id;
+    state.conversations.push({
+      id: OTHER,
+      workspaceId: state.workspace.id,
+      title: "Payments redesign",
+      memberIds: [],
+      retrievalExcluded: false,
+      createdAt: NOW,
+      updatedAt: NOW
+    });
+    message(state, {
+      id: "message-elsewhere",
+      conversationId: OTHER,
+      content: "The persistence model is append-only."
+    });
+    return { state, conversationId };
+  }
+
+  it("makes a retrieved History item citable in the Run that retrieved it, carrying its origin", () => {
+    const { state, conversationId } = stateWithOtherMessage();
+    historyRetrievalEvent(state, "run-h1", ["message-elsewhere"]);
+    const reply = message(state, {
+      id: "message-reply",
+      conversationId,
+      content: "Our own history says [message:message-elsewhere].",
+      runId: "run-h1"
+    });
+
+    recordMessageCitations(state, reply);
+
+    expect(state.evidenceReferences).toHaveLength(1);
+    const reference = state.evidenceReferences[0];
+    expect(reference).toMatchObject({
+      id: evidenceReferenceId("message:message-elsewhere"),
+      kind: "message",
+      sourceId: "message-elsewhere",
+      locator: OTHER
+    });
+    // No excerptHash: Messages were already content-immutable, so the
+    // failure mode the hash exists for does not exist here.
+    expect(reference.excerptHash).toBeUndefined();
+
+    const citations = resolveConversationCitations(state, conversationId);
+    expect(citations).toEqual([
+      expect.objectContaining({
+        messageId: "message-reply",
+        alias: "message:message-elsewhere",
+        resolved: true,
+        locator: OTHER
+      })
+    ]);
+  });
+
+  it("cites the Conversation's own Tasks and Artifacts natively, with no retrieval", () => {
+    const { state, conversationId } = stateWithOtherMessage();
+    state.tasks.push({
+      id: "task-native",
+      workspaceId: state.workspace.id,
+      conversationId,
+      title: "Decide persistence",
+      goal: "Settle it.",
+      assigneeIds: [],
+      status: "draft",
+      history: [],
+      createdAt: NOW,
+      updatedAt: NOW
+    } as AppState["tasks"][number]);
+    state.artifacts.push({
+      id: "artifact-native",
+      workspaceId: state.workspace.id,
+      ownerType: "task",
+      ownerId: "task-native",
+      type: "text",
+      name: "Decision notes",
+      content: "Append-only.",
+      createdAt: NOW,
+      updatedAt: NOW
+    });
+    const reply = message(state, {
+      id: "message-reply",
+      conversationId,
+      content:
+        "Per [task:task-native] and [artifact:artifact-native], decided.",
+      runId: "run-none"
+    });
+
+    recordMessageCitations(state, reply);
+
+    expect(state.evidenceReferences).toHaveLength(2);
+    expect(state.evidenceReferences.map((item) => item.kind).sort()).toEqual([
+      "artifact",
+      "task"
+    ]);
+    for (const reference of state.evidenceReferences) {
+      expect(reference.locator).toBe(conversationId);
+      expect(reference.excerptHash).toBeUndefined();
+    }
+  });
+
+  it("keeps an unretrieved, uncited item of another Conversation out", () => {
+    const { state, conversationId } = stateWithOtherMessage();
+    const reply = message(state, {
+      id: "message-reply",
+      conversationId,
+      content: "Reaching for [message:message-elsewhere] directly.",
+      runId: "run-none"
+    });
+
+    recordMessageCitations(state, reply);
+
+    expect(state.evidenceReferences).toHaveLength(0);
+    const citations = resolveConversationCitations(state, conversationId);
+    expect(citations[0].resolved).toBe(false);
+  });
+
+  it("keeps a cited History item re-citable in a later Run without re-retrieval, recorded once", () => {
+    const { state, conversationId } = stateWithOtherMessage();
+    historyRetrievalEvent(state, "run-h1", ["message-elsewhere"]);
+    const first = message(state, {
+      id: "message-reply",
+      conversationId,
+      content: "History says [message:message-elsewhere].",
+      runId: "run-h1"
+    });
+    recordMessageCitations(state, first);
+
+    const followUp = message(state, {
+      id: "message-followup",
+      conversationId,
+      content: "As established [message:message-elsewhere].",
+      runId: "run-h2"
+    });
+    recordMessageCitations(state, followUp);
+
+    expect(state.evidenceReferences).toHaveLength(1);
+    const citations = resolveConversationCitations(state, conversationId);
+    expect(citations).toHaveLength(2);
+    expect(citations.every((citation) => citation.resolved)).toBe(true);
+  });
+
+  it("applies no existence filter: the citable set is a rule, not a snapshot", () => {
+    const { state, conversationId } = stateWithOtherMessage();
+    // The Run "retrieved" an id whose row does not exist (a Conversation
+    // deleted elsewhere). The set still carries it — membership does not
+    // depend on the life or death of another Conversation — while
+    // resolution of a target with no row is #211's dangling case.
+    historyRetrievalEvent(state, "run-h1", ["message-ghost"]);
+    const reply = message(state, {
+      id: "message-reply",
+      conversationId,
+      content: "Citing [message:message-ghost].",
+      runId: "run-h1"
+    });
+
+    const scope = conversationEvidenceScope(
+      state,
+      state.conversations[0],
+      reply
+    );
+    expect(scope.citableIds?.has("message-ghost")).toBe(true);
+
+    recordMessageCitations(state, reply);
+    expect(state.evidenceReferences).toHaveLength(0);
+    const citations = resolveConversationCitations(state, conversationId);
+    expect(citations[0].resolved).toBe(false);
   });
 });

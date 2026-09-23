@@ -1036,7 +1036,12 @@ test("answers from the Workspace's own Sources with a citation chip and a source
   await expect(historyReply).toContainText(
     "searchable history items."
   );
-  // The bare alias lines the result echoes are prose, not citations: no chip
-  // and no strip entry appear for them (bracketed aliases are the grammar).
-  await expect(historyReply.locator(".source-strip")).toHaveCount(0);
+  // The result's own bare alias lines are prose (bracketed aliases are the
+  // grammar); the fake model's bracketed citation of the first retrieved
+  // item resolves into one inline chip and one strip entry — the same
+  // control in both places.
+  await expect(historyReply.locator("p .citation-chip")).toHaveCount(1);
+  await expect(
+    historyReply.locator(".source-strip .citation-chip")
+  ).toHaveCount(1);
 });

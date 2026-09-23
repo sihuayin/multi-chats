@@ -386,7 +386,6 @@ describe("evidence scope", () => {
   function scopeFor(overrides: Partial<EvidenceScope> = {}): EvidenceScope {
     return {
       conversationId: "30000000-0000-4000-8000-000000000001",
-      ownerId: "scope-owner",
       turns: [],
       runIds: [],
       citableSourceIds: new Set<string>(),
