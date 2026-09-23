@@ -6,8 +6,10 @@ import {
   repairDiscussionBriefEvidence,
   repairDiscussionTurnEvidence,
   resolveBriefFactEvidence,
+  resolveEvidence,
   validateDiscussionTurnEvidence
 } from "@/server/application/discussion-evidence";
+import type { EvidenceScope } from "@/server/application/discussion-evidence";
 import {
   createFixtureBrief,
   createFixtureDiscussion,
@@ -376,5 +378,97 @@ describe("resolveBriefFactEvidence", () => {
 
     expect(result[0].resolved).toHaveLength(1);
     expect(result[0].unresolvedIds).toEqual(["external:missing-chunk"]);
+  });
+});
+
+
+describe("evidence scope", () => {
+  function scopeFor(overrides: Partial<EvidenceScope> = {}): EvidenceScope {
+    return {
+      conversationId: "30000000-0000-4000-8000-000000000001",
+      ownerId: "scope-owner",
+      turns: [],
+      runIds: [],
+      citableSourceIds: new Set<string>(),
+      ...overrides
+    };
+  }
+
+  it("resolves a chunk the scope declares citable even when no Discussion attaches it", () => {
+    const { state, discussion } = fixture();
+    const { source, chunkId } = attachSource(state, discussion);
+    // Detach: the Discussion no longer attaches the Source, so the only
+    // thing that can make the chunk citable is the scope's data.
+    discussion.sourceIds = [];
+    const scope = scopeFor({
+      citableSourceIds: new Set([source.id])
+    });
+
+    const { reference, label } = resolveEvidence(
+      state,
+      scope,
+      `external:${chunkId}`,
+      new Date().toISOString()
+    );
+
+    expect(reference.kind).toBe("external_source");
+    expect(reference.sourceId).toBe(chunkId);
+    expect(reference.locator).toBe("notes.md");
+    expect(label).toBe("First chunk.");
+  });
+
+  it("rejects a chunk whose source the scope omits", () => {
+    const { state, discussion } = fixture();
+    const { chunkId } = attachSource(state, discussion);
+    const scope = scopeFor();
+
+    expect(() =>
+      resolveEvidence(
+        state,
+        scope,
+        `external:${chunkId}`,
+        new Date().toISOString()
+      )
+    ).toThrow(DiscussionEvidenceError);
+  });
+
+  it("judges tool_result aliases by scope.runIds alone", () => {
+    const { state, toolEvent } = fixture();
+    const now = new Date().toISOString();
+
+    expect(() =>
+      resolveEvidence(
+        state,
+        scopeFor(),
+        `tool_result:${toolEvent.id}`,
+        now
+      )
+    ).toThrow(DiscussionEvidenceError);
+
+    const { reference, label } = resolveEvidence(
+      state,
+      scopeFor({ runIds: ["run-evidence"] }),
+      `tool_result:${toolEvent.id}`,
+      now
+    );
+    expect(reference.kind).toBe("tool_result");
+    expect(label).toBe("fetch_url");
+  });
+
+  it("resolves turns supplied as data", () => {
+    const { state } = fixture();
+    const scope = scopeFor({
+      turns: [{ id: "turn-data", content: "Data turn content" }]
+    });
+
+    const { reference, label } = resolveEvidence(
+      state,
+      scope,
+      "turn:turn-data",
+      new Date().toISOString()
+    );
+
+    expect(reference.kind).toBe("turn");
+    expect(label).toBe("Data turn content");
   });
 });
