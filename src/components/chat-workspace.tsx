@@ -881,6 +881,10 @@ export function ChatWorkspace({
                 const stripEntries = citations.filter(
                   (citation) => citation.resolved
                 );
+                // An unresolvable citation is counted in muted text, never
+                // as an error state: visible, but the Conversation is not
+                // presented as having failed.
+                const unresolvedCount = citations.length - stripEntries.length;
                 const parts = splitCitationParts(item.content);
                 const openCitation =
                   openPassage?.messageId === item.id
@@ -954,7 +958,7 @@ export function ChatWorkspace({
                         </blockquote>
                       </div>
                     ) : null}
-                    {stripEntries.length > 0 ? (
+                    {citations.length > 0 ? (
                       <div className="source-strip" data-testid="source-strip">
                         <span className="strip-label">{t("chat.sources")}</span>
                         {stripEntries.map((citation) => (
@@ -973,6 +977,16 @@ export function ChatWorkspace({
                             {citation.sourceTitle ?? citation.alias}
                           </button>
                         ))}
+                        {unresolvedCount > 0 ? (
+                          <span
+                            className="strip-unresolved"
+                            data-testid="strip-unresolved"
+                          >
+                            {t("chat.unresolvedCitations", {
+                              count: String(unresolvedCount)
+                            })}
+                          </span>
+                        ) : null}
                       </div>
                     ) : null}
                     {artifacts.length > 0 ? (

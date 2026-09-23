@@ -857,6 +857,13 @@ button {
   text-transform: uppercase;
 }
 
+/* Muted text, never an error state: a Conversation with an unresolvable
+   citation is not presented as having failed. */
+.strip-unresolved {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
 .message-meta {
   justify-content: flex-start;
   color: var(--muted-foreground);

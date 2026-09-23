@@ -991,4 +991,26 @@ test("answers from the Workspace's own Sources with a citation chip and a source
   await expect(
     page.locator(".message-bubble.user").first().locator(".source-strip")
   ).toHaveCount(0);
+
+  // The deliberately unhappy path: an unresolvable citation stays readable
+  // as the literal text it was written as, is counted in muted text, and
+  // fails nothing.
+  await page
+    .getByPlaceholder("Message the group or mention @employee")
+    .fill(`@${slug} follow up on CITE_ALIAS[external:chunk-bogus]`);
+  await page.getByRole("button", { name: "Send" }).click();
+  const bogusReply = page
+    .locator(".message-bubble.employee")
+    .filter({ hasText: "As established earlier" })
+    .last();
+  await expect(bogusReply).toBeVisible({ timeout: 30_000 });
+  await expect(bogusReply.locator("p")).toContainText(
+    "[external:chunk-bogus]"
+  );
+  await expect(bogusReply.locator(".citation-chip")).toHaveCount(0);
+  // The Run completed: nothing failed, no error state on the bubble.
+  await expect(bogusReply).toHaveAttribute("data-status", "complete");
+  const unresolved = bogusReply.locator('[data-testid="strip-unresolved"]');
+  await expect(unresolved).toBeVisible();
+  await expect(unresolved).toContainText("1 citation(s) did not resolve");
 });

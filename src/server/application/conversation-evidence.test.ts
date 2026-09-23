@@ -5,6 +5,12 @@ import {
   resolveConversationCitations
 } from "@/server/application/conversation-evidence";
 import { citationAliasesIn } from "@/lib/citations";
+import { SourceService } from "@/server/application/source-service";
+import type {
+  SourceTextInput,
+  TextExtractor
+} from "@/server/application/text-extractor";
+import { MemoryStore } from "@/server/store/memory-store";
 import { evidenceReferenceId } from "@/server/application/discussion-evidence";
 import { chunkSource } from "@/server/application/source-chunking";
 import { createFixtureState } from "@/server/test-support/fixtures";
@@ -356,5 +362,154 @@ describe("Conversation citations", () => {
     expect([...(scope.citableChunkIds ?? [])].sort()).toEqual(
       [chunks[0].id, chunks[1].id].sort()
     );
+  });
+});
+
+
+describe("citation invariance", () => {
+  async function citedConversation() {
+    let fetched = "Original fetched content.";
+    const changing: TextExtractor = {
+      async extract(input: SourceTextInput) {
+        if (input.kind === "url") return fetched;
+        return input.content ?? "";
+      }
+    };
+    const store = new MemoryStore(createFixtureState());
+    const service = new SourceService(store, changing);
+    const created = await service.createSource({
+      kind: "url",
+      location: "https://example.com/article"
+    });
+    await service.ingestPendingSources();
+    const originalChunk = (await service.listChunks(created.id))[0];
+
+    const conversationId = await store.read(
+      (state) => state.conversations[0].id
+    );
+    await store.update((state) => {
+      state.runs.push({
+        id: "run-cite",
+        workspaceId: state.workspace.id,
+        conversationId,
+        triggerMessageId: "trigger",
+        memberSnapshot: [],
+        status: "completed",
+        createdAt: NOW,
+        completedAt: NOW
+      });
+      state.runEvents.push({
+        id: "event-cite",
+        workspaceId: state.workspace.id,
+        runId: "run-cite",
+        sequence: 1,
+        type: "tool_completed",
+        payload: {
+          toolName: "search_sources",
+          details: { returnedChunkIds: [originalChunk.id] }
+        },
+        createdAt: NOW
+      });
+      state.messages.push({
+        id: "cite-message",
+        workspaceId: state.workspace.id,
+        conversationId,
+        authorType: "employee",
+        authorId: state.employees[0].id,
+        content: `The article says so [external:${originalChunk.id}].`,
+        runId: "run-cite",
+        status: "complete",
+        createdAt: NOW,
+        updatedAt: NOW
+      });
+      const cited = state.messages.find(
+        (item) => item.id === "cite-message"
+      )!;
+      recordMessageCitations(state, cited);
+    });
+
+    return {
+      store,
+      service,
+      conversationId,
+      originalChunk,
+      setFetched(next: string) {
+        fetched = next;
+      }
+    };
+  }
+
+  it("keeps a citation resolvable after refresh and after tombstone, with the passage unchanged", async () => {
+    const { store, service, conversationId, originalChunk, setFetched } =
+      await citedConversation();
+
+    const before = await store.read((state) =>
+      resolveConversationCitations(state, conversationId)
+    );
+    expect(before[0]).toMatchObject({
+      alias: `external:${originalChunk.id}`,
+      resolved: true,
+      excerpt: "Original fetched content."
+    });
+
+    setFetched("Completely different content after refresh.");
+    await service.refreshSource(
+      await store.read((state) => state.sources[0].id)
+    );
+
+    const afterRefresh = await store.read((state) =>
+      resolveConversationCitations(state, conversationId)
+    );
+    expect(afterRefresh[0]).toMatchObject({
+      resolved: true,
+      excerpt: "Original fetched content."
+    });
+
+    await service.deleteSource(
+      await store.read((state) => state.sources[0].id)
+    );
+
+    const afterTombstone = await store.read((state) =>
+      resolveConversationCitations(state, conversationId)
+    );
+    expect(afterTombstone[0]).toMatchObject({
+      resolved: true,
+      excerpt: "Original fetched content."
+    });
+
+    // The record of what was cited survives all of it.
+    const references = await store.read((state) => state.evidenceReferences);
+    expect(references).toHaveLength(1);
+    expect(references[0]).toMatchObject({
+      kind: "external_source",
+      sourceId: originalChunk.id
+    });
+  });
+
+  it("never changes a chunk's text under a refresh", async () => {
+    const { store, service, setFetched } = await citedConversation();
+    const sourceId = await store.read((state) => state.sources[0].id);
+    const before = structuredClone(
+      await store.read((state) => state.chunks)
+    );
+    expect(before.length).toBeGreaterThan(0);
+
+    setFetched("A new revision with entirely different words.");
+    await service.refreshSource(sourceId);
+
+    const after = await store.read((state) => state.chunks);
+    for (const old of before) {
+      const row = after.find((chunk) => chunk.id === old.id);
+      // The live-excerpt argument depends entirely on this: a refresh
+      // supersedes by appending, it never rewrites a stored chunk.
+      expect(row).toBeDefined();
+      expect(row!.content).toBe(old.content);
+      expect(row!.contentHash).toBe(old.contentHash);
+      expect(row!.superseded).toBe(true);
+    }
+    const appended = after.filter(
+      (chunk) => !before.some((old) => old.id === chunk.id)
+    );
+    expect(appended.length).toBeGreaterThan(0);
   });
 });
