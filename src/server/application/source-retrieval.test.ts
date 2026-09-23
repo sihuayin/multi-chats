@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   attachedReadyChunks,
+  ChunkTokenCache,
+  DEFAULT_CHUNK_TOKEN_CACHE_MAX_ENTRIES,
   discussionRetrievalQuery,
-  rankChunks
+  rankChunks,
+  rankChunksCached
 } from "@/server/application/source-retrieval";
+import { chunkSource } from "@/server/application/source-chunking";
 import { createFixtureState } from "@/server/test-support/fixtures";
 import type { Chunk, Source } from "@/server/domain/types";
 
@@ -145,5 +149,120 @@ describe("attachedReadyChunks", () => {
 
     const chunks = attachedReadyChunks(state, { sourceIds: [source.id] });
     expect(chunks.map((chunk) => chunk.id)).toEqual(["chunk-new"]);
+  });
+});
+
+
+describe("rankChunksCached", () => {
+  it("returns exactly what the pure ranker returns, in the same order, for every case", () => {
+    const chunks = [
+      chunk(0, "Unrelated text about weather."),
+      chunk(1, "The persistence model should use SQLite."),
+      chunk(2, "Persistence, in isolation, is cheap; the data model differs."),
+      chunk(3, "SQLite durability migrations all together."),
+      chunk(4, "Migrations deserve their own section.")
+    ];
+    const cache = new ChunkTokenCache();
+    for (const query of [
+      "persistence model",
+      "SQLite durability migrations",
+      "weather",
+      "   ",
+      "a query that matches nothing at all"
+    ]) {
+      expect(
+        rankChunksCached(chunks, query, cache).map((item) => item.id)
+      ).toEqual(rankChunks(chunks, query).map((item) => item.id));
+    }
+  });
+
+  it("does not tokenize unchanged content again on a second search", () => {
+    const chunks = [
+      chunk(0, "The persistence model should use SQLite."),
+      chunk(1, "Migrations deserve their own section."),
+      chunk(2, "Unrelated text about weather.")
+    ];
+    const cache = new ChunkTokenCache();
+
+    const first = rankChunksCached(chunks, "persistence SQLite", cache);
+    expect(cache.tokenizationCount).toBe(3);
+    const second = rankChunksCached(chunks, "migrations weather", cache);
+    expect(cache.tokenizationCount).toBe(3);
+    expect(cache.size).toBe(3);
+    expect(second.map((item) => item.id)).toEqual(
+      rankChunks(chunks, "migrations weather").map((item) => item.id)
+    );
+    expect(first.map((item) => item.id)).toEqual(
+      rankChunks(chunks, "persistence SQLite").map((item) => item.id)
+    );
+  });
+
+  it("shares one entry between chunks with identical content", () => {
+    const content = "SQLite is durable.";
+    const a: Chunk = { ...chunk(0, content), id: "chunk-a", contentHash: "hash-shared" };
+    const b: Chunk = { ...chunk(1, content), id: "chunk-b", contentHash: "hash-shared" };
+    const cache = new ChunkTokenCache();
+
+    rankChunksCached([a, b], "SQLite", cache);
+    expect(cache.size).toBe(1);
+    expect(cache.tokenizationCount).toBe(1);
+  });
+
+  it("never serves changed content from a stale entry", () => {
+    // A refresh appends new chunks under new content hashes; ids derive from
+    // the hash, so a content change is always a cache miss.
+    const revisions = chunkSource({
+      sourceId: "source-1",
+      workspaceId: "workspace-1",
+      text: "SQLite durability is the selling point.\n\nWeather reports follow.",
+      now: "2026-01-01T00:00:00.000Z"
+    });
+    const cache = new ChunkTokenCache();
+
+    const before = rankChunksCached(revisions, "SQLite durability", cache);
+    const countBefore = cache.tokenizationCount;
+
+    const refreshed = chunkSource({
+      sourceId: "source-1",
+      workspaceId: "workspace-1",
+      text: "Weather reports only, nothing else.\n\nMore weather coverage.",
+      now: "2026-01-02T00:00:00.000Z"
+    });
+    // Same source, new revision: every id/hash differs from the old set.
+    expect(
+      refreshed.every((item) =>
+        revisions.every((old) => old.contentHash !== item.contentHash)
+      )
+    ).toBe(true);
+
+    const after = rankChunksCached(refreshed, "weather", cache);
+    expect(cache.tokenizationCount).toBe(countBefore + refreshed.length);
+    expect(after[0].content).toContain("Weather");
+    expect(before[0].content).toContain("SQLite");
+  });
+
+  it("stays within its bound across many searches", () => {
+    const cache = new ChunkTokenCache(3);
+    const chunks = Array.from({ length: 10 }, (_, index) =>
+      chunk(index, `Paragraph number ${index} about topic-${index} SQLite.`)
+    );
+
+    for (let search = 0; search < 5; search += 1) {
+      rankChunksCached(chunks, `topic-${search % 10}`, cache);
+      expect(cache.size).toBeLessThanOrEqual(3);
+    }
+    expect(cache.tokenizationCount).toBe(50);
+
+    // A bound that fits the corpus keeps every entry warm.
+    const roomy = new ChunkTokenCache();
+    rankChunksCached(chunks, "SQLite", roomy);
+    rankChunksCached(chunks, "topic-4", roomy);
+    expect(roomy.size).toBe(10);
+    expect(roomy.tokenizationCount).toBe(10);
+  });
+
+  it("has a default bound settled as a positive finite number", () => {
+    expect(DEFAULT_CHUNK_TOKEN_CACHE_MAX_ENTRIES).toBeGreaterThan(0);
+    expect(Number.isFinite(DEFAULT_CHUNK_TOKEN_CACHE_MAX_ENTRIES)).toBe(true);
   });
 });
