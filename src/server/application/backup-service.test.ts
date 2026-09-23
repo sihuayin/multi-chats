@@ -355,6 +355,31 @@ describe("Workspace backup and restore", () => {
     expect(restored.workspace.egressAllowlist).toEqual([]);
   });
 
+  it("restores a backup taken before the Sources-evidence upgrade", () => {
+    const legacy = createFixtureState() as unknown as Record<string, unknown>;
+    legacy.schemaVersion = 7;
+    const tools = legacy.tools as Array<Record<string, unknown>>;
+    const searchIndex = tools.findIndex(
+      (tool) => tool.name === "search_sources"
+    );
+    if (searchIndex >= 0) tools.splice(searchIndex, 1);
+    const skills = legacy.skills as Array<Record<string, unknown>>;
+    const researcher = skills.find((skill) => skill.name === "Researcher")!;
+    researcher.toolNames = ["current_time", "fetch_url"];
+
+    const restored = parseWorkspaceBackup(JSON.stringify(legacy));
+
+    expect(restored.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    expect(
+      restored.tools.some(
+        (tool) => tool.name === "search_sources" && tool.builtIn
+      )
+    ).toBe(true);
+    expect(
+      restored.skills.find((skill) => skill.name === "Researcher")?.toolNames
+    ).toContain("search_sources");
+  });
+
   it("restores a backup whose Conversations predate the retrieval opt-out", () => {
     const legacy = createFixtureState() as unknown as Record<string, unknown>;
     for (const conversation of legacy.conversations as Record<

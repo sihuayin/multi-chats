@@ -1,13 +1,16 @@
-import type { AppState, Tool } from "@/server/domain/types";
+import type { AppState, Skill, Tool } from "@/server/domain/types";
 import { isArtifactType } from "@/lib/artifact-types";
-import { BUILT_IN_TOOLS } from "@/server/store/initial-state";
+import {
+  BUILT_IN_SKILLS,
+  BUILT_IN_TOOLS
+} from "@/server/store/initial-state";
 import { validateRuntimeContracts } from "@/server/domain/runtime-contracts";
 import {
   validateDiscussion,
   validateDiscussionReferences
 } from "@/server/application/discussion-domain";
 
-export const CURRENT_SCHEMA_VERSION = 7;
+export const CURRENT_SCHEMA_VERSION = 8;
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -232,7 +235,98 @@ function migrateV6ToV7(state: Record<string, unknown>): void {
     const tool = record(value);
     tool.active ??= true;
   }
-  state.schemaVersion = CURRENT_SCHEMA_VERSION;
+  state.schemaVersion = 7;
+}
+
+/**
+ * The built-in Skills as registry rows, minting a fresh identity per
+ * Workspace — the migration-side sibling of the factory in `initial-state`.
+ * Used ONLY to seed a built-in Skill a Workspace is missing; realigning an
+ * existing row must never mint a new id, because Employees reference Skills
+ * by id.
+ */
+export function seedBuiltInSkills(
+  workspaceId: string,
+  timestamp: string
+): Skill[] {
+  return BUILT_IN_SKILLS.map((definition) => ({
+    ...structuredClone(definition),
+    id: crypto.randomUUID(),
+    workspaceId,
+    builtIn: true,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  }));
+}
+
+/**
+ * Seeds `search_sources` and realigns EVERY built-in Tool and Skill row from
+ * the code constants, matched on the built-in flag plus name: identity
+ * fields (id, workspaceId, timestamps) are preserved, definitional fields
+ * are overwritten. Built-ins are fully operator-immutable — no edit, no
+ * delete, no active toggle — so the overwrite is lossless, and the seeding
+ * helper's own comment licenses it.
+ *
+ * Accepted cost, stated deliberately: an upgrade silently rewrites the
+ * `instructions` of every built-in Skill. Inert for Tools; a real prompt
+ * change for Skills.
+ *
+ * A built-in the code no longer ships is left alone, never deleted —
+ * deleting it would leave a Skill pointing at an unknown Tool, and load
+ * refuses rather than warns.
+ */
+function migrateV7ToV8(state: Record<string, unknown>): void {
+  if (!Array.isArray(state.tools)) {
+    throw new Error("Workspace Tools are invalid");
+  }
+  if (!Array.isArray(state.skills)) {
+    throw new Error("Workspace Skills are invalid");
+  }
+  const workspace = record(state.workspace);
+  const workspaceId = typeof workspace.id === "string" ? workspace.id : "";
+  const timestamp =
+    typeof workspace.updatedAt === "string" && workspace.updatedAt
+      ? workspace.updatedAt
+      : typeof workspace.createdAt === "string" && workspace.createdAt
+        ? workspace.createdAt
+        : new Date().toISOString();
+
+  for (const seeded of seedBuiltInTools(workspaceId, timestamp)) {
+    const existing = state.tools.find((value) => {
+      const tool = record(value);
+      return tool.builtIn === true && tool.name === seeded.name;
+    });
+    if (!existing) {
+      state.tools.push(seeded);
+      continue;
+    }
+    const row = record(existing);
+    row.label = seeded.label;
+    row.description = seeded.description;
+    row.risk = seeded.risk;
+    row.requiresApproval = seeded.requiresApproval;
+    row.replay = seeded.replay;
+    row.inputSchema = structuredClone(seeded.inputSchema);
+  }
+
+  for (const seeded of seedBuiltInSkills(workspaceId, timestamp)) {
+    const existing = state.skills.find((value) => {
+      const skill = record(value);
+      return skill.builtIn === true && skill.name === seeded.name;
+    });
+    if (!existing) {
+      state.skills.push(seeded);
+      continue;
+    }
+    const row = record(existing);
+    row.description = seeded.description;
+    row.instructions = seeded.instructions;
+    row.inputs = [...seeded.inputs];
+    row.outputs = [...seeded.outputs];
+    row.toolNames = [...seeded.toolNames];
+  }
+
+  state.schemaVersion = 8;
 }
 
 export function migrateAppState(input: unknown): AppState {
@@ -246,6 +340,7 @@ export function migrateAppState(input: unknown): AppState {
   if (state.schemaVersion === 4) migrateV4ToV5(state);
   if (state.schemaVersion === 5) migrateV5ToV6(state);
   if (state.schemaVersion === 6) migrateV6ToV7(state);
+  if (state.schemaVersion === 7) migrateV7ToV8(state);
   if (version !== CURRENT_SCHEMA_VERSION) {
     if (state.schemaVersion !== CURRENT_SCHEMA_VERSION) {
       throw new Error(
