@@ -24,6 +24,7 @@ import type {
 } from "@/server/application/model-gateway";
 import { validateDiscussionParticipants } from "@/server/application/discussion-domain";
 import { DISCUSSION_WITHHELD_TOOL_NAMES } from "@/server/store/initial-state";
+import { recordMessageCitations } from "@/server/application/conversation-evidence";
 import { appendDiscussionEvent } from "@/server/application/discussion-ledger";
 import {
   parseDiscussionBrief,
@@ -3607,6 +3608,11 @@ export class ConversationRunService {
         turn.validationError = undefined;
       }
       settleDiscussionTurns(state, runId);
+      // Conversation citations are soft and write-time: persist the evidence
+      // references behind the reply's aliases now, against the same scope
+      // the read path replays (chunks retrieved by this Run ∪ chunks the
+      // Conversation's earlier published Messages already cited).
+      recordMessageCitations(state, current);
       appendEvent(state, run, "message_completed", {
         messageId: current.id,
         employeeId,

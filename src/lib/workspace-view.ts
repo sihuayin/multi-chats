@@ -7,6 +7,7 @@ import type { DiscussionBudget, Tool } from "@/server/domain/types";
 export type PublicTool = Omit<Tool, "encryptedCredential"> & {
   configured: boolean;
 };
+import type { MessageCitation } from "@/server/application/conversation-evidence";
 import type {
   Approval,
   Artifact,
@@ -52,4 +53,9 @@ export type WorkspaceView = {
   sources: Source[];
   discussions: Discussion[];
   approvals: Approval[];
+  /**
+   * Per-message citation resolution for the Conversation surface: which
+   * aliases in which published Messages resolve, to what Source and passage.
+   */
+  messageCitations: MessageCitation[];
 };

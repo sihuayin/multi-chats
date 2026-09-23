@@ -29,6 +29,7 @@ import { transitionTask } from "@/server/application/task-ledger";
 import { createDraftTask } from "@/server/application/task-factory";
 import { availableTaskActions } from "@/server/application/task-actions";
 import { buildDiagnosticsView } from "@/server/application/diagnostics-view";
+import { resolveConversationCitations } from "@/server/application/conversation-evidence";
 import { buildUsageView } from "@/server/application/usage-view";
 import type { DiagnosticsView } from "@/lib/diagnostics-view";
 import type { UsageView, UsageWindow } from "@/lib/usage-view";
@@ -103,7 +104,10 @@ export class WorkspaceService {
       artifacts: state.artifacts,
       sources: state.sources.map((source) => publicSource(source)),
       discussions: state.discussions,
-      approvals: state.approvals
+      approvals: state.approvals,
+      messageCitations: state.conversations.flatMap((conversation) =>
+        resolveConversationCitations(state, conversation.id)
+      )
     }));
   }
 

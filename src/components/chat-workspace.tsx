@@ -34,6 +34,8 @@ import type {
   Task
 } from "@/server/domain/types";
 import { useWorkspace } from "@/components/workspace-provider";
+import { splitCitationParts } from "@/lib/citations";
+import type { MessageCitation } from "@/server/application/conversation-evidence";
 import type { TranslationKey } from "@/lib/i18n";
 import { artifactTypes } from "@/lib/artifact-types";
 import {
@@ -180,6 +182,10 @@ export function ChatWorkspace({
   const [membersDialogOpen, setMembersDialogOpen] = useState(false);
   const [draftMemberIds, setDraftMemberIds] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [openPassage, setOpenPassage] = useState<{
+    messageId: string;
+    alias: string;
+  } | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const focusedTaskRef = useRef<string | null>(null);
@@ -241,6 +247,24 @@ export function ChatWorkspace({
       (data?.tasks ?? []).filter((task) => task.conversationId === selected?.id),
     [data?.tasks, selected?.id]
   );
+  const citationsByMessage = useMemo(() => {
+    const map = new Map<string, MessageCitation[]>();
+    for (const citation of data?.messageCitations ?? []) {
+      const list = map.get(citation.messageId) ?? [];
+      list.push(citation);
+      map.set(citation.messageId, list);
+    }
+    return map;
+  }, [data?.messageCitations]);
+  // One passage open at a time: the chip and the strip entry are the same
+  // control, so both toggle this single state.
+  const togglePassage = (messageId: string, alias: string) => {
+    setOpenPassage((current) =>
+      current?.messageId === messageId && current.alias === alias
+        ? null
+        : { messageId, alias }
+    );
+  };
 
   useEffect(() => {
     if (
@@ -846,6 +870,22 @@ export function ChatWorkspace({
               ) : null}
               {messages.map((item) => {
                 const artifacts = messageArtifacts(item.id);
+                const citations = citationsByMessage.get(item.id) ?? [];
+                const resolved = new Map(
+                  citations
+                    .filter((citation) => citation.resolved)
+                    .map((citation) => [citation.alias, citation])
+                );
+                // The strip is derived from the same parts as the prose:
+                // aliases deduped in order, resolved ones becoming entries.
+                const stripEntries = citations.filter(
+                  (citation) => citation.resolved
+                );
+                const parts = splitCitationParts(item.content);
+                const openCitation =
+                  openPassage?.messageId === item.id
+                    ? resolved.get(openPassage.alias)
+                    : undefined;
                 return (
                   <article
                     key={item.id}
@@ -866,8 +906,75 @@ export function ChatWorkspace({
                       ) : null}
                     </div>
                     <p>
-                      {item.content || (item.status === "streaming" ? "..." : "")}
+                      {parts.length === 0
+                        ? item.status === "streaming"
+                          ? "..."
+                          : ""
+                        : parts.map((part, index) =>
+                            "text" in part ? (
+                              <span key={index}>{part.text}</span>
+                            ) : resolved.has(part.alias) ? (
+                              <button
+                                key={index}
+                                type="button"
+                                className="citation-chip"
+                                aria-expanded={
+                                  openPassage?.messageId === item.id &&
+                                  openPassage.alias === part.alias
+                                }
+                                onClick={() => togglePassage(item.id, part.alias)}
+                              >
+                                {resolved.get(part.alias)?.sourceTitle ??
+                                  part.alias}
+                              </button>
+                            ) : (
+                              // An unresolvable citation stays readable as
+                              // the literal text the model wrote.
+                              <span key={index}>[{part.alias}]</span>
+                            )
+                          )}
                     </p>
+                    {openCitation ? (
+                      <div className="passage-panel" data-testid="passage-panel">
+                        <div className="passage-head">
+                          <strong>
+                            {openCitation.sourceTitle ?? openCitation.alias}
+                          </strong>
+                          <button
+                            type="button"
+                            className="passage-close"
+                            aria-label={t("chat.closePassage")}
+                            onClick={() => setOpenPassage(null)}
+                          >
+                            ×
+                          </button>
+                        </div>
+                        <blockquote className="passage-text">
+                          {openCitation.excerpt}
+                        </blockquote>
+                      </div>
+                    ) : null}
+                    {stripEntries.length > 0 ? (
+                      <div className="source-strip" data-testid="source-strip">
+                        <span className="strip-label">{t("chat.sources")}</span>
+                        {stripEntries.map((citation) => (
+                          <button
+                            key={citation.alias}
+                            type="button"
+                            className="citation-chip"
+                            aria-expanded={
+                              openPassage?.messageId === item.id &&
+                              openPassage.alias === citation.alias
+                            }
+                            onClick={() =>
+                              togglePassage(item.id, citation.alias)
+                            }
+                          >
+                            {citation.sourceTitle ?? citation.alias}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
                     {artifacts.length > 0 ? (
                       <div className="artifact-list message-artifacts">
                         {artifacts.map((artifact) => (
