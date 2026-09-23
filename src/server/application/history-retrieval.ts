@@ -1,4 +1,4 @@
-import type { IsoDate } from "@/server/domain/types";
+import type { AppState, IsoDate } from "@/server/domain/types";
 import {
   longestPhraseMatch,
   tokenize
@@ -116,4 +116,108 @@ export function rankHistory(
         left.candidate.createdAt.localeCompare(right.candidate.createdAt)
     )
     .map((entry) => entry.candidate);
+}
+
+/**
+ * The Conversations a Run in `conversationId` draws on, and how many are
+ * excluded from it. Self-inclusion is unconditional; everything else is absent
+ * when its own flag says so.
+ */
+function searchableConversations(
+  state: AppState,
+  conversationId: string
+): { included: Set<string>; excludedConversationCount: number } {
+  const included = new Set<string>();
+  let excludedConversationCount = 0;
+  for (const conversation of state.conversations) {
+    if (conversation.id === conversationId) continue;
+    if (conversation.retrievalExcluded) excludedConversationCount += 1;
+    else included.add(conversation.id);
+  }
+  // Self-inclusion is unconditional: the searching Conversation is in its own
+  // Searchable history whatever its own flag says, and whatever the stored
+  // records happen to contain.
+  included.add(conversationId);
+  return { included, excludedConversationCount };
+}
+
+/**
+ * How many Conversations this Run's Searchable history excludes — the number
+ * the result names when it is empty. A Run in an excluded Conversation does
+ * not count itself.
+ */
+export function excludedConversationCount(
+  state: AppState,
+  conversationId: string
+): number {
+  return searchableConversations(state, conversationId).excludedConversationCount;
+}
+
+/**
+ * The History items a Run in `conversationId` may retrieve — **Searchable
+ * history**. Self-inclusive and scoped rather than a flat filter: the
+ * searching Conversation is in its own whatever its own flag says, and an
+ * excluded Conversation is absent from every other one.
+ *
+ * The membership rule runs before ranking, because it changes `df` for
+ * everything that survives it.
+ */
+export function searchableHistory(
+  state: AppState,
+  conversationId: string
+): HistoryRankItem[] {
+  const { included } = searchableConversations(state, conversationId);
+  const taskById = new Map(state.tasks.map((task) => [task.id, task]));
+  const discussionById = new Map(
+    state.discussions.map((discussion) => [discussion.id, discussion])
+  );
+
+  return [
+    ...state.messages
+      // A Discussion's employee Messages carry both `conversationId` and
+      // `discussionId`, so a plain Conversation filter would pull Turns into a
+      // Searchable history they never cross into. The confirmed Brief is an
+      // Artifact and
+      // stays in.
+      .filter(
+        (message) =>
+          included.has(message.conversationId) &&
+          message.status === "complete" &&
+          message.discussionId === undefined
+      )
+      .map((message) => ({
+        id: message.id,
+        content: message.content,
+        contentFormat: "text" as const,
+        createdAt: message.createdAt
+      })),
+    ...state.tasks
+      .filter((task) => included.has(task.conversationId))
+      .map((task) => ({
+        id: task.id,
+        // A Task is a record rather than a document: it stores no prose body,
+        // so it contributes the fields that say what it is and where it
+        // stands — the same three the result shows for it.
+        content: `${task.title}\n${task.goal}\n${task.status}`,
+        contentFormat: "text" as const,
+        createdAt: task.createdAt
+      })),
+    ...state.artifacts
+      // An Artifact belongs to Searchable history through its owner, a Task
+      // or a Discussion — two hops to a Conversation.
+      .filter((artifact) => {
+        const owner =
+          artifact.ownerType === "task"
+            ? taskById.get(artifact.ownerId)
+            : discussionById.get(artifact.ownerId);
+        return owner !== undefined && included.has(owner.conversationId);
+      })
+      .map((artifact) => ({
+        id: artifact.id,
+        content: artifact.content,
+        contentFormat:
+          artifact.type === "json" ? ("json" as const) : ("text" as const),
+        createdAt: artifact.createdAt
+      }))
+  ];
 }

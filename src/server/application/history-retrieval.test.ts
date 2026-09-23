@@ -1,8 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  excludedConversationCount,
   rankHistory,
+  searchableHistory,
   type HistoryRankItem
 } from "@/server/application/history-retrieval";
+import {
+  createFixtureDiscussion,
+  createFixtureState,
+  createFixtureTask
+} from "@/server/test-support/fixtures";
+import type { AppState, Message } from "@/server/domain/types";
+import type { ArtifactType } from "@/lib/artifact-types";
 
 const JANUARY = "2026-01-01T00:00:00.000Z";
 
@@ -291,5 +300,320 @@ describe("rankHistory", () => {
     expect(ids(rankHistory(items, query))).toEqual(
       ids(rankHistory([...items].reverse(), query))
     );
+  });
+});
+
+const CURRENT = "30000000-0000-4000-8000-000000000001";
+
+function addConversation(
+  state: AppState,
+  id: string,
+  retrievalExcluded = false
+): string {
+  state.conversations.push({
+    id,
+    workspaceId: state.workspace.id,
+    title: `Conversation ${id}`,
+    memberIds: [],
+    retrievalExcluded,
+    createdAt: JANUARY,
+    updatedAt: JANUARY
+  });
+  return id;
+}
+
+function addMessage(
+  state: AppState,
+  input: {
+    id: string;
+    conversationId: string;
+    status?: Message["status"];
+    content?: string;
+    discussionId?: string;
+    createdAt?: string;
+  }
+): string {
+  state.messages.push({
+    id: input.id,
+    workspaceId: state.workspace.id,
+    conversationId: input.conversationId,
+    authorType: "user",
+    authorId: "user",
+    content: input.content ?? `Message ${input.id}`,
+    status: input.status ?? "complete",
+    createdAt: input.createdAt ?? JANUARY,
+    updatedAt: JANUARY,
+    ...(input.discussionId ? { discussionId: input.discussionId } : {})
+  });
+  return input.id;
+}
+
+function addTask(
+  state: AppState,
+  input: { id: string; conversationId: string }
+): string {
+  state.tasks.push(
+    createFixtureTask({
+      id: input.id,
+      workspaceId: state.workspace.id,
+      conversationId: input.conversationId,
+      title: `Task ${input.id}`,
+      goal: `Goal ${input.id}`
+    })
+  );
+  return input.id;
+}
+
+function excludeConversation(state: AppState, conversationId: string): void {
+  const conversation = state.conversations.find(
+    (item) => item.id === conversationId
+  );
+  if (!conversation) throw new Error("fixture Conversation is missing");
+  conversation.retrievalExcluded = true;
+}
+
+function addArtifact(
+  state: AppState,
+  input: {
+    id: string;
+    ownerType: "task" | "discussion";
+    ownerId: string;
+    type?: ArtifactType;
+    content?: string;
+  }
+): string {
+  state.artifacts.push({
+    id: input.id,
+    workspaceId: state.workspace.id,
+    ownerType: input.ownerType,
+    ownerId: input.ownerId,
+    type: input.type ?? "text",
+    name: `Artifact ${input.id}`,
+    content: input.content ?? `Body ${input.id}`,
+    createdAt: JANUARY,
+    updatedAt: JANUARY
+  });
+  return input.id;
+}
+
+function addDiscussion(
+  state: AppState,
+  input: { id: string; conversationId: string }
+): string {
+  state.discussions.push(
+    createFixtureDiscussion({
+      id: input.id,
+      workspaceId: state.workspace.id,
+      conversationId: input.conversationId
+    })
+  );
+  return input.id;
+}
+
+describe("searchableHistory", () => {
+  it("includes a complete Message from another Conversation, and not an unfinished one", () => {
+    const state = createFixtureState();
+    const other = addConversation(state, "other");
+    addMessage(state, { id: "done", conversationId: other, status: "complete" });
+    addMessage(state, {
+      id: "streaming",
+      conversationId: other,
+      status: "streaming"
+    });
+    addMessage(state, { id: "failed", conversationId: other, status: "failed" });
+
+    expect(ids(searchableHistory(state, CURRENT))).toEqual(["done"]);
+  });
+
+  it("excludes a Message a Discussion owns", () => {
+    const state = createFixtureState();
+    addDiscussion(state, { id: "d", conversationId: CURRENT });
+    addMessage(state, { id: "turn", conversationId: CURRENT, discussionId: "d" });
+    addMessage(state, { id: "talk", conversationId: CURRENT });
+
+    expect(ids(searchableHistory(state, CURRENT))).toEqual(["talk"]);
+  });
+
+  it("keeps an excluded Conversation's own Message, Task and Artifact in its own Searchable history", () => {
+    const state = createFixtureState();
+    const excluded = addConversation(state, "excluded", true);
+    addMessage(state, { id: "mine", conversationId: excluded });
+    const task = addTask(state, { id: "task-mine", conversationId: excluded });
+    addArtifact(state, {
+      id: "artifact-mine",
+      ownerType: "task",
+      ownerId: task
+    });
+    const discussion = addDiscussion(state, {
+      id: "discussion-mine",
+      conversationId: excluded
+    });
+    addArtifact(state, {
+      id: "brief-mine",
+      ownerType: "discussion",
+      ownerId: discussion
+    });
+
+    expect(ids(searchableHistory(state, excluded)).sort()).toEqual([
+      "artifact-mine",
+      "brief-mine",
+      "mine",
+      "task-mine"
+    ]);
+    expect(ids(searchableHistory(state, CURRENT))).toEqual([]);
+  });
+
+  it("counts the Conversations it excludes, and never itself", () => {
+    const state = createFixtureState();
+    addConversation(state, "away", true);
+    addConversation(state, "also-away", true);
+    const excluded = addConversation(state, "excluded", true);
+
+    expect(excludedConversationCount(state, CURRENT)).toBe(3);
+    // A Run in an excluded Conversation does not count itself.
+    expect(excludedConversationCount(state, excluded)).toBe(2);
+    expect(excludedConversationCount(state, addConversation(state, "open"))).toBe(
+      3
+    );
+  });
+
+  it("includes Tasks by Conversation and Artifacts through their owner", () => {
+    const state = createFixtureState();
+    const other = addConversation(state, "other");
+    const away = addConversation(state, "away", true);
+
+    const otherTask = addTask(state, { id: "task-other", conversationId: other });
+    const awayTask = addTask(state, { id: "task-away", conversationId: away });
+    const otherDiscussion = addDiscussion(state, {
+      id: "discussion-other",
+      conversationId: other
+    });
+    const awayDiscussion = addDiscussion(state, {
+      id: "discussion-away",
+      conversationId: away
+    });
+
+    addArtifact(state, { id: "of-task", ownerType: "task", ownerId: otherTask });
+    addArtifact(state, {
+      id: "of-away-task",
+      ownerType: "task",
+      ownerId: awayTask
+    });
+    addArtifact(state, {
+      id: "of-discussion",
+      ownerType: "discussion",
+      ownerId: otherDiscussion
+    });
+    addArtifact(state, {
+      id: "of-away-discussion",
+      ownerType: "discussion",
+      ownerId: awayDiscussion
+    });
+
+    expect(ids(searchableHistory(state, CURRENT)).sort()).toEqual([
+      "of-discussion",
+      "of-task",
+      "task-other"
+    ]);
+  });
+
+  it("changes the candidate count and nothing else when a Conversation is excluded", () => {
+    const state = createFixtureState();
+    const other = addConversation(state, "other");
+    addMessage(state, { id: "here", conversationId: CURRENT });
+    addMessage(state, { id: "there", conversationId: other });
+
+    const included = searchableHistory(state, CURRENT);
+    excludeConversation(state, other);
+    const excluded = searchableHistory(state, CURRENT);
+
+    expect(ids(included)).toEqual(["here", "there"]);
+    expect(ids(excluded)).toEqual(["here"]);
+    // The number the result header states is this candidate count.
+    expect(excluded).toHaveLength(1);
+  });
+
+  it("projects each kind onto the text the ranker and the result both read", () => {
+    const state = createFixtureState();
+    const other = addConversation(state, "other");
+    const task = addTask(state, { id: "t", conversationId: other });
+    addMessage(state, {
+      id: "m",
+      conversationId: other,
+      content: "Verbatim message body."
+    });
+    addArtifact(state, {
+      id: "a",
+      ownerType: "task",
+      ownerId: task,
+      content: "Verbatim artifact body."
+    });
+    addArtifact(state, {
+      id: "j",
+      ownerType: "task",
+      ownerId: task,
+      type: "json",
+      content: '{"title":"Brief"}'
+    });
+
+    const byId = new Map(
+      searchableHistory(state, CURRENT).map((item) => [item.id, item])
+    );
+
+    expect(byId.get("m")).toMatchObject({
+      content: "Verbatim message body.",
+      contentFormat: "text"
+    });
+    expect(byId.get("t")?.content).toBe("Task t\nGoal t\nin_progress");
+    expect(byId.get("a")).toMatchObject({
+      content: "Verbatim artifact body.",
+      contentFormat: "text"
+    });
+    expect(byId.get("j")).toMatchObject({
+      content: '{"title":"Brief"}',
+      contentFormat: "json"
+    });
+  });
+
+  it("runs before ranking, so excluding a Conversation moves the surviving items", () => {
+    const state = createFixtureState();
+    const other = addConversation(state, "other");
+    const away = addConversation(state, "away");
+    // Ordered so the query is not quoted back verbatim: the phrase boost must
+    // stay out of this fixture, leaving `df` as the only thing that moves.
+    addMessage(state, {
+      id: "x",
+      conversationId: other,
+      content: "zebra stripes about giraffe"
+    });
+    addMessage(state, { id: "y", conversationId: other, content: "giraffe" });
+    for (let index = 0; index < 5; index += 1) {
+      addMessage(state, {
+        id: `away-${index}`,
+        conversationId: away,
+        content: "zebra"
+      });
+    }
+
+    const xBeforeY = (ranked: HistoryRankItem[]) => {
+      const order = ids(ranked);
+      return order.indexOf("x") < order.indexOf("y");
+    };
+
+    const included = rankHistory(
+      searchableHistory(state, CURRENT),
+      "zebra giraffe"
+    );
+    excludeConversation(state, away);
+    const excluded = rankHistory(
+      searchableHistory(state, CURRENT),
+      "zebra giraffe"
+    );
+
+    // Excluding a Conversation changes `df` for what remains: the two
+    // survivors swap places: the membership rule runs before ranking,
+    // rather than being a filter applied after it.
+    expect(xBeforeY(included)).toBe(false);
+    expect(xBeforeY(excluded)).toBe(true);
   });
 });
