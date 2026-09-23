@@ -107,6 +107,54 @@ export class FakeModelGateway implements ModelGateway {
       yield { type: "text_completed", text };
       return;
     }
+    const searchMatch = latestUserContent.match(
+      /USE_SEARCH_SOURCES(?:\[([^\]]*)\])?/
+    );
+    if (searchMatch) {
+      const tool = request.tools.find(
+        (item) => item.name === "search_sources"
+      );
+      if (!tool) {
+        yield {
+          type: "error",
+          message: "search_sources Tool is unavailable",
+          kind: "terminal"
+        };
+        return;
+      }
+      const args = { query: searchMatch[1]?.trim() || "persistence" };
+      yield {
+        type: "tool_started",
+        toolCallId: "fake-search-sources",
+        toolName: tool.name,
+        args
+      };
+      const result = await tool.execute(
+        "fake-search-sources",
+        args,
+        request.signal
+      );
+      yield {
+        type: "tool_completed",
+        toolCallId: "fake-search-sources",
+        toolName: tool.name,
+        result: result.content,
+        isError: Boolean(result.isError),
+        errorKind: result.errorKind
+      };
+      // Answer from the material the way the real model would: cite the
+      // first returned chunk's alias inline, so the run is deterministic
+      // and credential-free end to end.
+      const alias = result.content.match(/^\[(external:[^\]]+)\]$/m)?.[1];
+      const text = result.isError
+        ? `Tool failed: ${result.content}`
+        : alias
+          ? `According to the Workspace's own documents [${alias}], the ingested material covers this.`
+          : `Search complete. ${result.content.split("\n")[0]}`;
+      yield { type: "text_delta", delta: text };
+      yield { type: "text_completed", text };
+      return;
+    }
     if (request.prompt.includes("PUBLISH_TASK_ARTIFACT")) {
       const taskId = request.prompt.match(/^Task ([^ ]+) "/m)?.[1];
       const updateTask = request.tools.find(
