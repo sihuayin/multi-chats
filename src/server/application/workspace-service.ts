@@ -12,6 +12,7 @@ import type {
 } from "@/server/domain/types";
 import {
   conversationInputSchema,
+  conversationPatchSchema,
   employeeInputSchema,
   groupInputSchema,
   providerInputSchema,
@@ -505,6 +506,7 @@ export class WorkspaceService {
         title: parsed.title,
         groupId: group?.id,
         memberIds,
+        retrievalExcluded: false,
         createdAt: timestamp,
         updatedAt: timestamp
       };
@@ -514,19 +516,34 @@ export class WorkspaceService {
     });
   }
 
-  async updateConversationMembers(
-    id: string,
-    memberIds: string[]
-  ): Promise<Conversation> {
+  /**
+   * The single mutation path for a Conversation. A patch may carry either
+   * field or both, and both are applied in one update — so a caller that sends
+   * both never has one silently dropped.
+   */
+  async updateConversation(id: string, input: unknown): Promise<Conversation> {
+    const patch = conversationPatchSchema.parse(input);
     return this.store.update((state) => {
       const conversation = state.conversations.find((item) => item.id === id);
       if (!conversation) notFound("Conversation");
-      this.assertEmployees(state.employees, memberIds);
-      conversation.memberIds = [...new Set(memberIds)];
+      if (patch.memberIds !== undefined) {
+        this.assertEmployees(state.employees, patch.memberIds);
+        conversation.memberIds = [...new Set(patch.memberIds)];
+      }
+      if (patch.retrievalExcluded !== undefined) {
+        conversation.retrievalExcluded = patch.retrievalExcluded;
+      }
       conversation.updatedAt = now();
       state.workspace.updatedAt = conversation.updatedAt;
       return conversation;
     });
+  }
+
+  async updateConversationMembers(
+    id: string,
+    memberIds: string[]
+  ): Promise<Conversation> {
+    return this.updateConversation(id, { memberIds });
   }
 
   async deleteConversation(id: string): Promise<void> {

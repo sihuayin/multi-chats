@@ -185,6 +185,7 @@ describeWithDatabase("PostgresStore", () => {
         workspaceId: state.workspace.id,
         title: `Correlation Conversation ${suffix}`,
         memberIds: [employeeId],
+        retrievalExcluded: false,
         createdAt: now,
         updatedAt: now
       });

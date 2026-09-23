@@ -374,11 +374,7 @@ async function handleApiRoute(
         return new Response(null, { status: 204 });
       }
       if (request.method === "PATCH" && id && !child) {
-        const parsed = (await body(request)) as { memberIds?: string[] };
-        if (!Array.isArray(parsed.memberIds)) {
-          throw new ApiError(400, "memberIds is required", "validation_error");
-        }
-        return json(await workspace.updateConversationMembers(id, parsed.memberIds));
+        return json(await workspace.updateConversation(id, await body(request)));
       }
       if (request.method === "GET" && id && child === "messages") {
         return json(await runs.listMessages(id));

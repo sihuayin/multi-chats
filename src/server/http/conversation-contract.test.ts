@@ -627,4 +627,40 @@ describe("Conversation HTTP and SSE contract", () => {
       )
     ).toBe(true);
   });
+
+  it("toggles a Conversation's retrieval exclusion over HTTP", async () => {
+    const { store } = setupContractServices();
+    const conversation = await store.read((state) => state.conversations[0]);
+    expect(conversation.retrievalExcluded).toBe(false);
+
+    const response = await handleApiRequest(
+      new Request(`http://localhost/api/conversations/${conversation.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ retrievalExcluded: true })
+      }),
+      ["conversations", conversation.id]
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      id: conversation.id,
+      retrievalExcluded: true
+    });
+    await expect(
+      store.read(
+        (state) =>
+          state.conversations.find((item) => item.id === conversation.id)
+              ?.retrievalExcluded
+      )
+    ).resolves.toBe(true);
+    // Exclusion narrows retrieval only: the Conversation stays readable.
+    const messages = await handleApiRequest(
+      new Request(
+        `http://localhost/api/conversations/${conversation.id}/messages`
+      ),
+      ["conversations", conversation.id, "messages"]
+    );
+    expect(messages.status).toBe(200);
+  });
 });

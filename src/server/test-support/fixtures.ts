@@ -80,6 +80,7 @@ export function createFixtureState(): AppState {
     workspaceId: state.workspace.id,
     title: "Launch planning",
     memberIds: [alice.id, bob.id],
+    retrievalExcluded: false,
     createdAt: now,
     updatedAt: now
   });

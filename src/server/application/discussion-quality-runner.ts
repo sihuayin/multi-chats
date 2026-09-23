@@ -269,6 +269,7 @@ export async function runDiscussionQualityCorpusAgainstProviders(
           workspaceId: state.workspace.id,
           title: `Quality conversation ${conversationCount}`,
           memberIds: PARTICIPANTS.map((participant) => participant.id),
+          retrievalExcluded: false,
           createdAt: clock(),
           updatedAt: clock()
         });

@@ -1680,6 +1680,7 @@ describe("DiscussionOrchestrator budget enforcement", () => {
       workspaceId: state.workspace.id,
       title: "Second conversation",
       memberIds: state.conversations[0].memberIds,
+      retrievalExcluded: false,
       createdAt: state.workspace.createdAt,
       updatedAt: state.workspace.updatedAt
     });

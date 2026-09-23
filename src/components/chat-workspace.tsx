@@ -5,6 +5,7 @@ import {
   Check,
   CircleStop,
   Clock3,
+  EyeOff,
   FileJson,
   FileText,
   Hash,
@@ -545,6 +546,27 @@ export function ChatWorkspace({
     }
   }
 
+  async function toggleRetrievalExcluded() {
+    if (!selected) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await apiRequest(`/api/conversations/${selected.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          retrievalExcluded: !selected.retrievalExcluded
+        })
+      });
+      await refresh();
+    } catch (nextError) {
+      setError(
+        nextError instanceof Error ? nextError.message : String(nextError)
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function deleteConversation() {
     if (!conversationToDelete) return;
     setBusy(true);
@@ -681,6 +703,14 @@ export function ChatWorkspace({
                   {conversation.memberIds.length} {t("chat.members")}
                 </small>
               </span>
+              {conversation.retrievalExcluded ? (
+                <span
+                  className="conversation-excluded"
+                  title={t("chat.exclusionHint")}
+                >
+                  <EyeOff size={13} />
+                </span>
+              ) : null}
               <button
                 className="conversation-delete"
                 title={t("chat.deleteConversation")}
@@ -768,6 +798,19 @@ export function ChatWorkspace({
                 <UserPen size={16} />
               </button>
               <button
+                className="icon-button"
+                title={t("chat.excludeFromRetrieval")}
+                aria-label={t("chat.excludeFromRetrieval")}
+                aria-pressed={selected.retrievalExcluded}
+                onClick={toggleRetrievalExcluded}
+                disabled={busy}
+              >
+                <EyeOff size={16} />
+              </button>
+              {selected.retrievalExcluded ? (
+                <Badge variant="secondary">{t("chat.exclusionBadge")}</Badge>
+              ) : null}
+              <button
                 className="icon-button task-panel-toggle"
                 title={
                   taskPanelOpen
@@ -790,6 +833,10 @@ export function ChatWorkspace({
                 )}
               </button>
             </header>
+
+            {selected.retrievalExcluded ? (
+              <p className="conversation-hint">{t("chat.exclusionHint")}</p>
+            ) : null}
 
             <div className="message-stream">
               {latestRun?.status === "failed" && latestRun.error ? (

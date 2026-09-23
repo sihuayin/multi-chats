@@ -248,6 +248,7 @@ describe("Discussion HTTP contract", () => {
       workspaceId: state.workspace.id,
       title: "Review conversation",
       memberIds: state.conversations[0].memberIds,
+      retrievalExcluded: false,
       createdAt: state.workspace.createdAt,
       updatedAt: state.workspace.updatedAt
     });
