@@ -15,6 +15,8 @@ import type {
   ToolDefinition
 } from "@/server/domain/types";
 import type { StateStore } from "@/server/store/store";
+import { ChunkTokenCache } from "@/server/application/source-retrieval";
+import { searchSources } from "@/server/application/source-search";
 
 export const toolExecutionErrorKinds = [
   "unauthorized",
@@ -88,6 +90,12 @@ export class RegisteredToolGateway implements ToolGateway {
   private readonly validators = new Map<string, ValidateFunction>();
   private readonly ajv: Ajv;
   private readonly egress: EgressClient;
+  /**
+   * Owned by the Tool execution path, never a module global: its lifetime
+   * and bound are the gateway instance's, and correctness rests on chunk
+   * immutability (contentHash-keyed, append-only refresh).
+   */
+  private readonly chunkTokenCache = new ChunkTokenCache();
 
   constructor(private readonly store: StateStore, egress?: EgressClient) {
     this.egress = egress ?? createWorkspaceEgressClient(store);
@@ -194,6 +202,46 @@ export class RegisteredToolGateway implements ToolGateway {
       return {
         content: text,
         details: { status: response.status, url }
+      };
+    }
+
+    if (tool.name === "search_sources") {
+      // In-process by construction: reads the Workspace's own store snapshot
+      // and makes no network call, so the registry's egress-path prohibition
+      // does not apply to this built-in.
+      const corpus = await this.store.read((state) => ({
+        sources: state.sources,
+        chunks: state.chunks
+      }));
+      const outcome = searchSources(
+        corpus,
+        {
+          query: String(args.query),
+          ...(typeof args.limit === "number" ? { limit: args.limit } : {}),
+          ...(typeof args.sourceId === "string"
+            ? { sourceId: args.sourceId }
+            : {})
+        },
+        this.chunkTokenCache
+      );
+      if (outcome.status === "validation_error") {
+        return {
+          content: outcome.content,
+          isError: true,
+          errorKind: "validation"
+        };
+      }
+      const {
+        content,
+        query,
+        limit,
+        returnedChunkIds,
+        sourceTitles,
+        truncated
+      } = outcome;
+      return {
+        content,
+        details: { query, limit, returnedChunkIds, sourceTitles, truncated }
       };
     }
 

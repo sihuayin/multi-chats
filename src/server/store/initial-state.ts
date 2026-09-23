@@ -41,6 +41,39 @@ export const BUILT_IN_TOOLS: ToolDefinition[] = [
     }
   },
   {
+    name: "search_sources",
+    label: "Search Sources",
+    description:
+      "Search every ready Source the Workspace has ingested and return citable chunks of the Workspace's own documents. Use it to answer from the Workspace's material rather than general knowledge. Each result carries its citation alias; cite in your reply only the chunks you actually used.",
+    risk: "read",
+    requiresApproval: false,
+    replay: "safe",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["query"],
+      properties: {
+        query: {
+          type: "string",
+          minLength: 1,
+          description: "What to search for, in the words the current turn needs."
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 20,
+          description: "Maximum chunks to return (default 5)."
+        },
+        sourceId: {
+          type: "string",
+          minLength: 1,
+          description:
+            "Optional single Source to narrow the search to. Not a permission boundary: without it, every ready Source is searched."
+        }
+      }
+    }
+  },
+  {
     name: "post_webhook",
     label: "Post webhook",
     description: "Send a JSON payload to an external HTTP endpoint.",
@@ -125,7 +158,7 @@ export const BUILT_IN_SKILLS: BuiltInSkillDefinition[] = [
       "Research the requested topic. Use only allowed tools and distinguish verified facts from uncertainty.",
     inputs: ["question", "task context"],
     outputs: ["findings", "sources", "uncertainties"],
-    toolNames: ["current_time", "fetch_url"]
+    toolNames: ["current_time", "fetch_url", "search_sources"]
   },
   {
     name: "Writer",

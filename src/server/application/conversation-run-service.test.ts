@@ -1787,7 +1787,8 @@ describe("ConversationRun", () => {
 
     expect(engine.requests[0].tools.map((tool) => tool.name)).toEqual([
       "current_time",
-      "fetch_url"
+      "fetch_url",
+      "search_sources"
     ]);
     expect(engine.requests[1].tools).toEqual([]);
   });
@@ -1823,7 +1824,7 @@ describe("ConversationRun", () => {
       args: {},
       context: {
         employeeId: "20000000-0000-4000-8000-000000000001",
-        allowedToolNames: ["current_time", "fetch_url"]
+        allowedToolNames: ["current_time", "fetch_url", "search_sources"]
       }
     });
     const messages = await runs.listMessages(started.message.conversationId);

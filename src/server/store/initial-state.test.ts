@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import * as initialStateModule from "@/server/store/initial-state";
 import {
   BUILT_IN_SKILLS,
+  BUILT_IN_TOOLS,
   builtInSkillDefinitionOf,
   createInitialState
 } from "@/server/store/initial-state";
@@ -16,7 +17,7 @@ describe("built-in Skill definitions", () => {
           "Research the requested topic. Use only allowed tools and distinguish verified facts from uncertainty.",
         inputs: ["question", "task context"],
         outputs: ["findings", "sources", "uncertainties"],
-        toolNames: ["current_time", "fetch_url"]
+        toolNames: ["current_time", "fetch_url", "search_sources"]
       },
       {
         name: "Writer",
@@ -85,11 +86,33 @@ describe("built-in Skill definitions", () => {
     state.skills[0].instructions = "rewritten";
     expect(BUILT_IN_SKILLS[0].toolNames).toEqual([
       "current_time",
-      "fetch_url"
+      "fetch_url",
+      "search_sources"
     ]);
     expect(BUILT_IN_SKILLS[0].instructions).toContain(
       "Research the requested topic."
     );
+  });
+
+  it("ships search_sources as a read-only, approval-free, replay-safe built-in", () => {
+    const tool = BUILT_IN_TOOLS.find(
+      (item) => item.name === "search_sources"
+    );
+    expect(tool).toMatchObject({
+      risk: "read",
+      requiresApproval: false,
+      replay: "safe"
+    });
+    const schema = tool!.inputSchema as {
+      required: string[];
+      properties: Record<string, { minimum?: number; maximum?: number }>;
+    };
+    expect(schema.required).toEqual(["query"]);
+    expect(schema.properties.limit).toMatchObject({
+      minimum: 1,
+      maximum: 20
+    });
+    expect(schema.properties.sourceId).toBeDefined();
   });
 
   it("exposes no path that installs a built-in Skill by new identity", () => {

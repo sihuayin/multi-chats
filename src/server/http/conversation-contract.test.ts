@@ -12,6 +12,8 @@ import { ConversationRunService } from "@/server/application/conversation-run-se
 import { DiscussionOrchestrator } from "@/server/application/discussion-orchestrator";
 import { FakeModelGateway } from "@/server/adapters/model/model-gateway";
 import type { ModelGateway } from "@/server/application/model-gateway";
+import { chunkSource } from "@/server/application/source-chunking";
+import type { Source } from "@/server/domain/types";
 
 const originalModelMode = process.env.MODEL_MODE;
 const originalDatabaseUrl = process.env.DATABASE_URL;
@@ -282,6 +284,81 @@ describe("Conversation HTTP and SSE contract", () => {
     expect(state.events.map((event) => event.type)).toEqual(
       expect.arrayContaining(["tool_started", "tool_completed"])
     );
+  });
+
+  it("answers from the Workspace's own Sources through search_sources", async () => {
+    const state = createFixtureState();
+    const source: Source = {
+      id: "source-docs",
+      workspaceId: state.workspace.id,
+      title: "Product docs",
+      kind: "file",
+      location: "docs/persistence.md",
+      status: "ready",
+      chunkCount: 2,
+      createdAt: state.workspace.createdAt,
+      updatedAt: state.workspace.updatedAt
+    };
+    const chunks = chunkSource({
+      sourceId: source.id,
+      workspaceId: state.workspace.id,
+      text:
+        "SQLite durability is our persistence story.\n\nUnrelated release calendar notes.",
+      now: state.workspace.createdAt
+    });
+    state.sources.push(source);
+    state.chunks.push(...chunks);
+    const { store } = setupContractServices(state);
+
+    const startedResponse = await handleApiRequest(
+      new Request("http://localhost/api/conversations/conversation/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          content:
+            "@alice what do our own docs say about durability? USE_SEARCH_SOURCES[durability]"
+        })
+      }),
+      ["conversations", "30000000-0000-4000-8000-000000000001", "messages"]
+    );
+    expect(startedResponse.status).toBe(202);
+    const started = (await startedResponse.json()) as { run: { id: string } };
+    await getServices().runs.processRun(started.run.id);
+
+    const persisted = await store.read((current) => ({
+      messages: current.messages.filter(
+        (message) => message.runId === started.run.id
+      ),
+      events: current.runEvents.filter(
+        (event) => event.runId === started.run.id
+      )
+    }));
+
+    // The reply cites the alias it was handed, in prose.
+    const reply = persisted.messages.at(-1);
+    expect(reply?.content).toContain(`[external:${chunks[0].id}]`);
+
+    // The run event carries the returned chunk ids and a duration — the
+    // details the Tool returned, verbatim, and no response body.
+    expect(persisted.events.map((event) => event.type)).toEqual(
+      expect.arrayContaining(["tool_started", "tool_completed"])
+    );
+    const completion = persisted.events.find(
+      (event) => event.type === "tool_completed"
+    )!;
+    expect(completion.payload).toMatchObject({
+      toolName: "search_sources",
+      isError: false,
+      details: {
+        query: "durability",
+        limit: 5,
+        returnedChunkIds: [chunks[0].id],
+        sourceTitles: ["Product docs"],
+        truncated: false
+      }
+    });
+    expect(typeof completion.payload.durationMs).toBe("number");
+    expect(completion.payload).not.toHaveProperty("result");
   });
 
   it("stops, resumes, retries, and cancels Task Runs", async () => {
