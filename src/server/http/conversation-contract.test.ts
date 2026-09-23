@@ -359,6 +359,160 @@ describe("Conversation HTTP and SSE contract", () => {
     });
     expect(typeof completion.payload.durationMs).toBe("number");
     expect(completion.payload).not.toHaveProperty("result");
+
+    // The reply's citation resolves for the surface: the view carries the
+    // Source title and the live passage, and the reference is persisted.
+    const viewResponse = await handleApiRequest(
+      new Request("http://localhost/api/workspace"),
+      ["workspace"]
+    );
+    expect(viewResponse.status).toBe(200);
+    const view = (await viewResponse.json()) as {
+      messageCitations: Array<{
+        messageId: string;
+        alias: string;
+        resolved: boolean;
+        chunkId?: string;
+        sourceTitle?: string;
+        excerpt?: string;
+        evidenceReferenceId?: string;
+      }>;
+    };
+    const citations = view.messageCitations.filter(
+      (citation) => citation.messageId === reply?.id
+    );
+    expect(citations).toHaveLength(1);
+    expect(citations[0]).toMatchObject({
+      alias: `external:${chunks[0].id}`,
+      resolved: true,
+      chunkId: chunks[0].id,
+      sourceTitle: "Product docs",
+      excerpt: chunks[0].content
+    });
+    const references = await store.read(
+      (current) => current.evidenceReferences
+    );
+    expect(references).toHaveLength(1);
+    expect(references[0]).toMatchObject({
+      id: citations[0].evidenceReferenceId,
+      kind: "external_source",
+      sourceId: chunks[0].id
+    });
+  });
+
+  it("keeps an earlier alias citable in a later Run and records it once", async () => {
+    const state = createFixtureState();
+    const source: Source = {
+      id: "source-docs",
+      workspaceId: state.workspace.id,
+      title: "Product docs",
+      kind: "file",
+      location: "docs/persistence.md",
+      status: "ready",
+      chunkCount: 1,
+      createdAt: state.workspace.createdAt,
+      updatedAt: state.workspace.updatedAt
+    };
+    const chunks = chunkSource({
+      sourceId: source.id,
+      workspaceId: state.workspace.id,
+      text: "SQLite durability is our persistence story.",
+      now: state.workspace.createdAt
+    });
+    state.sources.push(source);
+    state.chunks.push(...chunks);
+    const { store } = setupContractServices(state);
+    const alias = `external:${chunks[0].id}`;
+
+    const post = (content: string, key: string) =>
+      handleApiRequest(
+        new Request("http://localhost/api/conversations/conversation/messages", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "idempotency-key": key
+          },
+          body: JSON.stringify({ content })
+        }),
+        ["conversations", "30000000-0000-4000-8000-000000000001", "messages"]
+      );
+
+    const first = (await (
+      await post(
+        "@alice what do our docs say about durability? USE_SEARCH_SOURCES[durability]",
+        "cite-first"
+      )
+    ).json()) as { run: { id: string } };
+    await getServices().runs.processRun(first.run.id);
+
+    // A later Run retrieves nothing and re-cites the alias from prose.
+    const second = (await (
+      await post(`@alice follow up and cite CITE_ALIAS[${alias}]`, "cite-second")
+    ).json()) as { run: { id: string } };
+    await getServices().runs.processRun(second.run.id);
+
+    // A hallucinated alias stays soft: literal text, no record, no failure.
+    const third = (await (
+      await post(
+        "@alice also consider CITE_ALIAS[external:chunk-bogus]",
+        "cite-third"
+      )
+    ).json()) as { run: { id: string } };
+    const thirdRun = await getServices().runs.processRun(third.run.id);
+    expect(thirdRun.status).toBe("completed");
+
+    const secondEvents = await store.read((current) =>
+      current.runEvents.filter((event) => event.runId === second.run.id)
+    );
+    expect(secondEvents.map((event) => event.type)).not.toContain(
+      "tool_started"
+    );
+
+    const persisted = await store.read((current) => ({
+      messages: current.messages.filter(
+        (message) =>
+          message.runId === second.run.id || message.runId === third.run.id
+      ),
+      references: current.evidenceReferences
+    }));
+    const reCited = persisted.messages.find(
+      (message) => message.runId === second.run.id
+    );
+    expect(reCited?.content).toContain(`[${alias}]`);
+    const bogus = persisted.messages.find(
+      (message) => message.runId === third.run.id
+    );
+    expect(bogus?.content).toContain("[external:chunk-bogus]");
+    // The same chunk cited in two Runs is one record, and the bogus alias
+    // recorded nothing.
+    expect(persisted.references).toHaveLength(1);
+    expect(persisted.references[0]).toMatchObject({
+      kind: "external_source",
+      sourceId: chunks[0].id
+    });
+
+    const viewResponse = await handleApiRequest(
+      new Request("http://localhost/api/workspace"),
+      ["workspace"]
+    );
+    const view = (await viewResponse.json()) as {
+      messageCitations: Array<{
+        messageId: string;
+        alias: string;
+        resolved: boolean;
+      }>;
+    };
+    const reCitation = view.messageCitations.find(
+      (citation) => citation.messageId === reCited?.id
+    );
+    expect(reCitation).toMatchObject({ alias, resolved: true });
+    const bogusCitation = view.messageCitations.find(
+      (citation) => citation.messageId === bogus?.id
+    );
+    expect(bogusCitation).toMatchObject({
+      alias: "external:chunk-bogus",
+      resolved: false
+    });
   });
 
   it("stops, resumes, retries, and cancels Task Runs", async () => {

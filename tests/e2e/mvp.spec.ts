@@ -870,3 +870,125 @@ async function rightInset(
     rowBox.x + rowBox.width - (controlBox.x + controlBox.width)
   );
 }
+
+test("answers from the Workspace's own Sources with a citation chip and a source strip", async ({
+  page,
+  request
+}) => {
+  await page.context().addCookies([
+    { name: "locale", value: "en", url: "http://localhost:3000" }
+  ]);
+
+  const view = (await (await request.get("/api/workspace")).json()) as {
+    employees: Array<{
+      id: string;
+      name: string;
+      identity: string;
+      providerCredentialId: string;
+      modelId: string;
+      fallbackTargets?: Array<{ providerCredentialId: string; modelId: string }>;
+      skillIds: string[];
+      active: boolean;
+    }>;
+    skills: Array<{ id: string; name: string; toolNames: string[] }>;
+  };
+  const researcherSkill = view.skills.find((skill) =>
+    skill.toolNames.includes("search_sources")
+  );
+  expect(researcherSkill).toBeTruthy();
+  const researcher = view.employees.find((item) =>
+    item.skillIds.includes(researcherSkill!.id)
+  );
+  expect(researcher).toBeTruthy();
+  // An earlier scenario may have deactivated the Researcher; a mentioned Run
+  // needs an active Employee, so re-activate through the API.
+  if (!researcher!.active) {
+    const response = await request.put(`/api/employees/${researcher!.id}`, {
+      data: {
+        name: researcher!.name,
+        identity: researcher!.identity,
+        providerCredentialId: researcher!.providerCredentialId,
+        modelId: researcher!.modelId,
+        fallbackTargets: researcher!.fallbackTargets ?? [],
+        skillIds: researcher!.skillIds,
+        active: true
+      }
+    });
+    expect(response.ok()).toBeTruthy();
+  }
+  const employee = researcher!;
+
+  // Seed a Source and wait until ingestion makes it searchable.
+  const created = (await (
+    await request.post("/api/sources", {
+      data: {
+        title: "Persistence notes",
+        kind: "file",
+        location: "notes.md",
+        content: "SQLite durability is our persistence story."
+      }
+    })
+  ).json()) as { id: string };
+  await expect
+    .poll(
+      async () =>
+        ((await (await request.get(`/api/sources/${created.id}`)).json()) as {
+          status: string;
+        }).status,
+      { timeout: 20_000 }
+    )
+    .toBe("ready");
+
+  const conversationResponse = await request.post("/api/conversations", {
+    data: { title: "Citation check", memberIds: [employee.id] }
+  });
+  expect(conversationResponse.ok()).toBeTruthy();
+
+  await page.goto("/");
+  await page
+    .locator(".conversation-item")
+    .filter({ hasText: "Citation check" })
+    .click();
+  const slug = employee!.name.toLowerCase().replace(/\s+/g, "-");
+  await page
+    .getByPlaceholder("Message the group or mention @employee")
+    .fill(
+      `@${slug} what do our notes say about durability? USE_SEARCH_SOURCES[durability]`
+    );
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const reply = page
+    .locator(".message-bubble.employee")
+    .filter({ hasText: /Workspace's own documents/ });
+  await expect(reply).toBeVisible({ timeout: 30_000 });
+
+  // The citation reads as a chip naming its Source.
+  const chip = reply.locator(".citation-chip").filter({ hasText: "Persistence notes" });
+  await expect(chip.first()).toBeVisible();
+
+  // The message carries a strip of the Sources behind it.
+  const strip = reply.locator(".source-strip");
+  await expect(strip).toBeVisible();
+  await expect(strip).toContainText("Sources");
+
+  // Clicking the chip shows the passage itself below the message.
+  await chip.first().click();
+  const passage = reply.locator('[data-testid="passage-panel"]');
+  await expect(passage).toBeVisible();
+  await expect(passage).toContainText(
+    "SQLite durability is our persistence story."
+  );
+
+  // The strip entry is the same control: it closes what the chip opened,
+  // and only one passage is shown at a time.
+  await strip.locator(".citation-chip").first().click();
+  await expect(passage).toBeHidden();
+  await strip.locator(".citation-chip").first().click();
+  await expect(passage).toBeVisible();
+  await expect(page.locator('[data-testid="passage-panel"]')).toHaveCount(1);
+
+  // A message that cited nothing carries no strip.
+  await expect(
+    page.locator(".message-bubble.user").first().locator(".source-strip")
+  ).toHaveCount(0);
+});

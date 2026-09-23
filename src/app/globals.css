@@ -766,6 +766,97 @@ button {
   border-color: rgb(16 163 127 / 30%);
 }
 
+.citation-chip {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 2px;
+  padding: 1px 8px;
+  border: 1px solid rgb(16 163 127 / 40%);
+  border-radius: 999px;
+  background: rgb(16 163 127 / 10%);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.85em;
+  line-height: 1.6;
+  cursor: pointer;
+  vertical-align: baseline;
+}
+
+.citation-chip:hover {
+  background: rgb(16 163 127 / 20%);
+}
+
+.citation-chip[aria-expanded="true"] {
+  border-color: var(--primary);
+  background: rgb(16 163 127 / 24%);
+}
+
+.passage-panel {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-left: 2px solid var(--primary);
+  border-radius: 6px;
+  background: rgb(255 255 255 / 3%);
+}
+
+.passage-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.passage-head strong {
+  color: var(--muted-foreground);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.passage-close {
+  padding: 2px 4px;
+  border: none;
+  background: none;
+  color: var(--muted-foreground);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.passage-close:hover {
+  color: var(--foreground);
+}
+
+.passage-text {
+  margin: 0;
+  max-height: 12em;
+  overflow: auto;
+  white-space: pre-wrap;
+  color: var(--secondary-foreground);
+  font-size: 12.5px;
+}
+
+.source-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed rgb(255 255 255 / 12%);
+}
+
+.strip-label {
+  color: var(--muted-foreground);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
 .message-meta {
   justify-content: flex-start;
   color: var(--muted-foreground);

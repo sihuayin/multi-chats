@@ -107,6 +107,16 @@ export class FakeModelGateway implements ModelGateway {
       yield { type: "text_completed", text };
       return;
     }
+    const citeMatch = latestUserContent.match(/CITE_ALIAS\[([^\]]+)\]/);
+    if (citeMatch) {
+      // Re-cite an alias from an earlier turn without retrieving anything:
+      // drives the follow-up-citation path deterministically.
+      const alias = citeMatch[1].trim();
+      const text = `As established earlier [${alias}], the Workspace's own documents cover this.`;
+      yield { type: "text_delta", delta: text };
+      yield { type: "text_completed", text };
+      return;
+    }
     const searchMatch = latestUserContent.match(
       /USE_SEARCH_SOURCES(?:\[([^\]]*)\])?/
     );

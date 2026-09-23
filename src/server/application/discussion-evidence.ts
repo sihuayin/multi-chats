@@ -79,6 +79,15 @@ export type EvidenceScope = {
    * offering and citability are different questions; do not unify them.
    */
   citableSourceIds: ReadonlySet<string>;
+  /**
+   * Chunk-level citability, supplied by callers whose citable set is a set
+   * of chunks rather than of Sources (a Conversation: chunks cited by its
+   * Messages ∪ chunks retrieved by the Run being resolved). When present,
+   * `external:<chunkId>` aliases are judged by chunk-id membership here
+   * instead of by Source membership in `citableSourceIds`. Still data,
+   * still one implementation of the alias kind.
+   */
+  citableChunkIds?: ReadonlySet<string>;
 };
 
 function discussionEvidenceScope(
@@ -211,7 +220,11 @@ export function resolveEvidence(
         const source = state.sources.find(
           (item) => item.id === chunk.sourceId
         );
-        if (!source || !scope.citableSourceIds.has(source.id)) {
+        const citable =
+          scope.citableChunkIds !== undefined
+            ? scope.citableChunkIds.has(chunk.id)
+            : scope.citableSourceIds.has(source?.id ?? "");
+        if (!source || !citable) {
           throw new DiscussionEvidenceError(
             `Evidence reference ${alias} is outside the Discussion`,
             { evidenceId: alias, reason: "out_of_scope" }
