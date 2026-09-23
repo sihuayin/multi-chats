@@ -515,6 +515,79 @@ describe("Conversation HTTP and SSE contract", () => {
     });
   });
 
+  it("answers from the Workspace's own history through search_history", async () => {
+    const state = createFixtureState();
+    const conversationId = "30000000-0000-4000-8000-000000000001";
+    state.messages.push({
+      id: "message-history",
+      workspaceId: state.workspace.id,
+      conversationId,
+      authorType: "employee",
+      authorId: state.employees[0].id,
+      content: "The persistence model is append-only.",
+      status: "complete",
+      createdAt: state.workspace.createdAt,
+      updatedAt: state.workspace.updatedAt
+    });
+    const { store } = setupContractServices(state);
+
+    const startedResponse = await handleApiRequest(
+      new Request("http://localhost/api/conversations/conversation/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          content: "@alice what did we decide? USE_SEARCH_HISTORY"
+        })
+      }),
+      ["conversations", conversationId, "messages"]
+    );
+    expect(startedResponse.status).toBe(202);
+    const started = (await startedResponse.json()) as { run: { id: string } };
+    await getServices().runs.processRun(started.run.id);
+
+    const persisted = await store.read((current) => ({
+      messages: current.messages.filter(
+        (message) => message.runId === started.run.id
+      ),
+      events: current.runEvents.filter(
+        (event) => event.runId === started.run.id
+      )
+    }));
+
+    // The reply echoes the result: header, alias, provenance, content.
+    const reply = persisted.messages.at(-1);
+    expect(reply?.content).toContain(
+      'search_history — query: "persistence"'
+    );
+    expect(reply?.content).toContain("message:message-history");
+    expect(reply?.content).toContain(
+      "Message — Alice, Launch planning, "
+    );
+    expect(reply?.content).toContain(
+      "The persistence model is append-only."
+    );
+
+    // The ledger carries the ranking record: returnedItemIds in rank order,
+    // the query, and the truncation flag — plus durationMs, no body.
+    expect(persisted.events.map((event) => event.type)).toEqual(
+      expect.arrayContaining(["tool_started", "tool_completed"])
+    );
+    const completion = persisted.events.find(
+      (event) => event.type === "tool_completed"
+    )!;
+    expect(completion.payload).toMatchObject({
+      toolName: "search_history",
+      isError: false,
+      details: {
+        query: "persistence",
+        returnedItemIds: ["message-history"],
+        truncated: false
+      }
+    });
+    expect(typeof completion.payload.durationMs).toBe("number");
+    expect(completion.payload).not.toHaveProperty("result");
+  });
+
   it("stops, resumes, retries, and cancels Task Runs", async () => {
     const { store } = setupContractServices();
     const conversationId = "30000000-0000-4000-8000-000000000001";

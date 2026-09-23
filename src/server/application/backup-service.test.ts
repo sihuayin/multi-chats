@@ -351,7 +351,7 @@ describe("Workspace backup and restore", () => {
 
     // It restores because the migration backfills the collection, not because
     // validation was loosened.
-    expect(restored.tools).toHaveLength(6);
+    expect(restored.tools).toHaveLength(7);
     expect(restored.workspace.egressAllowlist).toEqual([]);
   });
 

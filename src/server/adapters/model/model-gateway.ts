@@ -117,6 +117,45 @@ export class FakeModelGateway implements ModelGateway {
       yield { type: "text_completed", text };
       return;
     }
+    if (latestUserContent.includes("USE_SEARCH_HISTORY")) {
+      const tool = request.tools.find(
+        (item) => item.name === "search_history"
+      );
+      if (!tool) {
+        yield {
+          type: "error",
+          message: "search_history Tool is unavailable",
+          kind: "terminal"
+        };
+        return;
+      }
+      const args = { query: "persistence" };
+      yield {
+        type: "tool_started",
+        toolCallId: "fake-search-history",
+        toolName: tool.name,
+        args
+      };
+      const result = await tool.execute(
+        "fake-search-history",
+        args,
+        request.signal
+      );
+      yield {
+        type: "tool_completed",
+        toolCallId: "fake-search-history",
+        toolName: tool.name,
+        result: result.content,
+        isError: Boolean(result.isError),
+        errorKind: result.errorKind
+      };
+      const text = result.isError
+        ? `Tool failed: ${result.content}`
+        : result.content;
+      yield { type: "text_delta", delta: text };
+      yield { type: "text_completed", text };
+      return;
+    }
     const searchMatch = latestUserContent.match(
       /USE_SEARCH_SOURCES(?:\[([^\]]*)\])?/
     );

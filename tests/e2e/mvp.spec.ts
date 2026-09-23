@@ -1019,4 +1019,24 @@ test("answers from the Workspace's own Sources with a citation chip and a source
   const unresolved = bogusReply.locator('[data-testid="strip-unresolved"]');
   await expect(unresolved).toBeVisible();
   await expect(unresolved).toContainText("1 citation(s) did not resolve");
+
+  // The sibling Tool over the Workspace's own history is driven by its own
+  // fake-mode keyword; the trigger message itself is part of the corpus, so
+  // the search has something to find.
+  await page
+    .getByPlaceholder("Message the group or mention @employee")
+    .fill(`@${slug} what did we decide about persistence? USE_SEARCH_HISTORY`);
+  await page.getByRole("button", { name: "Send" }).click();
+  const historyReply = page
+    .locator(".message-bubble.employee")
+    .filter({ hasText: "search_history — query:" })
+    .last();
+  await expect(historyReply).toBeVisible({ timeout: 30_000 });
+  await expect(historyReply).toContainText("message:");
+  await expect(historyReply).toContainText(
+    "searchable history items."
+  );
+  // The bare alias lines the result echoes are prose, not citations: no chip
+  // and no strip entry appear for them (bracketed aliases are the grammar).
+  await expect(historyReply.locator(".source-strip")).toHaveCount(0);
 });
