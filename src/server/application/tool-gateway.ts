@@ -17,6 +17,7 @@ import type {
 import type { StateStore } from "@/server/store/store";
 import { ChunkTokenCache } from "@/server/application/source-retrieval";
 import { searchSources } from "@/server/application/source-search";
+import { searchHistory } from "@/server/application/history-search";
 
 export const toolExecutionErrorKinds = [
   "unauthorized",
@@ -242,6 +243,37 @@ export class RegisteredToolGateway implements ToolGateway {
       return {
         content,
         details: { query, limit, returnedChunkIds, sourceTitles, truncated }
+      };
+    }
+
+    if (tool.name === "search_history") {
+      // In-process by construction: reads the Workspace's own store and
+      // makes no network call. The searching Conversation comes from the
+      // Run, never from the arguments — the corpus is scoped, and no filter
+      // argument may route around a user's opt-out.
+      const snapshot = await this.store.read((state) => ({
+        state,
+        conversationId: state.runs.find(
+          (item) => item.id === context.runId
+        )?.conversationId
+      }));
+      if (snapshot.conversationId === undefined) {
+        return {
+          content:
+            "search_history failed: this Tool call has no Conversation context.",
+          isError: true,
+          errorKind: "execution"
+        };
+      }
+      const outcome = searchHistory(
+        snapshot.state,
+        snapshot.conversationId,
+        String(args.query)
+      );
+      const { content, query, returnedItemIds, truncated } = outcome;
+      return {
+        content,
+        details: { query, returnedItemIds, truncated }
       };
     }
 

@@ -74,6 +74,27 @@ export const BUILT_IN_TOOLS: ToolDefinition[] = [
     }
   },
   {
+    name: "search_history",
+    label: "Search History",
+    description:
+      "Search the Workspace's Conversation history — the Messages, Tasks, and Artifacts of its Conversations — for items matching a query. Returns text, which may be long. Cite an item by copying its alias exactly, prefix included: message:, task:, or artifact:.",
+    risk: "read",
+    requiresApproval: false,
+    replay: "safe",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["query"],
+      properties: {
+        query: {
+          type: "string",
+          description:
+            "What to search for, in the words the current turn needs."
+        }
+      }
+    }
+  },
+  {
     name: "post_webhook",
     label: "Post webhook",
     description: "Send a JSON payload to an external HTTP endpoint.",
@@ -132,16 +153,24 @@ export const BUILT_IN_TOOLS: ToolDefinition[] = [
  * Tools withheld from Discussion Turns by name, regardless of
  * requiresApproval — the one named place a Tool goes when it must stay out
  * of Discussions, and the precedent for the next Tool with the same problem.
+ * Withholding is by name, never by `risk` or `requiresApproval`: `risk` is
+ * display-only, and `update_task`/`attach_artifact` are writes that stay.
+ * Withheld Tools are silently absent from the Turn — the same precedent as
+ * silently dropping inactive Tools — and the Conversation path keeps
+ * offering them.
  *
  * `search_sources` (#181): a Discussion's evidence is what the user attached
  * to it, and that is a control point. The Chunks this Tool returns are
  * workspace-wide retrieval, not in `discussion.sourceIds`, so its citations
- * would fail the Turn's evidence catalog (ADR-0002). Withheld Tools are
- * silently absent from the Turn — the same precedent as silently dropping
- * inactive Tools — and the Conversation path keeps offering them.
+ * would fail the Turn's evidence catalog (ADR-0002).
+ *
+ * `search_history` (#205, decided in #193): the same control point — a Brief
+ * must trace to material the user attached, and History items retrieved from
+ * across the Workspace are outside `discussion.sourceIds` just the same.
  */
 export const DISCUSSION_WITHHELD_TOOL_NAMES: readonly string[] = [
-  "search_sources"
+  "search_sources",
+  "search_history"
 ];
 
 /**
@@ -163,7 +192,12 @@ export const BUILT_IN_SKILLS: BuiltInSkillDefinition[] = [
       "Research the requested topic. Use only allowed tools and distinguish verified facts from uncertainty.",
     inputs: ["question", "task context"],
     outputs: ["findings", "sources", "uncertainties"],
-    toolNames: ["current_time", "fetch_url", "search_sources"]
+    toolNames: [
+      "current_time",
+      "fetch_url",
+      "search_sources",
+      "search_history"
+    ]
   },
   {
     name: "Writer",

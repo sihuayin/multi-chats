@@ -17,7 +17,12 @@ describe("built-in Skill definitions", () => {
           "Research the requested topic. Use only allowed tools and distinguish verified facts from uncertainty.",
         inputs: ["question", "task context"],
         outputs: ["findings", "sources", "uncertainties"],
-        toolNames: ["current_time", "fetch_url", "search_sources"]
+        toolNames: [
+          "current_time",
+          "fetch_url",
+          "search_sources",
+          "search_history"
+        ]
       },
       {
         name: "Writer",
@@ -87,7 +92,8 @@ describe("built-in Skill definitions", () => {
     expect(BUILT_IN_SKILLS[0].toolNames).toEqual([
       "current_time",
       "fetch_url",
-      "search_sources"
+      "search_sources",
+      "search_history"
     ]);
     expect(BUILT_IN_SKILLS[0].instructions).toContain(
       "Research the requested topic."
@@ -113,6 +119,28 @@ describe("built-in Skill definitions", () => {
       maximum: 20
     });
     expect(schema.properties.sourceId).toBeDefined();
+  });
+
+  it("ships search_history with the decided description and exactly one argument", () => {
+    const tool = BUILT_IN_TOOLS.find(
+      (item) => item.name === "search_history"
+    );
+    expect(tool).toMatchObject({
+      risk: "read",
+      requiresApproval: false,
+      replay: "safe"
+    });
+    expect(tool!.description).toBe(
+      "Search the Workspace's Conversation history — the Messages, Tasks, and Artifacts of its Conversations — for items matching a query. Returns text, which may be long. Cite an item by copying its alias exactly, prefix included: message:, task:, or artifact:."
+    );
+    const schema = tool!.inputSchema as {
+      additionalProperties: boolean;
+      required: string[];
+      properties: Record<string, unknown>;
+    };
+    expect(schema.additionalProperties).toBe(false);
+    expect(schema.required).toEqual(["query"]);
+    expect(Object.keys(schema.properties)).toEqual(["query"]);
   });
 
   it("exposes no path that installs a built-in Skill by new identity", () => {

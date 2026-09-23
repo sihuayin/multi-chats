@@ -1788,7 +1788,8 @@ describe("ConversationRun", () => {
     expect(engine.requests[0].tools.map((tool) => tool.name)).toEqual([
       "current_time",
       "fetch_url",
-      "search_sources"
+      "search_sources",
+      "search_history"
     ]);
     expect(engine.requests[1].tools).toEqual([]);
   });
@@ -1824,7 +1825,12 @@ describe("ConversationRun", () => {
       args: {},
       context: {
         employeeId: "20000000-0000-4000-8000-000000000001",
-        allowedToolNames: ["current_time", "fetch_url", "search_sources"]
+        allowedToolNames: [
+          "current_time",
+          "fetch_url",
+          "search_sources",
+          "search_history"
+        ]
       }
     });
     const messages = await runs.listMessages(started.message.conversationId);
@@ -4476,7 +4482,12 @@ describe("ConversationRun", () => {
     await runs.processRun(conversationTurn.run!.id);
     expect(
       engine.requests[phaseRequestCount].tools.map((tool) => tool.name)
-    ).toEqual(["current_time", "fetch_url", "search_sources"]);
+    ).toEqual([
+      "current_time",
+      "fetch_url",
+      "search_sources",
+      "search_history"
+    ]);
   });
 
   it("withholds search_sources by name in Discussion Turns only", async () => {

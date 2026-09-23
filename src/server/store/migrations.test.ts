@@ -547,6 +547,7 @@ describe("AppState migrations", () => {
       "builtin:current_time",
       "builtin:fetch_url",
       "builtin:search_sources",
+      "builtin:search_history",
       "builtin:post_webhook",
       "builtin:update_task",
       "builtin:attach_artifact"
@@ -563,8 +564,8 @@ describe("AppState migrations", () => {
 
     const migrated = migrateAppState(state);
 
-    expect(migrated.tools).toHaveLength(6);
-    expect(new Set(migrated.tools.map((tool) => tool.id)).size).toBe(6);
+    expect(migrated.tools).toHaveLength(7);
+    expect(new Set(migrated.tools.map((tool) => tool.id)).size).toBe(7);
   });
 
   it("refuses to load a Workspace whose Skill references a missing Tool", () => {
