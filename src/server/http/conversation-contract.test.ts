@@ -588,6 +588,110 @@ describe("Conversation HTTP and SSE contract", () => {
     expect(completion.payload).not.toHaveProperty("result");
   });
 
+  it("makes a retrieved History item citable end to end, with its origin and one record", async () => {
+    const state = createFixtureState();
+    const here = "30000000-0000-4000-8000-000000000001";
+    const elsewhere = "30000000-0000-4000-8000-000000000002";
+    state.conversations.push({
+      id: elsewhere,
+      workspaceId: state.workspace.id,
+      title: "Payments redesign",
+      memberIds: [],
+      retrievalExcluded: false,
+      createdAt: state.workspace.createdAt,
+      updatedAt: state.workspace.updatedAt
+    });
+    state.messages.push({
+      id: "message-elsewhere",
+      workspaceId: state.workspace.id,
+      conversationId: elsewhere,
+      authorType: "employee",
+      authorId: state.employees[0].id,
+      content: "The persistence model is append-only.",
+      status: "complete",
+      createdAt: state.workspace.createdAt,
+      updatedAt: state.workspace.updatedAt
+    });
+    const { store } = setupContractServices(state);
+
+    const post = (content: string, key: string) =>
+      handleApiRequest(
+        new Request("http://localhost/api/conversations/conversation/messages", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "idempotency-key": key
+          },
+          body: JSON.stringify({ content })
+        }),
+        ["conversations", here, "messages"]
+      );
+
+    const first = (await (
+      await post("@alice what did we decide? USE_SEARCH_HISTORY", "hist-first")
+    ).json()) as { run: { id: string } };
+    await getServices().runs.processRun(first.run.id);
+
+    // The reply's bracketed citation resolved against the retrieved tier.
+    const afterFirst = await store.read((current) => ({
+      reply: current.messages
+        .filter((message) => message.runId === first.run.id)
+        .at(-1),
+      references: current.evidenceReferences
+    }));
+    expect(afterFirst.reply?.content).toContain("[message:message-elsewhere]");
+    expect(afterFirst.references).toHaveLength(1);
+    expect(afterFirst.references[0]).toMatchObject({
+      kind: "message",
+      sourceId: "message-elsewhere",
+      locator: elsewhere
+    });
+    expect(afterFirst.references[0].excerptHash).toBeUndefined();
+
+    const viewResponse = await handleApiRequest(
+      new Request("http://localhost/api/workspace"),
+      ["workspace"]
+    );
+    const view = (await viewResponse.json()) as {
+      messageCitations: Array<{
+        messageId: string;
+        alias: string;
+        resolved: boolean;
+        locator?: string;
+      }>;
+    };
+    expect(
+      view.messageCitations.find(
+        (citation) => citation.messageId === afterFirst.reply?.id
+      )
+    ).toMatchObject({
+      alias: "message:message-elsewhere",
+      resolved: true,
+      locator: elsewhere
+    });
+
+    // A later Run re-cites from prose without retrieving: the re-citable
+    // tier resolves it and the record dedupes.
+    const second = (await (
+      await post(
+        "@alice follow up CITE_ALIAS[message:message-elsewhere]",
+        "hist-second"
+      )
+    ).json()) as { run: { id: string } };
+    await getServices().runs.processRun(second.run.id);
+
+    const afterSecond = await store.read((current) => ({
+      events: current.runEvents.filter(
+        (event) => event.runId === second.run.id
+      ),
+      references: current.evidenceReferences
+    }));
+    expect(afterSecond.events.map((event) => event.type)).not.toContain(
+      "tool_started"
+    );
+    expect(afterSecond.references).toHaveLength(1);
+  });
+
   it("stops, resumes, retries, and cancels Task Runs", async () => {
     const { store } = setupContractServices();
     const conversationId = "30000000-0000-4000-8000-000000000001";

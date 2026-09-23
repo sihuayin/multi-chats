@@ -149,9 +149,18 @@ export class FakeModelGateway implements ModelGateway {
         isError: Boolean(result.isError),
         errorKind: result.errorKind
       };
+      // Echo the result, then cite its first item the way the real model
+      // would, so the citation chain is drivable end to end. The result's
+      // own bare alias lines stay prose; only the bracketed one cites.
+      const historyAlias = result.content.match(
+        /^(message|task|artifact):(\S+)$/m
+      );
+      const citation = historyAlias
+        ? `\n\nIn summary [${historyAlias[1]}:${historyAlias[2]}].`
+        : "";
       const text = result.isError
         ? `Tool failed: ${result.content}`
-        : result.content;
+        : result.content + citation;
       yield { type: "text_delta", delta: text };
       yield { type: "text_completed", text };
       return;

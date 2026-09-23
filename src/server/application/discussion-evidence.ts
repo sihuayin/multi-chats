@@ -63,8 +63,21 @@ export type EvidenceScopeTurn = {
  */
 export type EvidenceScope = {
   conversationId: string;
-  /** Owning entity id — the Discussion id on today's only surface. */
-  ownerId: string;
+  /**
+   * Set by a Discussion scope, absent in a Conversation scope, and the one
+   * place the resolver distinguishes the two surfaces: a Discussion cites
+   * only its own Messages and only its own Discussion's Artifacts, while a
+   * Conversation's native tier is everything its conversationId owns.
+   */
+  discussionId?: string;
+  /**
+   * History items from elsewhere that are citable anyway: what the Run
+   * being resolved retrieved, ∪ what one of this Conversation's Messages
+   * has already cited. One set across kinds — ids are unique across kinds
+   * and the alias prefix already names the kind. No existence filter: the
+   * citable set is a rule, not a snapshot.
+   */
+  citableIds?: ReadonlySet<string>;
   /** Every turn citable as `turn:<id>`. */
   turns: readonly EvidenceScopeTurn[];
   /** Run ids whose `tool_completed` events are citable as `tool_result:<eventId>`. */
@@ -96,7 +109,7 @@ function discussionEvidenceScope(
 ): EvidenceScope {
   return {
     conversationId: discussion.conversationId,
-    ownerId: discussion.id,
+    discussionId: discussion.id,
     turns: discussion.rounds.flatMap((round) => round.turns),
     runIds: state.runs
       .filter((run) => run.discussionId === discussion.id)
@@ -140,19 +153,34 @@ export function resolveEvidence(
   let label = sourceId;
   let locator: string | undefined;
   let excerptHash: string | undefined;
+  // History-item references carry the originating Conversation as locator
+  // and no excerptHash: Messages were already content-immutable, so the
+  // failure mode excerptHash exists for (a Source refresh rewriting Chunk
+  // text) does not exist here, and the locator is what makes a dangling
+  // cross-Conversation reference sayable.
+  let omitExcerptHash = false;
   if (prefix === "message") {
     const message = state.messages.find((item) => item.id === sourceId);
-    if (
-      !message ||
-      message.conversationId !== scope.conversationId ||
-      message.discussionId !== scope.ownerId
-    ) {
+    // One uniform native predicate — the target belongs to the scope's
+    // Conversation — with the Discussion's narrower rule layered on only
+    // when the scope is a Discussion's. A Conversation has no outside, so
+    // its own Messages are all citable; a Discussion still cites only its
+    // own.
+    const belongs =
+      message !== undefined &&
+      (scope.citableIds?.has(message.id) === true ||
+        (message.conversationId === scope.conversationId &&
+          (scope.discussionId === undefined ||
+            message.discussionId === scope.discussionId)));
+    if (!belongs) {
       throw new DiscussionEvidenceError(
         `Evidence reference ${alias} is outside the Discussion`,
         { evidenceId: alias, reason: "out_of_scope" }
       );
     }
-    label = message.content.slice(0, 160);
+    label = message!.content.slice(0, 160);
+    locator = message!.conversationId;
+    omitExcerptHash = true;
   } else if (prefix === "turn") {
     const turn = scope.turns.find((item) => item.id === sourceId);
     if (!turn) {
@@ -164,13 +192,19 @@ export function resolveEvidence(
     label = turn.payload?.summary ?? turn.content?.slice(0, 160) ?? sourceId;
   } else if (prefix === "task") {
     const task = state.tasks.find((item) => item.id === sourceId);
-    if (!task || task.conversationId !== scope.conversationId) {
+    if (
+      !task ||
+      (task.conversationId !== scope.conversationId &&
+        scope.citableIds?.has(task.id) !== true)
+    ) {
       throw new DiscussionEvidenceError(
         `Evidence reference ${alias} is outside the Discussion`,
         { evidenceId: alias, reason: "out_of_scope" }
       );
     }
     label = task.title;
+    locator = task.conversationId;
+    omitExcerptHash = true;
   } else if (prefix === "artifact") {
     const artifact = state.artifacts.find((item) => item.id === sourceId);
     const relatedTaskIds = new Set(
@@ -178,14 +212,26 @@ export function resolveEvidence(
         .filter((task) => task.conversationId === scope.conversationId)
         .map((task) => task.id)
     );
+    const ownedByTaskHere =
+      artifact !== undefined &&
+      artifact.ownerType === "task" &&
+      relatedTaskIds.has(artifact.ownerId);
+    const ownedByDiscussionHere =
+      artifact !== undefined &&
+      artifact.ownerType === "discussion" &&
+      (scope.discussionId !== undefined
+        ? // A Discussion cites only its own Brief — unchanged.
+          artifact.ownerId === scope.discussionId
+        : // A Conversation natively owns the Artifacts of its Discussions.
+          state.discussions.some(
+            (discussion) =>
+              discussion.id === artifact.ownerId &&
+              discussion.conversationId === scope.conversationId
+          ));
     if (
       !artifact ||
-      !(
-        (artifact.ownerType === "discussion" &&
-          artifact.ownerId === scope.ownerId) ||
-        (artifact.ownerType === "task" &&
-          relatedTaskIds.has(artifact.ownerId))
-      )
+      (!(ownedByTaskHere || ownedByDiscussionHere) &&
+        scope.citableIds?.has(artifact.id) !== true)
     ) {
       throw new DiscussionEvidenceError(
         `Evidence reference ${alias} is outside the Discussion`,
@@ -193,6 +239,14 @@ export function resolveEvidence(
       );
     }
     label = artifact.name;
+    locator =
+      artifact.ownerType === "task"
+        ? state.tasks.find((task) => task.id === artifact.ownerId)
+            ?.conversationId
+        : state.discussions.find(
+            (discussion) => discussion.id === artifact.ownerId
+          )?.conversationId;
+    omitExcerptHash = true;
   } else if (prefix === "tool_result") {
     const event = state.runEvents.find(
       (item) => item.id === sourceId && item.type === "tool_completed"
@@ -254,8 +308,12 @@ export function resolveEvidence(
       kind,
       sourceId,
       ...(locator !== undefined ? { locator } : {}),
-      excerptHash:
-        excerptHash ?? createHash("sha256").update(label).digest("hex"),
+      ...(omitExcerptHash
+        ? {}
+        : {
+            excerptHash:
+              excerptHash ?? createHash("sha256").update(label).digest("hex")
+          }),
       retrievedAt: now,
       createdAt: now
     },
