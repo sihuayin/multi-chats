@@ -95,6 +95,17 @@ export const BUILT_IN_TOOLS: ToolDefinition[] = [
   }
 ];
 
+/**
+ * Tools withheld from Discussion Turns by name, regardless of requiresApproval.
+ *
+ * `search_sources`: the Chunks it returns are not in `discussion.sourceIds`, so
+ * its citations would fail the Turn's evidence catalog (ADR-0002). The Tool
+ * itself does not ship yet (#164); this guard lands first, defensively (#186).
+ */
+export const DISCUSSION_WITHHELD_TOOL_NAMES: readonly string[] = [
+  "search_sources"
+];
+
 function makeBuiltinSkill(
   workspaceId: string,
   now: IsoDate,

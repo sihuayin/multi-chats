@@ -4169,6 +4169,201 @@ describe("ConversationRun", () => {
       code: "run_resume_visible_output"
     });
   });
+
+  it("does not offer approval Tools in a Discussion Turn", async () => {
+    const state = createFixtureState();
+    const { discussion, round } = addFixturePhase(state);
+    addApprovalSkill(state, "skill-approval");
+    const store = new MemoryStore(state);
+    const expectedResponse = JSON.stringify(
+      createFixtureTurnPayload("cross_response", "response")
+    );
+    const engine = new RecordingModelGateway(() => [expectedResponse]);
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      engine
+    );
+
+    const started = await runs.startPhaseRun(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        discussionId: discussion.id,
+        roundId: round.id,
+        participantSnapshot: round.participantSnapshot,
+        context: "Alice established the initial position.",
+        purpose: "Challenge the assumptions from the earlier phase."
+      }
+    );
+    await runs.processRun(started.run.id);
+
+    const offered = engine.requests[0].tools.map((tool) => tool.name);
+    expect(offered).not.toContain("post_webhook");
+    expect(offered).toContain("current_time");
+    expect(offered).toContain("fetch_url");
+
+    const approvals = await store.read((current) => current.approvals);
+    expect(approvals).toHaveLength(0);
+    const events = await runs.listRunEvents(started.run.id, 0);
+    expect(events.map((event) => event.type)).not.toContain(
+      "approval_requested"
+    );
+    const run = await store.read((current) =>
+      current.runs.find((item) => item.id === started.run.id)
+    );
+    expect(run?.status).toBe("completed");
+    expect(run?.status).not.toBe("waiting_approval");
+  });
+
+  it("keeps internal-write built-in Tools in Discussion Turns", async () => {
+    const state = createFixtureState();
+    const { discussion, round } = addFixturePhase(state);
+    state.skills.push({
+      id: "skill-internal-writes",
+      workspaceId: state.workspace.id,
+      name: "Operator",
+      description: "Tracks and attaches work.",
+      instructions: "Update tasks and attach artifacts as needed.",
+      inputs: ["payload"],
+      outputs: ["receipt"],
+      toolNames: [
+        "current_time",
+        "fetch_url",
+        "update_task",
+        "attach_artifact"
+      ],
+      builtIn: false,
+      createdAt: state.workspace.createdAt,
+      updatedAt: state.workspace.updatedAt
+    });
+    state.employees[0].skillIds.push("skill-internal-writes");
+    const store = new MemoryStore(state);
+    const expectedResponse = JSON.stringify(
+      createFixtureTurnPayload("cross_response", "response")
+    );
+    const engine = new RecordingModelGateway(() => [expectedResponse]);
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      engine
+    );
+
+    const started = await runs.startPhaseRun(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        discussionId: discussion.id,
+        roundId: round.id,
+        participantSnapshot: round.participantSnapshot,
+        context: "Alice established the initial position.",
+        purpose: "Challenge the assumptions from the earlier phase."
+      }
+    );
+    await runs.processRun(started.run.id);
+
+    expect(engine.requests[0].tools.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining([
+        "current_time",
+        "fetch_url",
+        "update_task",
+        "attach_artifact"
+      ])
+    );
+  });
+
+  it("still offers approval Tools in Conversation Runs", async () => {
+    const state = createFixtureState();
+    addApprovalSkill(state, "skill-approval");
+    const store = new MemoryStore(state);
+    const engine = new RecordingModelGateway();
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      engine
+    );
+
+    const started = await runs.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice inspect the Tools" }
+    );
+    await runs.processRun(started.run!.id);
+
+    expect(engine.requests[0].tools.map((tool) => tool.name)).toContain(
+      "post_webhook"
+    );
+  });
+
+  it("withholds search_sources by name in Discussion Turns only", async () => {
+    const state = createFixtureState();
+    const { discussion, round } = addFixturePhase(state);
+    state.tools.push({
+      id: "tool-search-sources",
+      workspaceId: state.workspace.id,
+      builtIn: false,
+      active: true,
+      name: "search_sources",
+      label: "Search Sources",
+      description: "Search the Workspace's Sources.",
+      risk: "read",
+      requiresApproval: false,
+      replay: "safe",
+      inputSchema: {
+        type: "object",
+        properties: { query: { type: "string" } }
+      },
+      createdAt: state.workspace.createdAt,
+      updatedAt: state.workspace.updatedAt
+    });
+    state.skills.push({
+      id: "skill-search",
+      workspaceId: state.workspace.id,
+      name: "Searcher",
+      description: "Searches Sources.",
+      instructions: "Search before answering.",
+      inputs: ["question"],
+      outputs: ["findings"],
+      toolNames: ["search_sources"],
+      builtIn: false,
+      createdAt: state.workspace.createdAt,
+      updatedAt: state.workspace.updatedAt
+    });
+    state.employees[0].skillIds.push("skill-search");
+    const store = new MemoryStore(state);
+    const expectedResponse = JSON.stringify(
+      createFixtureTurnPayload("cross_response", "response")
+    );
+    const engine = new RecordingModelGateway(() => [expectedResponse]);
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      engine
+    );
+
+    const started = await runs.startPhaseRun(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        discussionId: discussion.id,
+        roundId: round.id,
+        participantSnapshot: round.participantSnapshot,
+        context: "Alice established the initial position.",
+        purpose: "Challenge the assumptions from the earlier phase."
+      }
+    );
+    await runs.processRun(started.run.id);
+    expect(engine.requests[0].tools.map((tool) => tool.name)).not.toContain(
+      "search_sources"
+    );
+
+    const phaseRequestCount = engine.requests.length;
+    const conversationTurn = await runs.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice inspect the Tools" }
+    );
+    await runs.processRun(conversationTurn.run!.id);
+    const conversationRequest = engine.requests[phaseRequestCount];
+    expect(conversationRequest.tools.map((tool) => tool.name)).toContain(
+      "search_sources"
+    );
+  });
 });
 
 class MemoryStoreFixture extends MemoryStore {

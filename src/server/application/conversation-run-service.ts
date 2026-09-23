@@ -23,6 +23,7 @@ import type {
   ModelTool
 } from "@/server/application/model-gateway";
 import { validateDiscussionParticipants } from "@/server/application/discussion-domain";
+import { DISCUSSION_WITHHELD_TOOL_NAMES } from "@/server/store/initial-state";
 import { appendDiscussionEvent } from "@/server/application/discussion-ledger";
 import {
   parseDiscussionBrief,
@@ -496,7 +497,8 @@ function taskContext(state: AppState, conversationId: string, employeeId: string
 
 function toolDefinitionsForEmployee(
   state: AppState,
-  employee: Employee
+  employee: Employee,
+  options: { discussionTurn?: boolean } = {}
 ): ToolDefinition[] {
   const skillIds = new Set(employee.skillIds);
   const allowedTools = new Set(
@@ -504,9 +506,25 @@ function toolDefinitionsForEmployee(
       .filter((skill) => skillIds.has(skill.id))
       .flatMap((skill) => skill.toolNames)
   );
-  return state.tools.filter(
-    (tool) => tool.active && allowedTools.has(tool.name)
-  );
+  return state.tools.filter((tool) => {
+    if (!tool.active || !allowedTools.has(tool.name)) {
+      return false;
+    }
+    // Withheld Tool (CONTEXT.md): a requiresApproval Tool would park a
+    // Discussion Turn in waiting_approval, which no Discussion surface can
+    // resolve; DISCUSSION_WITHHELD_TOOL_NAMES are withheld because their
+    // results fall outside the Discussion's declared evidence scope.
+    // Withholding is silent to the model and stated to the operator in the
+    // Tools registry.
+    if (
+      options.discussionTurn &&
+      (tool.requiresApproval ||
+        DISCUSSION_WITHHELD_TOOL_NAMES.includes(tool.name))
+    ) {
+      return false;
+    }
+    return true;
+  });
 }
 
 function settleApproval(
@@ -2439,7 +2457,9 @@ export class ConversationRunService {
       const skills = employee.skillIds
         .map((id) => state.skills.find((skill) => skill.id === id))
         .filter((skill): skill is NonNullable<typeof skill> => Boolean(skill));
-      const tools = toolDefinitionsForEmployee(state, employee);
+      const tools = toolDefinitionsForEmployee(state, employee, {
+        discussionTurn: Boolean(run.discussionId)
+      });
       const facilitatorParticipant = discussion?.participants.find(
         (participant) =>
           participant.id === discussion.facilitatorParticipantId
