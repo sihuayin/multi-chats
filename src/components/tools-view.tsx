@@ -247,6 +247,11 @@ export function ToolsView() {
                   {t("tools.requiresApproval")}
                 </span>
               ) : null}
+              {tool.requiresApproval ? (
+                <span className="status-pill">
+                  {t("tools.withheldInDiscussions")}
+                </span>
+              ) : null}
               <span className="status-pill">
                 {tool.replay === "safe"
                   ? t("tools.safeReplay")
