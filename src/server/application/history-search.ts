@@ -69,7 +69,17 @@ function excludedLine(state: AppState, conversationId: string): string {
 export function searchHistory(
   state: AppState,
   conversationId: string,
-  query: string
+  query: string,
+  options: {
+    /**
+     * The second ceiling, in UTF-8 bytes: what the live request has left
+     * (`remainingTokens × 3`, the estimator's own unit — no conversion
+     * between the two ceilings, each stays in the unit already in play).
+     * Computed by the Tool execution path from the request as it has grown,
+     * never from the pre-run number. Absent, only the code-point cap binds.
+     */
+    byteCeiling?: number;
+  } = {}
 ): HistorySearchOutcome {
   const corpus = searchableHistory(state, conversationId);
 
@@ -155,18 +165,29 @@ export function searchHistory(
   // its size; the cap bounds only the tail.
   const itemBudget =
     SEARCH_HISTORY_MAX_RESULT_CODEPOINTS - RESULT_OVERHEAD_RESERVE_CODEPOINTS;
+  const byteBudget =
+    options.byteCeiling === undefined
+      ? undefined
+      : Math.max(0, options.byteCeiling - RESULT_OVERHEAD_RESERVE_CODEPOINTS);
   const blocks: string[] = [];
   const returnedItemIds: string[] = [];
   let used = 0;
+  let usedBytes = 0;
   for (let index = 0; index < ranked.length; index += 1) {
     const block = blockFor(ranked[index].id);
     const blockLength =
       codePointLength(block) + (blocks.length > 0 ? 2 : 0);
-    // The search stops when the next item would not fit; it never skips one
-    // to squeeze a smaller item in behind it.
+    const blockBytes =
+      Buffer.byteLength(block, "utf8") + (blocks.length > 0 ? 2 : 0);
+    // The search stops when the next item would not fit under EITHER
+    // ceiling; it never skips one to squeeze a smaller item in behind it.
+    // The first item is exempt from both — returned whole, the accepted
+    // residue of #193's never-empty rule.
     if (index > 0 && used + blockLength > itemBudget) break;
+    if (index > 0 && byteBudget !== undefined && usedBytes + blockBytes > byteBudget) break;
     blocks.push(block);
     used += blockLength;
+    usedBytes += blockBytes;
     returnedItemIds.push(ranked[index].id);
   }
   const truncated = returnedItemIds.length < ranked.length;

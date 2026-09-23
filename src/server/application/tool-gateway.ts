@@ -42,6 +42,12 @@ export type ToolExecutionContext = {
   messageId: string;
   employeeId: string;
   allowedToolNames: string[];
+  /**
+   * UTF-8 bytes the live request has left for this result, computed per
+   * call by the Tool execution path (#206). Retrieval Tools that assemble
+   * a sized result bound it by this; every other Tool ignores it.
+   */
+  resultByteCeiling?: number;
 };
 
 export type ToolExecutionRequest = {
@@ -268,7 +274,8 @@ export class RegisteredToolGateway implements ToolGateway {
       const outcome = searchHistory(
         snapshot.state,
         snapshot.conversationId,
-        String(args.query)
+        String(args.query),
+        { byteCeiling: context.resultByteCeiling }
       );
       const { content, query, returnedItemIds, truncated } = outcome;
       return {

@@ -4562,6 +4562,111 @@ describe("ConversationRun", () => {
       "search_sources"
     );
   });
+
+  it("bounds a retrieval result by what the live request has left", async () => {
+    const state = createFixtureState();
+    const archiveId = "30000000-0000-4000-8000-000000000002";
+    state.conversations.push({
+      id: archiveId,
+      workspaceId: state.workspace.id,
+      title: "Archive",
+      memberIds: [],
+      retrievalExcluded: false,
+      createdAt: state.workspace.createdAt,
+      updatedAt: state.workspace.updatedAt
+    });
+    const seededIds: string[] = [];
+    for (let index = 0; index < 6; index += 1) {
+      const id = `message-archive-${index}`;
+      seededIds.push(id);
+      state.messages.push({
+        id,
+        workspaceId: state.workspace.id,
+        conversationId: archiveId,
+        authorType: "employee",
+        authorId: state.employees[0].id,
+        content: `persistence 档案${"内容".repeat(1_000)}`,
+        status: "complete",
+        createdAt: state.workspace.createdAt,
+        updatedAt: state.workspace.updatedAt
+      });
+    }
+    // Each item is ~2,014 code points but ~6,100 UTF-8 bytes: six of them
+    // sit far under the 40,000-code-point cap, so only the live byte
+    // ceiling can bound this result.
+
+    const runWith = async (contextWindow: number) => {
+      const store = new MemoryStore(structuredClone(state));
+      const engine = toolModelGateway(
+        "search_history",
+        { query: "persistence" },
+        () => "search done"
+      );
+      const runs = new ConversationRunService(
+        store,
+        new AesCredentialCipher(TEST_KEY),
+        engine,
+        {
+          modelContext: () => ({
+            contextWindow,
+            maxOutputTokens: 4_096,
+            available: true,
+            supportsStructuredOutput: true
+          })
+        }
+      );
+      const started = await runs.startTurn(
+        "30000000-0000-4000-8000-000000000001",
+        { content: "@alice search the archive" }
+      );
+      await runs.processRun(started.run!.id);
+      const events = await runs.listRunEvents(started.run!.id);
+      const details = events.find(
+        (event) => event.type === "tool_completed"
+      )?.payload.details as {
+        returnedItemIds: string[];
+        truncated: boolean;
+      };
+      return details;
+    };
+
+    // A roomy window: the byte ceiling dwarfs the result and every item
+    // comes back in rank order.
+    const wide = await runWith(128_000);
+    expect(wide.returnedItemIds).toEqual(seededIds);
+    expect(wide.truncated).toBe(false);
+
+    // A narrow window: what the request has left covers the first item —
+    // always returned whole — and nothing more. Same corpus, same query,
+    // same Tool: only the live ceiling moved.
+    const narrow = await runWith(8_000);
+    expect(narrow.returnedItemIds).toEqual(seededIds.slice(0, 1));
+    expect(narrow.truncated).toBe(true);
+  });
+
+  it("pins the budget arithmetic the dynamic ceiling relies on", () => {
+    // At the defaults: inputBudget = 32,768 − 4,096 − ceil(32,768 × 0.1)
+    // = 25,395 − toolOverhead.
+    expect(
+      providerTargetCompatibility(undefined, undefined, {
+        inputTokens: 25_395,
+        toolOverheadTokens: 0
+      }).compatible
+    ).toBe(true);
+    expect(
+      providerTargetCompatibility(undefined, undefined, {
+        inputTokens: 25_396,
+        toolOverheadTokens: 0
+      }).compatible
+    ).toBe(false);
+    // A full 40,000-code-point ASCII result is ≈13,334 tokens by this
+    // repo's own estimator (ceil(bytes / 3)) — about 52% of that budget,
+    // not the ≈30% the search_sources cap's justification assumed.
+    const fullResultTokens = Math.ceil(40_000 / 3);
+    expect(fullResultTokens).toBe(13_334);
+    expect(fullResultTokens / 25_395).toBeGreaterThan(0.5);
+    expect(fullResultTokens / 25_395).toBeLessThan(0.55);
+  });
 });
 
 class MemoryStoreFixture extends MemoryStore {

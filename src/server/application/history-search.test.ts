@@ -387,6 +387,47 @@ describe("searchHistory", () => {
     expect(outcome.query).toBe("persistence");
   });
 
+  it("bounds the tail by the live byte ceiling while the first item stays whole", () => {
+    const state = createFixtureState();
+    conversation(state, ELSEWHERE, "Archive");
+    // CJK content: ~1,010 code points but ~3,070 UTF-8 bytes per item, so
+    // the byte ceiling bites long before the code-point cap — the two
+    // ceilings are compared in their own units, never converted.
+    const ids: string[] = [];
+    for (let index = 0; index < 3; index += 1) {
+      const id = `message-cjk-${index}`;
+      ids.push(id);
+      historyMessage(
+        state,
+        id,
+        ELSEWHERE,
+        `persistence 档案${"内容".repeat(499)}`
+      );
+    }
+
+    const unbounded = searchHistory(state, HERE, "persistence");
+    expect(unbounded.returnedItemIds).toEqual(ids);
+    expect(unbounded.truncated).toBe(false);
+
+    const bounded = searchHistory(state, HERE, "persistence", {
+      byteCeiling: 7_000
+    });
+    expect(bounded.returnedItemIds).toEqual(ids.slice(0, 2));
+    expect(bounded.truncated).toBe(true);
+    expect(bounded.content).toContain(
+      "Truncated: 1 further matching history items were not returned; this result reached its size limit."
+    );
+
+    // A ceiling of zero still returns the first item whole — the accepted
+    // #193 residue — and counts the rest.
+    const zero = searchHistory(state, HERE, "persistence", {
+      byteCeiling: 0
+    });
+    expect(zero.returnedItemIds).toEqual(ids.slice(0, 1));
+    expect(zero.truncated).toBe(true);
+    expect(zero.content).toContain(ids[0]);
+  });
+
   it("returns a normal result for an empty query rather than throwing", () => {
     const state = seededState();
     expect(() => searchHistory(state, HERE, "")).not.toThrow();
