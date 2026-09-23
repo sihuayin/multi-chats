@@ -106,10 +106,76 @@ export const DISCUSSION_WITHHELD_TOOL_NAMES: readonly string[] = [
   "search_sources"
 ];
 
+/**
+ * A shipped built-in Skill as pure definition: no id, no Workspace, no
+ * timestamps. Definitions are the code authority a later migration compares
+ * a Workspace's stored rows against (matched on the built-in flag plus
+ * name), so they must stay separable from identity.
+ */
+export type BuiltInSkillDefinition = Pick<
+  Skill,
+  "name" | "description" | "instructions" | "inputs" | "outputs" | "toolNames"
+>;
+
+export const BUILT_IN_SKILLS: BuiltInSkillDefinition[] = [
+  {
+    name: "Researcher",
+    description: "Collects facts from approved sources.",
+    instructions:
+      "Research the requested topic. Use only allowed tools and distinguish verified facts from uncertainty.",
+    inputs: ["question", "task context"],
+    outputs: ["findings", "sources", "uncertainties"],
+    toolNames: ["current_time", "fetch_url"]
+  },
+  {
+    name: "Writer",
+    description: "Turns research and notes into clear prose.",
+    instructions:
+      "Write clearly for the requested audience. Preserve facts and surface assumptions.",
+    inputs: ["brief", "source material"],
+    outputs: ["draft"],
+    toolNames: []
+  },
+  {
+    name: "Reviewer",
+    description: "Checks a draft for gaps and contradictions.",
+    instructions:
+      "Review the supplied work. Prioritize correctness, missing evidence, contradictions, and unclear claims.",
+    inputs: ["draft", "requirements"],
+    outputs: ["review", "blocking issues"],
+    toolNames: []
+  }
+];
+
+/**
+ * Project a stored Skill row back to its definitional fields, so a reader
+ * can compare it against `BUILT_IN_SKILLS` without instantiating anything
+ * or touching a live Workspace.
+ */
+export function builtInSkillDefinitionOf(
+  skill: Skill
+): BuiltInSkillDefinition {
+  return {
+    name: skill.name,
+    description: skill.description,
+    instructions: skill.instructions,
+    inputs: [...skill.inputs],
+    outputs: [...skill.outputs],
+    toolNames: [...skill.toolNames]
+  };
+}
+
+/**
+ * Installation, and the only place a built-in Skill identity is minted:
+ * a fresh id per Workspace plus timestamps, neither of which the
+ * definitions carry. Minting is correct ONLY when creating a Workspace;
+ * refreshing a stored built-in must preserve its id, because Employees
+ * reference Skills by id — reconcile definitional fields in place instead.
+ */
 function makeBuiltinSkill(
   workspaceId: string,
   now: IsoDate,
-  input: Pick<Skill, "name" | "description" | "instructions" | "inputs" | "outputs" | "toolNames">
+  definition: BuiltInSkillDefinition
 ): Skill {
   return {
     id: crypto.randomUUID(),
@@ -117,7 +183,7 @@ function makeBuiltinSkill(
     builtIn: true,
     createdAt: now,
     updatedAt: now,
-    ...input
+    ...structuredClone(definition)
   };
 }
 
@@ -135,35 +201,9 @@ export function createInitialState(workspaceId = crypto.randomUUID()): AppState 
     workspace,
     providers: [],
     employees: [],
-    skills: [
-      makeBuiltinSkill(workspace.id, now, {
-        name: "Researcher",
-        description: "Collects facts from approved sources.",
-        instructions:
-          "Research the requested topic. Use only allowed tools and distinguish verified facts from uncertainty.",
-        inputs: ["question", "task context"],
-        outputs: ["findings", "sources", "uncertainties"],
-        toolNames: ["current_time", "fetch_url"]
-      }),
-      makeBuiltinSkill(workspace.id, now, {
-        name: "Writer",
-        description: "Turns research and notes into clear prose.",
-        instructions:
-          "Write clearly for the requested audience. Preserve facts and surface assumptions.",
-        inputs: ["brief", "source material"],
-        outputs: ["draft"],
-        toolNames: []
-      }),
-      makeBuiltinSkill(workspace.id, now, {
-        name: "Reviewer",
-        description: "Checks a draft for gaps and contradictions.",
-        instructions:
-          "Review the supplied work. Prioritize correctness, missing evidence, contradictions, and unclear claims.",
-        inputs: ["draft", "requirements"],
-        outputs: ["review", "blocking issues"],
-        toolNames: []
-      })
-    ],
+    skills: BUILT_IN_SKILLS.map((definition) =>
+      makeBuiltinSkill(workspace.id, now, definition)
+    ),
     tools: seedBuiltInTools(workspace.id, now),
     groups: [],
     conversations: [],
