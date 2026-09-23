@@ -3833,6 +3833,15 @@ export class ConversationRunService {
         // truncate it, and covers the whole round trip, approval wait
         // included.
         durationMs,
+        // resultBytes is the raw measurement of what the call put into the
+        // request, in the unit the context budget consumes — bytes, not
+        // code points (unconvertible without an encoding assumption) and
+        // not tokens (a derived number any ledger reader can compute).
+        // Sibling of details for the same reason, recorded on success and
+        // failure alike: the ledger never shows a call whose size is
+        // unknown. A payload key, not a migration — runEvents carry no
+        // schema validation.
+        resultBytes: Buffer.byteLength(result.content, "utf8"),
         ...(result.details !== undefined
           ? { details: guardedToolDetails(result.details) }
           : {})

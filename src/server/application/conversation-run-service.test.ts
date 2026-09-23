@@ -3495,6 +3495,13 @@ describe("ConversationRun", () => {
     expect(completion?.details).toMatchObject({ approvalId: approval!.id });
     expect(typeof completion?.durationMs).toBe("number");
     expect(completion?.durationMs).toBeGreaterThanOrEqual(0);
+    // Recorded on failure alike: the ledger never shows a call whose size
+    // is unknown.
+    expect(completion?.resultBytes).toBe(
+      Buffer.byteLength("The user rejected this Tool call.", "utf8")
+    );
+    const errorEvent = events.find((event) => event.type === "tool_error");
+    expect(errorEvent?.payload.resultBytes).toBe(completion?.resultBytes);
   });
 
   it("writes exactly one tool_completed per Tool call and ignores gateway completion events", async () => {
@@ -3524,6 +3531,37 @@ describe("ConversationRun", () => {
       toolCallId: "test-tool-call",
       isError: false
     });
+    // current_time answers with an ISO timestamp: 24 ASCII bytes.
+    expect(payload.resultBytes).toBe(24);
+  });
+
+  it("records resultBytes as UTF-8 bytes, not code units, for a multi-byte result", async () => {
+    const store = new MemoryStoreFixture();
+    const content = "文件内容检索"; // 6 code points, 18 UTF-8 bytes
+    const toolGateway: ToolGateway = {
+      async execute() {
+        return { content };
+      }
+    };
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      toolModelGateway("current_time", {}, () => "done"),
+      { toolGateway }
+    );
+    const started = await runs.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice use the current time Tool" }
+    );
+    await runs.processRun(started.run!.id);
+
+    const events = await runs.listRunEvents(started.run!.id);
+    const payload = events.find(
+      (event) => event.type === "tool_completed"
+    )?.payload;
+    expect(payload?.resultBytes).toBe(Buffer.byteLength(content, "utf8"));
+    expect(payload?.resultBytes).toBe(18);
+    expect(payload?.resultBytes).not.toBe(content.length);
   });
 
   it("stores Tool details verbatim on the completion event", async () => {
