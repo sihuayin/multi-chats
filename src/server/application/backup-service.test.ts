@@ -380,6 +380,41 @@ describe("Workspace backup and restore", () => {
     ).toContain("search_sources");
   });
 
+  it("restores a backup taken before the history-search upgrade", () => {
+    const legacy = createFixtureState() as unknown as Record<string, unknown>;
+    legacy.schemaVersion = 8;
+    const tools = legacy.tools as Array<Record<string, unknown>>;
+    const historyIndex = tools.findIndex(
+      (tool) => tool.name === "search_history"
+    );
+    if (historyIndex >= 0) tools.splice(historyIndex, 1);
+    const skills = legacy.skills as Array<Record<string, unknown>>;
+    const researcher = skills.find((skill) => skill.name === "Researcher")!;
+    researcher.toolNames = ["current_time", "fetch_url", "search_sources"];
+    for (const value of legacy.conversations as Array<
+      Record<string, unknown>
+    >) {
+      delete value.retrievalExcluded;
+    }
+
+    const restored = parseWorkspaceBackup(JSON.stringify(legacy));
+
+    expect(restored.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    expect(
+      restored.tools.some(
+        (tool) => tool.name === "search_history" && tool.builtIn
+      )
+    ).toBe(true);
+    expect(
+      restored.skills.find((skill) => skill.name === "Researcher")?.toolNames
+    ).toContain("search_history");
+    expect(
+      restored.conversations.every(
+        (conversation) => conversation.retrievalExcluded === false
+      )
+    ).toBe(true);
+  });
+
   it("restores a backup whose Conversations predate the retrieval opt-out", () => {
     const legacy = createFixtureState() as unknown as Record<string, unknown>;
     for (const conversation of legacy.conversations as Record<

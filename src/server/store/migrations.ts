@@ -10,7 +10,7 @@ import {
   validateDiscussionReferences
 } from "@/server/application/discussion-domain";
 
-export const CURRENT_SCHEMA_VERSION = 8;
+export const CURRENT_SCHEMA_VERSION = 9;
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -107,7 +107,7 @@ function migrateV4ToV5(state: Record<string, unknown>): void {
     const discussion = record(value);
     discussion.sourceIds ??= [];
   }
-  state.schemaVersion = CURRENT_SCHEMA_VERSION;
+  state.schemaVersion = 5;
 }
 
 function validateCurrentState(state: Record<string, unknown>): void {
@@ -329,6 +329,64 @@ function migrateV7ToV8(state: Record<string, unknown>): void {
   state.schemaVersion = 8;
 }
 
+/**
+ * The narrow path, on the rule #200 settled: a bump that only ADDS built-ins
+ * seeds; only a bump that changes an existing built-in's definition earns a
+ * realignment — that was v7→v8, one bump earlier, and it is why this one may
+ * stay narrow. Exactly three things happen here: the retrieval opt-out is
+ * backfilled, the built-in Tools are seeded idempotently against the
+ * existing-id set (which in practice adds `search_history`), and the name is
+ * appended to the built-in Researcher's `toolNames` — membership-checked,
+ * never blind-pushed. Every other built-in row is left exactly as the
+ * Workspace has it, drifted or not; refreshing rows is the realignment
+ * bump's job, not this one's.
+ */
+function migrateV8ToV9(state: Record<string, unknown>): void {
+  if (!Array.isArray(state.tools)) {
+    throw new Error("Workspace Tools are invalid");
+  }
+  if (!Array.isArray(state.skills)) {
+    throw new Error("Workspace Skills are invalid");
+  }
+  if (!Array.isArray(state.conversations)) {
+    throw new Error("Workspace Conversations are invalid");
+  }
+
+  for (const value of state.conversations) {
+    record(value).retrievalExcluded ??= false;
+  }
+
+  const workspace = record(state.workspace);
+  const workspaceId = typeof workspace.id === "string" ? workspace.id : "";
+  const timestamp =
+    typeof workspace.updatedAt === "string" && workspace.updatedAt
+      ? workspace.updatedAt
+      : typeof workspace.createdAt === "string" && workspace.createdAt
+        ? workspace.createdAt
+        : new Date().toISOString();
+
+  const seeded = new Set(
+    state.tools.map((item) => record(item).id)
+  );
+  for (const tool of seedBuiltInTools(workspaceId, timestamp)) {
+    if (!seeded.has(tool.id)) state.tools.push(tool);
+  }
+
+  for (const value of state.skills) {
+    const skill = record(value);
+    if (
+      skill.builtIn === true &&
+      skill.name === "Researcher" &&
+      Array.isArray(skill.toolNames) &&
+      !skill.toolNames.includes("search_history")
+    ) {
+      skill.toolNames.push("search_history");
+    }
+  }
+
+  state.schemaVersion = 9;
+}
+
 export function migrateAppState(input: unknown): AppState {
   const state = structuredClone(record(input));
   const version = state.schemaVersion;
@@ -341,6 +399,7 @@ export function migrateAppState(input: unknown): AppState {
   if (state.schemaVersion === 5) migrateV5ToV6(state);
   if (state.schemaVersion === 6) migrateV6ToV7(state);
   if (state.schemaVersion === 7) migrateV7ToV8(state);
+  if (state.schemaVersion === 8) migrateV8ToV9(state);
   if (version !== CURRENT_SCHEMA_VERSION) {
     if (state.schemaVersion !== CURRENT_SCHEMA_VERSION) {
       throw new Error(
