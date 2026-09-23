@@ -129,11 +129,16 @@ export const BUILT_IN_TOOLS: ToolDefinition[] = [
 ];
 
 /**
- * Tools withheld from Discussion Turns by name, regardless of requiresApproval.
+ * Tools withheld from Discussion Turns by name, regardless of
+ * requiresApproval — the one named place a Tool goes when it must stay out
+ * of Discussions, and the precedent for the next Tool with the same problem.
  *
- * `search_sources`: the Chunks it returns are not in `discussion.sourceIds`, so
- * its citations would fail the Turn's evidence catalog (ADR-0002). The Tool
- * itself does not ship yet (#164); this guard lands first, defensively (#186).
+ * `search_sources` (#181): a Discussion's evidence is what the user attached
+ * to it, and that is a control point. The Chunks this Tool returns are
+ * workspace-wide retrieval, not in `discussion.sourceIds`, so its citations
+ * would fail the Turn's evidence catalog (ADR-0002). Withheld Tools are
+ * silently absent from the Turn — the same precedent as silently dropping
+ * inactive Tools — and the Conversation path keeps offering them.
  */
 export const DISCUSSION_WITHHELD_TOOL_NAMES: readonly string[] = [
   "search_sources"

@@ -4422,6 +4422,63 @@ describe("ConversationRun", () => {
     );
   });
 
+  it("never offers search_sources to a Discussion Turn even though the built-in Researcher allows it", async () => {
+    const state = createFixtureState();
+    const { discussion, round } = addFixturePhase(state);
+    // The real built-in wiring: the shipped Researcher Skill allows the Tool
+    // (Alice holds it), and the registry carries the built-in row.
+    const researcher = state.skills.find(
+      (skill) => skill.name === "Researcher"
+    );
+    expect(researcher?.toolNames).toContain("search_sources");
+    expect(
+      state.tools.some(
+        (tool) => tool.name === "search_sources" && tool.builtIn
+      )
+    ).toBe(true);
+
+    const store = new MemoryStore(state);
+    const expectedResponse = JSON.stringify(
+      createFixtureTurnPayload("cross_response", "response")
+    );
+    const engine = new RecordingModelGateway(() => [expectedResponse]);
+    const runs = new ConversationRunService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      engine
+    );
+
+    const started = await runs.startPhaseRun(
+      "30000000-0000-4000-8000-000000000001",
+      {
+        discussionId: discussion.id,
+        roundId: round.id,
+        participantSnapshot: round.participantSnapshot,
+        context: "Alice established the initial position.",
+        purpose: "Challenge the assumptions from the earlier phase."
+      }
+    );
+    await runs.processRun(started.run.id);
+
+    // The Discussion Turn behaves exactly as it did before the Tool existed:
+    // the withheld Tool is silently absent, leaving the two it always had.
+    expect(engine.requests[0].tools.map((tool) => tool.name)).toEqual([
+      "current_time",
+      "fetch_url"
+    ]);
+
+    // The Conversation Run for the same Employee receives it exactly once.
+    const phaseRequestCount = engine.requests.length;
+    const conversationTurn = await runs.startTurn(
+      "30000000-0000-4000-8000-000000000001",
+      { content: "@alice inspect the Tools" }
+    );
+    await runs.processRun(conversationTurn.run!.id);
+    expect(
+      engine.requests[phaseRequestCount].tools.map((tool) => tool.name)
+    ).toEqual(["current_time", "fetch_url", "search_sources"]);
+  });
+
   it("withholds search_sources by name in Discussion Turns only", async () => {
     const state = createFixtureState();
     const { discussion, round } = addFixturePhase(state);
