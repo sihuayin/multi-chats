@@ -581,3 +581,232 @@ describe("AppState migrations", () => {
     );
   });
 });
+
+describe("v7 to v8 built-in realignment", () => {
+  function legacyV7State(): Record<string, unknown> {
+    const state = structuredClone(
+      createFixtureState()
+    ) as unknown as Record<string, unknown>;
+    state.schemaVersion = 7;
+    const tools = state.tools as Array<Record<string, unknown>>;
+    // The pre-upgrade world: no search_sources, and built-in definitions
+    // drifted from what the code ships.
+    const searchIndex = tools.findIndex(
+      (tool) => tool.name === "search_sources"
+    );
+    if (searchIndex >= 0) tools.splice(searchIndex, 1);
+    const fetchUrl = tools.find((tool) => tool.name === "fetch_url")!;
+    fetchUrl.description = "An old description from a previous app version.";
+    const skills = state.skills as Array<Record<string, unknown>>;
+    const researcher = skills.find((skill) => skill.name === "Researcher")!;
+    researcher.toolNames = ["current_time", "fetch_url"];
+    researcher.instructions = "Outdated instructions.";
+    return state;
+  }
+
+  function customToolRow(workspaceId: string): Record<string, unknown> {
+    return {
+      id: "tool-custom",
+      workspaceId,
+      name: "custom_lookup",
+      label: "Custom Lookup",
+      description: "An operator-registered Tool.",
+      risk: "read",
+      requiresApproval: false,
+      replay: "safe",
+      inputSchema: { type: "object", properties: {} },
+      builtIn: false,
+      active: true,
+      request: { method: "GET", urlTemplate: "https://example.com/lookup" },
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    };
+  }
+
+  it("makes a migrated Workspace produce the built-in rows a fresh one gets", () => {
+    const migrated = migrateAppState(legacyV7State());
+    const fresh = createInitialState(migrated.workspace.id);
+
+    // Tools carry deterministic ids, so identity minus Workspace and
+    // timestamps is part of the comparison; Skills keep minted ids and
+    // their own timestamps, so only definitional fields compare.
+    const projectTool = (tool: (typeof migrated.tools)[number]) => ({
+      id: tool.id,
+      name: tool.name,
+      label: tool.label,
+      description: tool.description,
+      risk: tool.risk,
+      requiresApproval: tool.requiresApproval,
+      replay: tool.replay,
+      inputSchema: tool.inputSchema,
+      builtIn: tool.builtIn,
+      active: tool.active
+    });
+    const projectSkill = (skill: (typeof migrated.skills)[number]) => ({
+      name: skill.name,
+      description: skill.description,
+      instructions: skill.instructions,
+      inputs: skill.inputs,
+      outputs: skill.outputs,
+      toolNames: skill.toolNames,
+      builtIn: skill.builtIn
+    });
+    const byName = (
+      left: { name: string },
+      right: { name: string }
+    ): number => left.name.localeCompare(right.name);
+
+    expect(
+      migrated.tools
+        .filter((tool) => tool.builtIn)
+        .map(projectTool)
+        .sort(byName)
+    ).toEqual(
+      fresh.tools
+        .filter((tool) => tool.builtIn)
+        .map(projectTool)
+        .sort(byName)
+    );
+    expect(
+      migrated.skills
+        .filter((skill) => skill.builtIn)
+        .map(projectSkill)
+        .sort(byName)
+    ).toEqual(
+      fresh.skills
+        .filter((skill) => skill.builtIn)
+        .map(projectSkill)
+        .sort(byName)
+    );
+    expect(migrated.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    // The upgrade gave the Workspace the Tool and the same Researcher.
+    expect(
+      migrated.tools.some(
+        (tool) => tool.name === "search_sources" && tool.builtIn
+      )
+    ).toBe(true);
+    expect(
+      migrated.skills.find((skill) => skill.name === "Researcher")?.toolNames
+    ).toContain("search_sources");
+  });
+
+  it("leaves custom Skills, tombstoned Sources, history, and custom Tools unchanged apart from built-in rows", () => {
+    const legacy = legacyV7State();
+    const workspaceId = (legacy.workspace as Record<string, unknown>)
+      .id as string;
+    (legacy.tools as Array<Record<string, unknown>>).push(
+      customToolRow(workspaceId)
+    );
+    (legacy.skills as Array<Record<string, unknown>>).push({
+      id: "skill-custom",
+      workspaceId,
+      name: "Custom Skill",
+      description: "Operator-authored.",
+      instructions: "Do the custom thing. [external:whatever]",
+      inputs: ["thing"],
+      outputs: ["done"],
+      toolNames: ["custom_lookup"],
+      builtIn: false,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    (legacy.sources as Array<Record<string, unknown>>).push({
+      id: "source-tombstoned",
+      workspaceId,
+      title: "Deleted doc",
+      kind: "file",
+      location: "old.md",
+      status: "ready",
+      chunkCount: 1,
+      deletedAt: "2026-02-01T00:00:00.000Z",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-02-01T00:00:00.000Z"
+    });
+    const before = structuredClone(legacy);
+
+    const migrated = migrateAppState(
+      legacy
+    ) as unknown as Record<string, unknown>;
+
+    for (const key of Object.keys(before)) {
+      if (["tools", "skills", "schemaVersion"].includes(key)) continue;
+      expect(migrated[key], key).toEqual(before[key]);
+    }
+    const customToolsBefore = (before.tools as Array<Record<string, unknown>>)
+      .filter((tool) => tool.builtIn !== true);
+    const customToolsAfter = (migrated.tools as Array<Record<string, unknown>>)
+      .filter((tool) => tool.builtIn !== true);
+    expect(customToolsAfter).toEqual(customToolsBefore);
+    const customSkillsBefore = (before.skills as Array<Record<string, unknown>>)
+      .filter((skill) => skill.builtIn !== true);
+    const customSkillsAfter = (migrated.skills as Array<Record<string, unknown>>)
+      .filter((skill) => skill.builtIn !== true);
+    expect(customSkillsAfter).toEqual(customSkillsBefore);
+    // The rewrite never minted a new id for an existing built-in row.
+    const researcherBefore = (before.skills as Array<Record<string, unknown>>)
+      .find((skill) => skill.name === "Researcher")!;
+    const researcherAfter = (migrated.skills as Array<Record<string, unknown>>)
+      .find((skill) => skill.name === "Researcher")!;
+    expect(researcherAfter.id).toBe(researcherBefore.id);
+    expect(researcherAfter.createdAt).toBe(researcherBefore.createdAt);
+  });
+
+  it("leaves a built-in the code no longer ships in place, and the Workspace still loads", () => {
+    const legacy = legacyV7State();
+    const workspaceId = (legacy.workspace as Record<string, unknown>)
+      .id as string;
+    const retiredTool: Record<string, unknown> = {
+      id: "builtin:legacy_tool",
+      workspaceId,
+      name: "legacy_tool",
+      label: "Legacy Tool",
+      description: "Shipped by an older version.",
+      risk: "read",
+      requiresApproval: false,
+      replay: "safe",
+      inputSchema: { type: "object", properties: {} },
+      builtIn: true,
+      active: true,
+      createdAt: "2025-01-01T00:00:00.000Z",
+      updatedAt: "2025-01-01T00:00:00.000Z"
+    };
+    const retiredSkill = {
+      id: "skill-legacy",
+      workspaceId,
+      name: "Legacy Skill",
+      description: "Shipped by an older version.",
+      instructions: "Legacy behaviour.",
+      inputs: ["x"],
+      outputs: ["y"],
+      toolNames: ["legacy_tool"],
+      builtIn: true,
+      createdAt: "2025-01-01T00:00:00.000Z",
+      updatedAt: "2025-01-01T00:00:00.000Z"
+    };
+    (legacy.tools as Array<Record<string, unknown>>).push(retiredTool);
+    (legacy.skills as Array<Record<string, unknown>>).push(retiredSkill);
+
+    const migrated = migrateAppState(
+      legacy
+    ) as unknown as Record<string, unknown>;
+
+    const toolAfter = (migrated.tools as Array<Record<string, unknown>>).find(
+      (tool) => tool.name === "legacy_tool"
+    );
+    expect(toolAfter).toEqual(retiredTool);
+    const skillAfter = (migrated.skills as Array<Record<string, unknown>>).find(
+      (skill) => skill.name === "Legacy Skill"
+    );
+    expect(skillAfter).toEqual(retiredSkill);
+  });
+
+  it("is idempotent and seeds each built-in exactly once", () => {
+    const once = migrateAppState(legacyV7State());
+    const twice = migrateAppState(structuredClone(once));
+    expect(twice).toEqual(once);
+    const names = twice.tools
+      .filter((tool) => tool.builtIn)
+      .map((tool) => tool.name);
+    expect(new Set(names).size).toBe(names.length);
+  });
+});
