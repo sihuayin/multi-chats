@@ -97,6 +97,21 @@ export type DiagnosticsDiscussion = {
   currency?: string;
 };
 
+/**
+ * Two numbers and nothing else: the size of the searchable corpus and what
+ * recent searches cost in time. Deliberately no recall or quality figure —
+ * that needs an evaluation, not a page — and no alerts: nobody receives
+ * alerts from this view.
+ */
+export type DiagnosticsRetrieval = {
+  /** Chunks a search would consider: current chunks of ready, non-deleted Sources. */
+  searchableChunkCount: number;
+  /** search_sources completions in the whole ledger. */
+  recentSearchCount: number;
+  /** Duration of the most recent searches, newest first, capped. */
+  recentSearchDurationsMs: number[];
+};
+
 export type DiagnosticsView = {
   generatedAt: string;
   worker: {
@@ -124,4 +139,5 @@ export type DiagnosticsView = {
     fallbackAttempts: number;
   };
   failures: DiagnosticsFailure[];
+  retrieval: DiagnosticsRetrieval;
 };

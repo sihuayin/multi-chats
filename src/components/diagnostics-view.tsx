@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   CircleStop,
   Clock3,
+  Database,
   LoaderCircle,
   RotateCcw,
   RefreshCw,
@@ -55,6 +56,19 @@ function failureKey(kind: DiagnosticsFailureKind): TranslationKey {
 function formatTime(value: string | undefined): string {
   if (!value) return "—";
   return new Date(value).toLocaleTimeString();
+}
+
+function median(values: number[]): number | undefined {
+  if (values.length === 0) return undefined;
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[middle - 1] + sorted[middle]) / 2
+    : sorted[middle];
+}
+
+function formatDurationMs(value: number | undefined): string {
+  return value === undefined ? "—" : `${Math.round(value)} ms`;
 }
 
 function formatTokens(value: number): string {
@@ -480,6 +494,43 @@ export function DiagnosticsWorkspace() {
                 <div>
                   <dt>{t("diagnostics.unknownPricing")}</dt>
                   <dd>{view.usage.unknownPricingAttempts}</dd>
+                </div>
+              </dl>
+            </section>
+
+            <section className="panel diagnostics-panel">
+              <div className="panel-title">
+                <Database size={17} />
+                <h2>{t("diagnostics.retrieval")}</h2>
+              </div>
+              <dl className="diagnostics-usage">
+                <div>
+                  <dt>{t("diagnostics.searchableChunks")}</dt>
+                  <dd data-testid="searchable-chunk-count">
+                    {view.retrieval.searchableChunkCount}
+                  </dd>
+                </div>
+                <div>
+                  <dt>{t("diagnostics.recentSearches")}</dt>
+                  <dd>{view.retrieval.recentSearchCount}</dd>
+                </div>
+                <div>
+                  <dt>{t("diagnostics.searchDurationMedian")}</dt>
+                  <dd data-testid="search-duration-median">
+                    {formatDurationMs(
+                      median(view.retrieval.recentSearchDurationsMs)
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt>{t("diagnostics.searchDurationMax")}</dt>
+                  <dd>
+                    {formatDurationMs(
+                      view.retrieval.recentSearchDurationsMs.length > 0
+                        ? Math.max(...view.retrieval.recentSearchDurationsMs)
+                        : undefined
+                    )}
+                  </dd>
                 </div>
               </dl>
             </section>
