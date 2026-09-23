@@ -49,9 +49,60 @@ export function evidenceReferenceId(alias: string): string {
     .slice(0, 32)}`;
 }
 
-function resolveEvidence(
+export type EvidenceScopeTurn = {
+  id: string;
+  content?: string;
+  payload?: DiscussionTurnPayload;
+};
+
+/**
+ * What may be cited, independent of which surface is citing. Callers build
+ * the scope; the resolver judges aliases against it and against nothing
+ * else — which chunks count as citable is data here, not a branch inside
+ * the resolver.
+ */
+export type EvidenceScope = {
+  conversationId: string;
+  /** Owning entity id — the Discussion id on today's only surface. */
+  ownerId: string;
+  /** Every turn citable as `turn:<id>`. */
+  turns: readonly EvidenceScopeTurn[];
+  /** Run ids whose `tool_completed` events are citable as `tool_result:<eventId>`. */
+  runIds: readonly string[];
+  /**
+   * Source ids whose chunks (and the Sources themselves) are citable as
+   * `external:<id>`. Raw attachment data, deliberately NOT filtered by
+   * ready/superseded/tombstone state: a confirmed citation must stay
+   * resolvable after its Source is refreshed or deleted (see the
+   * evidence-invariance test in source-service.test.ts). The evidence
+   * catalog (`availableEvidence`) legitimately filters by readiness —
+   * offering and citability are different questions; do not unify them.
+   */
+  citableSourceIds: ReadonlySet<string>;
+};
+
+function discussionEvidenceScope(
   state: AppState,
-  discussion: Discussion,
+  discussion: Discussion
+): EvidenceScope {
+  return {
+    conversationId: discussion.conversationId,
+    ownerId: discussion.id,
+    turns: discussion.rounds.flatMap((round) => round.turns),
+    runIds: state.runs
+      .filter((run) => run.discussionId === discussion.id)
+      .map((run) => run.id),
+    citableSourceIds: new Set(discussion.sourceIds)
+  };
+}
+
+/**
+ * Judge one evidence alias against a caller-supplied scope. Every alias
+ * kind is judged here exactly once; surfaces never re-implement a branch.
+ */
+export function resolveEvidence(
+  state: AppState,
+  scope: EvidenceScope,
   alias: string,
   now: string
 ): { reference: EvidenceReference; label: string } {
@@ -84,8 +135,8 @@ function resolveEvidence(
     const message = state.messages.find((item) => item.id === sourceId);
     if (
       !message ||
-      message.conversationId !== discussion.conversationId ||
-      message.discussionId !== discussion.id
+      message.conversationId !== scope.conversationId ||
+      message.discussionId !== scope.ownerId
     ) {
       throw new DiscussionEvidenceError(
         `Evidence reference ${alias} is outside the Discussion`,
@@ -94,9 +145,7 @@ function resolveEvidence(
     }
     label = message.content.slice(0, 160);
   } else if (prefix === "turn") {
-    const turn = discussion.rounds
-      .flatMap((round) => round.turns)
-      .find((item) => item.id === sourceId);
+    const turn = scope.turns.find((item) => item.id === sourceId);
     if (!turn) {
       throw new DiscussionEvidenceError(
         `Evidence reference ${alias} is outside the Discussion`,
@@ -106,7 +155,7 @@ function resolveEvidence(
     label = turn.payload?.summary ?? turn.content?.slice(0, 160) ?? sourceId;
   } else if (prefix === "task") {
     const task = state.tasks.find((item) => item.id === sourceId);
-    if (!task || task.conversationId !== discussion.conversationId) {
+    if (!task || task.conversationId !== scope.conversationId) {
       throw new DiscussionEvidenceError(
         `Evidence reference ${alias} is outside the Discussion`,
         { evidenceId: alias, reason: "out_of_scope" }
@@ -117,14 +166,14 @@ function resolveEvidence(
     const artifact = state.artifacts.find((item) => item.id === sourceId);
     const relatedTaskIds = new Set(
       state.tasks
-        .filter((task) => task.conversationId === discussion.conversationId)
+        .filter((task) => task.conversationId === scope.conversationId)
         .map((task) => task.id)
     );
     if (
       !artifact ||
       !(
         (artifact.ownerType === "discussion" &&
-          artifact.ownerId === discussion.id) ||
+          artifact.ownerId === scope.ownerId) ||
         (artifact.ownerType === "task" &&
           relatedTaskIds.has(artifact.ownerId))
       )
@@ -139,10 +188,7 @@ function resolveEvidence(
     const event = state.runEvents.find(
       (item) => item.id === sourceId && item.type === "tool_completed"
     );
-    const run = event
-      ? state.runs.find((item) => item.id === event.runId)
-      : undefined;
-    if (!event || run?.discussionId !== discussion.id) {
+    if (!event || !scope.runIds.includes(event.runId)) {
       throw new DiscussionEvidenceError(
         `Evidence reference ${alias} is outside the Discussion`,
         { evidenceId: alias, reason: "out_of_scope" }
@@ -155,12 +201,17 @@ function resolveEvidence(
       label = sourceId;
       locator = sourceId;
     } else {
+      // Ignoring `chunk.superseded` and `source.deletedAt` here is
+      // deliberate: resolvability outlives citability so confirmed Briefs
+      // keep resolving after a Source refresh or tombstone, and the delete
+      // path depends on it. Citability of NEW claims is the scope's job
+      // (citableSourceIds), supplied by the caller.
       const chunk = state.chunks.find((item) => item.id === sourceId);
       if (chunk) {
         const source = state.sources.find(
           (item) => item.id === chunk.sourceId
         );
-        if (!source || !discussion.sourceIds.includes(source.id)) {
+        if (!source || !scope.citableSourceIds.has(source.id)) {
           throw new DiscussionEvidenceError(
             `Evidence reference ${alias} is outside the Discussion`,
             { evidenceId: alias, reason: "out_of_scope" }
@@ -171,7 +222,7 @@ function resolveEvidence(
         excerptHash = chunk.contentHash;
       } else {
         const source = state.sources.find((item) => item.id === sourceId);
-        if (!source || !discussion.sourceIds.includes(source.id)) {
+        if (!source || !scope.citableSourceIds.has(source.id)) {
           throw new DiscussionEvidenceError(
             `Evidence reference ${alias} is outside the Discussion`,
             { evidenceId: alias, reason: "out_of_scope" }
@@ -334,6 +385,7 @@ export function validateDiscussionTurnEvidence(
     claimsWithEvidence: number;
   };
 } {
+  const scope = discussionEvidenceScope(state, discussion);
   const references = new Map<string, EvidenceReference>();
   const claims = payload.claims.map((claim) => {
     const kind = claim.kind ?? "inference";
@@ -350,7 +402,7 @@ export function validateDiscussionTurnEvidence(
     for (const alias of evidenceIds) {
       const resolved = resolveEvidence(
         state,
-        discussion,
+        scope,
         alias,
         now
       );
@@ -389,6 +441,7 @@ export function repairDiscussionTurnEvidence(
   downgradedClaims: number;
   removedEvidenceIds: number;
 } {
+  const scope = discussionEvidenceScope(state, discussion);
   const references = new Map<string, EvidenceReference>();
   let downgradedClaims = 0;
   let removedEvidenceIds = 0;
@@ -397,7 +450,7 @@ export function repairDiscussionTurnEvidence(
     const validIds: string[] = [];
     for (const alias of originalIds) {
       try {
-        const resolved = resolveEvidence(state, discussion, alias, now);
+        const resolved = resolveEvidence(state, scope, alias, now);
         references.set(resolved.reference.id, resolved.reference);
         validIds.push(alias);
       } catch {
@@ -439,6 +492,7 @@ export function repairDiscussionBriefEvidence(
   removedFacts: number;
   restoredFacts: number;
 } {
+  const scope = discussionEvidenceScope(state, discussion);
   const references = new Map<string, EvidenceReference>();
   const originalFactCount = brief.facts.length;
   const facts = brief.facts.flatMap((fact) => {
@@ -456,7 +510,7 @@ export function repairDiscussionBriefEvidence(
           );
           if (!supported) throw new Error("Unsupported Brief fact");
         }
-        const resolved = resolveEvidence(state, discussion, alias, now);
+        const resolved = resolveEvidence(state, scope, alias, now);
         references.set(resolved.reference.id, resolved.reference);
         evidenceIds.push(alias);
       } catch {
@@ -517,6 +571,7 @@ export function validateDiscussionBriefEvidence(
   now = new Date().toISOString(),
   options: { requirePositionGrounding?: boolean } = {}
 ): EvidenceReference[] {
+  const scope = discussionEvidenceScope(state, discussion);
   const references = new Map<string, EvidenceReference>();
   for (const fact of brief.facts) {
     if (
@@ -569,7 +624,7 @@ export function validateDiscussionBriefEvidence(
       }
       const resolved = resolveEvidence(
         state,
-        discussion,
+        scope,
         alias,
         now
       );
@@ -605,6 +660,7 @@ export function resolveBriefFactEvidence(
   brief: { facts: Array<{ statement: string; evidenceIds: string[] }> },
   now = new Date().toISOString()
 ): ResolvedBriefFactEvidence[] {
+  const scope = discussionEvidenceScope(state, discussion);
   return brief.facts.map((fact) => {
     const resolved: ResolvedBriefFactEvidence["resolved"] = [];
     const unresolvedIds: string[] = [];
@@ -612,7 +668,7 @@ export function resolveBriefFactEvidence(
       try {
         const { reference, label } = resolveEvidence(
           state,
-          discussion,
+          scope,
           alias,
           now
         );
