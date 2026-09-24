@@ -313,6 +313,11 @@ async function handleApiRoute(
       if (request.method === "GET" && id && child === "models") {
         return json(await workspace.listProviderModels(id));
       }
+      // A POST, not a GET: the test spends tokens against the Provider and
+      // records the outcome on the credential.
+      if (request.method === "POST" && id && child === "test") {
+        return json(await workspace.testProviderConnection(id));
+      }
   }
 
   if (resource === "employees") {

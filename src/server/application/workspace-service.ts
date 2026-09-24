@@ -37,7 +37,11 @@ import {
   createTaskArtifact,
   updateTaskArtifact
 } from "@/server/application/artifact-ledger";
-import type { PublicTool, WorkspaceView } from "@/lib/workspace-view";
+import type {
+  ProviderConnectionTest,
+  PublicTool,
+  WorkspaceView
+} from "@/lib/workspace-view";
 import type { CredentialCipher } from "@/server/security/credential-cipher";
 import { publicSource } from "@/server/application/source-service";
 import type { StateStore } from "@/server/store/store";
@@ -46,6 +50,27 @@ export type PublicProvider = WorkspaceView["providers"][number];
 
 function now(): string {
   return new Date().toISOString();
+}
+
+/**
+ * How long an on-demand connection test waits for the Provider. The adapters
+ * hand the request to an SDK that defaults to ten minutes, so an unreachable
+ * Provider — the case the test exists to catch — would otherwise leave the
+ * caller waiting far past the point of being useful.
+ *
+ * Thirty seconds, not the fifteen this started at: a healthy one-token
+ * completion against a real Provider measured 10.4s through an ordinary
+ * network, and a bound that close to the observed latency would report a
+ * working Provider as a timeout.
+ */
+const PROVIDER_CONNECTION_TEST_TIMEOUT_MS = 30_000;
+
+/** The message a failed connection test reports, in the caller's own terms. */
+function connectionFailureMessage(error: unknown): string {
+  if (error instanceof Error && error.name === "TimeoutError") {
+    return `The Provider did not respond within ${PROVIDER_CONNECTION_TEST_TIMEOUT_MS}ms`;
+  }
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**
@@ -235,6 +260,62 @@ export class WorkspaceService {
         credential: this.cipher.decrypt(provider.encryptedCredential)
       });
     });
+  }
+
+  /**
+   * Runs the same validation `createProvider` runs, on demand, and answers with
+   * what it cost in wall-clock time.
+   *
+   * A success is recorded as `lastValidatedAt`: a Provider that answered is
+   * exactly what that column claims to record. A failure leaves the column
+   * alone rather than overwriting a real validation with the time of an attempt
+   * that proved nothing.
+   */
+  async testProviderConnection(id: string): Promise<ProviderConnectionTest> {
+    const provider = await this.store.read((state) =>
+      state.providers.find((item) => item.id === id)
+    );
+    if (!provider) notFound("Provider");
+    const startedAt = Date.now();
+    let credential: string;
+    try {
+      credential = this.cipher.decrypt(provider.encryptedCredential);
+    } catch {
+      // The cipher authenticates, so this is not a wrong-key-yields-garbage
+      // case: the stored credential was sealed by a different
+      // APP_ENCRYPTION_KEY than the one this process holds. Reporting the
+      // cipher's own message ("Unsupported state or unable to authenticate
+      // data") would name the symptom and not the cause, and the cause is
+      // something the operator can act on.
+      throw new ApiError(
+        409,
+        "The stored credential cannot be decrypted. APP_ENCRYPTION_KEY has changed since this Provider was saved; re-enter its API credential.",
+        "credential_undecryptable"
+      );
+    }
+    try {
+      await this.providers.validate(
+        { provider: provider.provider, credential },
+        { signal: AbortSignal.timeout(PROVIDER_CONNECTION_TEST_TIMEOUT_MS) }
+      );
+    } catch (error) {
+      throw new ApiError(
+        502,
+        connectionFailureMessage(error),
+        "provider_unreachable"
+      );
+    }
+    const validatedAt = now();
+    await this.store.update((state) => {
+      const target = state.providers.find((item) => item.id === id);
+      if (target) target.lastValidatedAt = validatedAt;
+      state.workspace.updatedAt = validatedAt;
+    });
+    return {
+      status: "ok",
+      latencyMs: Date.now() - startedAt,
+      validatedAt
+    };
   }
 
   async createEmployee(input: unknown): Promise<Employee> {

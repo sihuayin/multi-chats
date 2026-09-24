@@ -1,4 +1,4 @@
-import type { DiscussionBudget, Tool } from "@/server/domain/types";
+import type { DiscussionBudget, IsoDate, Tool } from "@/server/domain/types";
 
 /**
  * A Tool as the client sees it: the credential is replaced by whether one is
@@ -30,6 +30,17 @@ export type PublicProvider = Omit<
   "encryptedCredential"
 > & {
   configured: true;
+};
+
+/**
+ * The outcome of an on-demand Provider connection test. `latencyMs` spans the
+ * whole check — credential decryption through the Provider's reply — not just
+ * the time on the wire.
+ */
+export type ProviderConnectionTest = {
+  status: "ok";
+  latencyMs: number;
+  validatedAt: IsoDate;
 };
 
 export type WorkspaceView = {

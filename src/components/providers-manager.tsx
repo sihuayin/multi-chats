@@ -5,14 +5,18 @@ import {
   LoaderCircle,
   Pencil,
   Plus,
-  Trash2
+  Trash2,
+  Wifi
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { apiRequest } from "@/lib/api";
 import { paginationEntries } from "@/lib/pagination";
 import { providerCatalog } from "@/lib/provider-catalog";
-import type { PublicProvider } from "@/lib/workspace-view";
+import type {
+  ProviderConnectionTest,
+  PublicProvider
+} from "@/lib/workspace-view";
 import { useI18n } from "@/components/i18n-provider";
 import { useWorkspace } from "@/components/workspace-provider";
 import { PageHeader } from "@/components/page-header";
@@ -87,6 +91,7 @@ export function ProvidersManager() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogMode, setDialogMode] = useState<"create" | "edit">("create");
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [testingId, setTestingId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
 
   // `data.providers` belongs to the shared Workspace view, so copy it first:
@@ -147,6 +152,34 @@ export function ProvidersManager() {
       toast.error(message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  /**
+   * Asks the server to reach the Provider with the credential it already
+   * stores. The outcome is the toast's whole content: a success reports how
+   * long the round trip took, and a failure reports what the Provider said.
+   * Only the first is worth refreshing for, since only a success moves the
+   * row's validation time.
+   */
+  async function testConnection(id: string) {
+    setTestingId(id);
+    try {
+      const result = await apiRequest<ProviderConnectionTest>(
+        `/api/providers/${id}/test`,
+        { method: "POST" }
+      );
+      toast.success(t("providers.testSucceeded", { ms: result.latencyMs }));
+      await refresh();
+    } catch (nextError) {
+      toast.error(
+        t("providers.testFailed", {
+          message:
+            nextError instanceof Error ? nextError.message : String(nextError)
+        })
+      );
+    } finally {
+      setTestingId(null);
     }
   }
 
@@ -363,9 +396,22 @@ export function ProvidersManager() {
                         <Button
                           variant="ghost"
                           size="icon"
+                          title={t("providers.testConnection")}
+                          onClick={() => void testConnection(item.id)}
+                          disabled={busy || testingId !== null}
+                        >
+                          {testingId === item.id ? (
+                            <LoaderCircle className="spin" size={16} />
+                          ) : (
+                            <Wifi size={16} />
+                          )}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
                           title={t("providers.edit")}
                           onClick={() => openEditDialog(item.id)}
-                          disabled={busy}
+                          disabled={busy || testingId !== null}
                         >
                           <Pencil size={16} />
                         </Button>
@@ -375,7 +421,7 @@ export function ProvidersManager() {
                           className="text-[var(--danger)]"
                           title={t("providers.delete")}
                           onClick={() => removeProvider(item.id)}
-                          disabled={busy}
+                          disabled={busy || testingId !== null}
                         >
                           <Trash2 size={16} />
                         </Button>

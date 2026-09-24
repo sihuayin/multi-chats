@@ -22,7 +22,8 @@ import {
 import type { ProviderId } from "@/server/domain/types";
 import type {
   ProviderModelSummary,
-  ProviderRegistry
+  ProviderRegistry,
+  ProviderValidationOptions
 } from "@/server/application/provider-gateway";
 
 const factories: Record<ProviderId, () => Provider> = {
@@ -102,8 +103,12 @@ export function resolveModelContext(
 }
 
 export const piProviderRegistry: ProviderRegistry = {
-  async validate(access) {
-    return validateProviderCredential(access.provider, access.credential);
+  async validate(access, options) {
+    return validateProviderCredential(
+      access.provider,
+      access.credential,
+      options
+    );
   },
   async listModels(access) {
     return listProviderModels(access.provider, access.credential);
@@ -112,7 +117,8 @@ export const piProviderRegistry: ProviderRegistry = {
 
 export async function validateProviderCredential(
   providerId: ProviderId,
-  credential: string
+  credential: string,
+  options?: ProviderValidationOptions
 ): Promise<void> {
   const models = createProviderModels(providerId, credential);
   const auth = await models.getAuth(providerId);
@@ -139,7 +145,8 @@ export async function validateProviderCredential(
       },
       {
         apiKey: credential,
-        maxTokens: 1
+        maxTokens: 1,
+        signal: options?.signal
       }
     );
   } catch (error) {

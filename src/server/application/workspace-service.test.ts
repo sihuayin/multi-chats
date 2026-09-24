@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ProviderRegistry } from "@/server/application/provider-gateway";
 import { WorkspaceService } from "@/server/application/workspace-service";
 import { BUILT_IN_TOOLS } from "@/server/store/initial-state";
 import { AesCredentialCipher } from "@/server/security/credential-cipher";
@@ -600,5 +601,95 @@ describe("Tool registry", () => {
       "20000000-0000-4000-8000-000000000001"
     ]);
     expect(updated.retrievalExcluded).toBe(true);
+  });
+});
+
+describe("Provider connection test", () => {
+  const providerId = "10000000-0000-4000-8000-000000000001";
+
+  function registryRejecting(error: Error): ProviderRegistry {
+    return {
+      async validate() {
+        throw error;
+      },
+      async listModels() {
+        return [];
+      }
+    };
+  }
+
+  it("reports the round trip and records it as the validation time", async () => {
+    const store = new MemoryStore(createFixtureState());
+    const before = await store.read(
+      (state) => state.providers[0].lastValidatedAt
+    );
+    const service = new WorkspaceService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      noopProviderRegistry
+    );
+
+    const result = await service.testProviderConnection(providerId);
+
+    expect(result.status).toBe("ok");
+    expect(result.latencyMs).toBeGreaterThanOrEqual(0);
+    expect(
+      await store.read((state) => state.providers[0].lastValidatedAt)
+    ).toBe(result.validatedAt);
+    expect(result.validatedAt).not.toBe(before);
+  });
+
+  it("reports a Provider that refused the call and keeps the last validation", async () => {
+    const store = new MemoryStore(createFixtureState());
+    const before = await store.read(
+      (state) => state.providers[0].lastValidatedAt
+    );
+    const service = new WorkspaceService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      registryRejecting(new Error("401 Unauthorized"))
+    );
+
+    await expect(
+      service.testProviderConnection(providerId)
+    ).rejects.toMatchObject({
+      status: 502,
+      code: "provider_unreachable",
+      message: "401 Unauthorized"
+    });
+    expect(
+      await store.read((state) => state.providers[0].lastValidatedAt)
+    ).toBe(before);
+  });
+
+  it("explains a stored credential the current key cannot open", async () => {
+    const state = createFixtureState();
+    state.providers[0].encryptedCredential = new AesCredentialCipher(
+      "a-key-this-workspace-no-longer-holds"
+    ).encrypt("test-api-key");
+    const service = new WorkspaceService(
+      new MemoryStore(state),
+      new AesCredentialCipher(TEST_KEY),
+      noopProviderRegistry
+    );
+
+    await expect(
+      service.testProviderConnection(providerId)
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "credential_undecryptable"
+    });
+  });
+
+  it("names a Provider that is not in the Workspace", async () => {
+    const service = new WorkspaceService(
+      new MemoryStore(createFixtureState()),
+      new AesCredentialCipher(TEST_KEY),
+      noopProviderRegistry
+    );
+
+    await expect(
+      service.testProviderConnection("no-such-provider")
+    ).rejects.toMatchObject({ status: 404, code: "not_found" });
   });
 });
