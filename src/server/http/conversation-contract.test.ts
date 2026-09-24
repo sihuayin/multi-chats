@@ -667,7 +667,11 @@ describe("Conversation HTTP and SSE contract", () => {
     ).toMatchObject({
       alias: "message:message-elsewhere",
       resolved: true,
-      locator: elsewhere
+      locator: elsewhere,
+      originConversationId: elsewhere,
+      originConversationTitle: "Payments redesign",
+      excerpt: "The persistence model is append-only.",
+      targetMessageId: "message-elsewhere"
     });
 
     // A later Run re-cites from prose without retrieving: the re-citable

@@ -23,6 +23,20 @@ export type MessageCitation = {
    *  append-only: a refresh supersedes, it never rewrites. */
   excerpt?: string;
   evidenceReferenceId?: string;
+  /**
+   * History-item citations only. The title resolves at read time from the
+   * reference's `locator` — nothing is snapshotted and no title is stored,
+   * so a dangling reference (Conversation gone) simply has no title and the
+   * door cannot open (#211's state).
+   */
+  originConversationId?: string;
+  originConversationTitle?: string;
+  /** Display author of a cited Message ("User" / "System" / employee name). */
+  authorName?: string;
+  /** The cited item's creation time, for the panel's provenance line. */
+  itemDate?: string;
+  /** A cited Message's id, so the door can mark it in its Conversation. */
+  targetMessageId?: string;
 };
 
 function isPublished(message: Message): boolean {
@@ -185,6 +199,56 @@ export function resolveConversationCitations(
             citation.sourceTitle = state.sources.find(
               (item) => item.id === chunk.sourceId
             )?.title;
+          }
+        }
+        if (
+          reference.kind === "message" ||
+          reference.kind === "task" ||
+          reference.kind === "artifact"
+        ) {
+          // The door and the provenance line, resolved at read time.
+          if (reference.locator !== undefined) {
+            citation.originConversationId = reference.locator;
+            const origin = state.conversations.find(
+              (item) => item.id === reference.locator
+            );
+            if (origin) citation.originConversationTitle = origin.title;
+          }
+          if (reference.kind === "message") {
+            const cited = state.messages.find(
+              (item) => item.id === reference.sourceId
+            );
+            if (cited) {
+              citation.excerpt = cited.content;
+              citation.itemDate = cited.createdAt;
+              citation.targetMessageId = cited.id;
+              citation.authorName =
+                cited.authorType === "user"
+                  ? "User"
+                  : cited.authorType === "system"
+                    ? "System"
+                    : state.employees.find(
+                        (employee) => employee.id === cited.authorId
+                      )?.name ?? "Employee";
+            }
+          } else if (reference.kind === "task") {
+            const cited = state.tasks.find(
+              (item) => item.id === reference.sourceId
+            );
+            if (cited) {
+              citation.excerpt = `${cited.title}\n${cited.goal}`;
+              citation.itemDate = cited.createdAt;
+              citation.authorName = cited.status;
+            }
+          } else {
+            const cited = state.artifacts.find(
+              (item) => item.id === reference.sourceId
+            );
+            if (cited) {
+              citation.excerpt = cited.content;
+              citation.itemDate = cited.createdAt;
+              citation.authorName = cited.name;
+            }
           }
         }
         citations.push(citation);

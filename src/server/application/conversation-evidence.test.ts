@@ -365,6 +365,76 @@ describe("Conversation citations", () => {
     expect(resolveConversationCitations(state, conversationId)).toEqual([]);
   });
 
+  it("resolves the origin title at read time and carries the provenance fields", () => {
+    const { state, conversationId } = seededState();
+    state.conversations.push({
+      id: "30000000-0000-4000-8000-000000000005",
+      workspaceId: state.workspace.id,
+      title: "Payments redesign",
+      memberIds: [],
+      retrievalExcluded: false,
+      createdAt: NOW,
+      updatedAt: NOW
+    });
+    const cited = message(state, {
+      id: "message-elsewhere",
+      conversationId: "30000000-0000-4000-8000-000000000005",
+      content: "The persistence model is append-only."
+    });
+    historyRetrievalEvent(state, "run-h1", ["message-elsewhere"]);
+    // The helper pins the Run to conversations[0]; the retrieved tier is
+    // about the Run, not the Conversation the item lives in.
+    const reply = message(state, {
+      id: "message-reply",
+      conversationId,
+      content: "History says [message:message-elsewhere].",
+      runId: "run-h1"
+    });
+    recordMessageCitations(state, reply);
+
+    let citations = resolveConversationCitations(state, conversationId);
+    expect(citations[0]).toMatchObject({
+      alias: "message:message-elsewhere",
+      resolved: true,
+      originConversationId: "30000000-0000-4000-8000-000000000005",
+      originConversationTitle: "Payments redesign",
+      excerpt: "The persistence model is append-only.",
+      authorName: "Alice",
+      itemDate: NOW,
+      targetMessageId: "message-elsewhere"
+    });
+
+    // Nothing is snapshotted: renaming the origin Conversation moves the
+    // title the very next read.
+    const origin = state.conversations.find(
+      (item) => item.id === "30000000-0000-4000-8000-000000000005"
+    )!;
+    origin.title = "Renamed redesign";
+    citations = resolveConversationCitations(state, conversationId);
+    expect(citations[0].originConversationTitle).toBe("Renamed redesign");
+    expect(cited.id).toBe("message-elsewhere");
+  });
+
+  it("carries no origin fields for a Source citation — a Chunk is not Conversation-owned", () => {
+    const { state, conversationId, chunks } = seededState();
+    retrievalEvent(state, "run-1", [chunks[0].id]);
+    const reply = message(state, {
+      id: "message-reply",
+      conversationId,
+      content: `Docs say [external:${chunks[0].id}].`,
+      runId: "run-1"
+    });
+    recordMessageCitations(state, reply);
+
+    const citations = resolveConversationCitations(state, conversationId);
+    expect(citations[0]).toMatchObject({
+      resolved: true,
+      sourceTitle: "Product docs"
+    });
+    expect(citations[0].originConversationId).toBeUndefined();
+    expect(citations[0].targetMessageId).toBeUndefined();
+  });
+
   it("builds the scope as data: retrieved ∪ already-cited, nothing else", () => {
     const { state, conversationId, chunks } = seededState();
     retrievalEvent(state, "run-1", [chunks[0].id]);
