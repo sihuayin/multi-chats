@@ -583,6 +583,67 @@ export class WorkspaceService {
           .map((discussion) => discussion.id)
       );
 
+      // The evidence ledger joins the cascade (#194): a Conversation's
+      // deletion takes its own citations to the grave. The prune is
+      // enumerable from the id sets the cascade already computes — never a
+      // resolve-and-drop sweep, which would mask real corruption and make
+      // the ledger's contents a function of the resolver rather than of the
+      // deletion.
+      const removedMessageIds = new Set(
+        state.messages
+          .filter((message) => message.conversationId === id)
+          .map((message) => message.id)
+      );
+      const removedTurnIds = new Set(
+        state.discussions
+          .filter((discussion) => discussionIds.has(discussion.id))
+          .flatMap((discussion) =>
+            discussion.rounds.flatMap((round) =>
+              round.turns.map((turn) => turn.id)
+            )
+          )
+      );
+      const removedArtifactIds = new Set(
+        state.artifacts
+          .filter(
+            (artifact) =>
+              (artifact.ownerType === "task" &&
+                taskIds.has(artifact.ownerId)) ||
+              (artifact.ownerType === "discussion" &&
+                discussionIds.has(artifact.ownerId))
+          )
+          .map((artifact) => artifact.id)
+      );
+      const removedToolResultIds = new Set(
+        state.runEvents
+          .filter(
+            (event) =>
+              runIds.has(event.runId) && event.type === "tool_completed"
+          )
+          .map((event) => event.id)
+      );
+      const removedByKind: Record<string, Set<string>> = {
+        message: removedMessageIds,
+        turn: removedTurnIds,
+        task: taskIds,
+        artifact: removedArtifactIds,
+        tool_result: removedToolResultIds
+      };
+      state.evidenceReferences = state.evidenceReferences.filter(
+        (reference) => {
+          const removed =
+            removedByKind[reference.kind]?.has(reference.sourceId) ?? false;
+          if (!removed) return true;
+          // One carve-out: a row whose locator names a SURVIVING
+          // Conversation is kept, because a surviving Message's prose still
+          // cites it and that row is the only remaining record of where the
+          // citation came from. Native references carry no locator and are
+          // pruned with their target; so is a cross-Conversation row whose
+          // locator names the Conversation being deleted.
+          return reference.locator !== undefined && reference.locator !== id;
+        }
+      );
+
       state.conversations = state.conversations.filter(
         (item) => item.id !== id
       );

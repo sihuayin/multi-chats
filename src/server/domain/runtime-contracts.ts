@@ -595,23 +595,14 @@ export function validateRuntimeContracts(
     }
   }
 
-  for (const evidence of parsedValues.get("evidenceReferences") ?? []) {
-    const record = evidence as Record<string, unknown>;
-    const kind = record.kind as string;
-    const sources =
-      kind === "message"
-        ? messageIds
-        : kind === "turn"
-          ? new Set(turnDiscussionIds.keys())
-          : kind === "task"
-            ? taskIds
-            : kind === "artifact"
-              ? artifactIds
-              : undefined;
-    if (sources) {
-      requireReference(record.sourceId as string, sources, "evidenceReferences");
-    }
-  }
+  // Evidence references: exactly one tolerance, deliberately — a DANGLING
+  // row is a legal state (#194). Deleting a Conversation prunes the rows it
+  // orphaned and keeps a cross-Conversation row whose target died with it,
+  // because the reference's `locator` is then the only record of where the
+  // citation came from; membership of the target is therefore not required.
+  // Every other check still applies: each row's strict schema was validated
+  // on parse above, and every other ledger's references below are still
+  // verified.
 
   for (const chunk of parsedValues.get("chunks") ?? []) {
     const record = chunk as Record<string, unknown>;
