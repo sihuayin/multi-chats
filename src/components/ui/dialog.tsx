@@ -45,13 +45,13 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "fixed left-1/2 top-1/2 z-50 grid w-[min(calc(100vw-2rem),36rem)] max-h-[85vh] -translate-x-1/2 -translate-y-1/2 gap-4 overflow-hidden rounded-lg border border-[var(--border)] bg-[#161616] p-6 shadow-[var(--shadow)]",
+          "fixed left-1/2 top-1/2 z-50 grid w-[min(calc(100vw-2rem),36rem)] max-h-[85vh] -translate-x-1/2 -translate-y-1/2 gap-4 overflow-hidden rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--overlay)] p-6 shadow-[var(--shadow)]",
           className
         )}
         {...props}
       >
         {children}
-        <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[#222] hover:text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--ring)]">
+        <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm bg-transparent p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--panel-active)] hover:text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--ring)]">
           <X className="size-4" />
           <span className="sr-only">Close</span>
         </DialogPrimitive.Close>

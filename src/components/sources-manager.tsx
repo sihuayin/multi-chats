@@ -247,7 +247,7 @@ export function SourcesManager() {
                       }
                     />
                     {location ? (
-                      <p className="text-xs text-muted-foreground">
+                      <p className="text-xs text-[var(--muted-foreground)]">
                         {location}
                       </p>
                     ) : null}

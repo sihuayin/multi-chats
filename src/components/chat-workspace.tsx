@@ -1806,7 +1806,7 @@ export function ChatWorkspace({
               {t("chat.cancel")}
             </AlertDialogCancel>
             <AlertDialogAction
-              className="bg-[var(--danger)] text-white hover:bg-[var(--danger)]"
+              className="bg-[var(--destructive)] text-white hover:bg-[var(--destructive-hover)]"
               disabled={busy}
               onClick={(event) => {
                 event.preventDefault();

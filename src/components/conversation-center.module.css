@@ -11,9 +11,9 @@
   gap: 2px;
   margin: 10px auto;
   padding: 3px;
-  background: rgb(20 20 20 / 92%);
+  background: var(--panel-veil);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-card);
   box-shadow: var(--shadow);
   backdrop-filter: blur(16px);
 }
@@ -32,7 +32,7 @@
   text-transform: uppercase;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-btn);
   cursor: pointer;
   transition:
     background 150ms ease-out,
@@ -43,7 +43,7 @@
 .switch button.active {
   color: var(--accent-strong);
   background: var(--accent-soft);
-  border-color: rgb(16 163 127 / 20%);
+  border-color: var(--emerald-edge);
 }
 
 @media (max-width: 760px) {
