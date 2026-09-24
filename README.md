@@ -50,19 +50,119 @@ DATABASE_URL=postgres://multi_chats:multi_chats@localhost:5432/multi_chats npm r
 DATABASE_URL=postgres://multi_chats:multi_chats@localhost:5432/multi_chats npm run worker
 ```
 
-## Self-hosted deployment
+## Deployment
 
-Set a persistent 32-byte base64 encryption key before starting the stack:
+Deploy the self-hosted stack with Docker Compose. It starts three services —
+PostgreSQL, the web process, and the worker — and both application services run
+migrations before they start.
+
+### Requirements
+
+- Docker with Compose v2
+- A persistent `APP_ENCRYPTION_KEY`
+
+`APP_ENCRYPTION_KEY` encrypts the Provider credentials stored in the Workspace.
+It is never baked into the image, so the same key must be present on every
+start: rotate or lose it and the stored credentials can no longer be decrypted.
+
+### 1. Get the code
+
+```bash
+git clone https://github.com/sihuayin/multi-chats.git
+cd multi-chats
+```
+
+### 2. Set the encryption key
+
+Either export it for the Compose invocation:
 
 ```bash
 export APP_ENCRYPTION_KEY="$(openssl rand -base64 32)"
+```
+
+or persist it in `.env` beside `docker-compose.yml`, which Compose reads for
+variable substitution and `.dockerignore` keeps out of the image:
+
+```bash
+printf 'APP_ENCRYPTION_KEY=%s\n' "$(openssl rand -base64 32)" >> .env
+```
+
+Compose falls back to a development placeholder when the key is unset. That
+placeholder is public, so set a real key for anything other than a local trial.
+
+### 3. Build and start
+
+```bash
 docker compose up --build -d
 ```
 
-Compose starts PostgreSQL, the web process, and the worker together. The web
-health check reads `/api/health`; both application services run migrations
-before starting. Override `WEB_PORT`, `POSTGRES_PORT`, or
-`MODEL_MODE` through the environment when needed.
+### 4. Check that it is up
+
+```bash
+docker compose ps
+curl -s http://localhost:3000/api/health
+```
+
+The health response reports both processes:
+
+```json
+{"status":"ok","database":"ok","worker":"ok","workspaceId":"..."}
+```
+
+`status` is `ok` only while the worker heartbeat is under 15 seconds old, so a
+stopped worker turns the web container unhealthy instead of failing silently.
+The Compose health check reads the same endpoint.
+
+Then open <http://localhost:3000> and add the model Providers the Employees run
+on under **Providers**.
+
+### Configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `WEB_PORT` | `3000` | Host port for the web UI |
+| `POSTGRES_PORT` | `5432` | Host port for PostgreSQL |
+| `MODEL_MODE` | `pi` | Set to `fake` for deterministic responses that call no Provider |
+| `WORKER_POLL_INTERVAL_MS` | `1000` | How often the worker polls for work |
+| `APP_ENCRYPTION_KEY` | development placeholder | Required in production; see step 2 |
+
+Set these in the shell or in `.env` beside `docker-compose.yml`.
+
+Compose publishes PostgreSQL on the host port by default so that the backup
+commands below work from the checkout. Remove the `ports` mapping from the
+`postgres` service if the database should not be reachable from outside the
+Compose network.
+
+### Logs and shutdown
+
+```bash
+docker compose logs -f web worker
+docker compose down
+```
+
+`docker compose down` keeps the `postgres-data` volume. `docker compose down -v`
+deletes it, along with every Conversation, Source, and stored credential.
+
+### Upgrading
+
+```bash
+git pull
+docker compose up --build -d
+```
+
+Both application services migrate on start, so no separate migration step is
+needed. Keep `APP_ENCRYPTION_KEY` unchanged across the upgrade, or stored
+credentials stop decrypting.
+
+### Backup and restore
+
+All state lives in the `postgres-data` volume. Back up and restore from the
+checkout, pointing `DATABASE_URL` at the published PostgreSQL port:
+
+```bash
+DATABASE_URL=postgres://multi_chats:multi_chats@localhost:5432/multi_chats npm run db:backup -- backup.json
+DATABASE_URL=postgres://multi_chats:multi_chats@localhost:5432/multi_chats npm run db:restore -- backup.json
+```
 
 ## Verification
 

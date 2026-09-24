@@ -50,18 +50,112 @@ DATABASE_URL=postgres://multi_chats:multi_chats@localhost:5432/multi_chats npm r
 DATABASE_URL=postgres://multi_chats:multi_chats@localhost:5432/multi_chats npm run worker
 ```
 
-## 自托管部署
+## 部署
 
-启动技术栈之前，设置一个持久化的 32 字节 base64 加密密钥：
+使用 Docker Compose 部署自托管技术栈。它会启动三个服务——PostgreSQL、Web 进程和
+worker——两个应用服务都会在启动前执行数据库迁移。
+
+### 环境要求
+
+- Docker 及 Compose v2
+- 一个持久化的 `APP_ENCRYPTION_KEY`
+
+`APP_ENCRYPTION_KEY` 用于加密工作区中保存的模型提供商凭据。它不会被打进镜像，因此
+每次启动都必须提供同一个密钥：一旦轮换或丢失，已保存的凭据将无法解密。
+
+### 1. 获取代码
+
+```bash
+git clone https://github.com/sihuayin/multi-chats.git
+cd multi-chats
+```
+
+### 2. 设置加密密钥
+
+可以直接为本次 Compose 调用导出：
 
 ```bash
 export APP_ENCRYPTION_KEY="$(openssl rand -base64 32)"
+```
+
+也可以写入与 `docker-compose.yml` 同级的 `.env`，Compose 会读取该文件做变量替换，
+而 `.dockerignore` 会把它排除在镜像之外：
+
+```bash
+printf 'APP_ENCRYPTION_KEY=%s\n' "$(openssl rand -base64 32)" >> .env
+```
+
+未设置时 Compose 会回退到一个开发占位密钥。该占位值是公开的，因此除本地试用之外
+都应设置真实密钥。
+
+### 3. 构建并启动
+
+```bash
 docker compose up --build -d
 ```
 
-Compose 会同时启动 PostgreSQL、Web 进程和 worker。Web 进程的健康检查读取
-`/api/health`；两个应用服务都会在启动前执行数据库迁移。需要时可通过环境变量
-覆盖 `WEB_PORT`、`POSTGRES_PORT` 或 `MODEL_MODE`。
+### 4. 确认服务已就绪
+
+```bash
+docker compose ps
+curl -s http://localhost:3000/api/health
+```
+
+健康检查响应会同时报告两个进程的状态：
+
+```json
+{"status":"ok","database":"ok","worker":"ok","workspaceId":"..."}
+```
+
+只有当 worker 心跳在 15 秒以内时 `status` 才为 `ok`，因此 worker 停止时 Web 容器
+会被标记为不健康，而不是静默失败。Compose 的健康检查读取的正是同一个端点。
+
+然后打开 <http://localhost:3000>，在「模型提供商」页面添加员工运行所需的模型提供商。
+
+### 配置项
+
+| 变量 | 默认值 | 用途 |
+| --- | --- | --- |
+| `WEB_PORT` | `3000` | Web 界面的宿主机端口 |
+| `POSTGRES_PORT` | `5432` | PostgreSQL 的宿主机端口 |
+| `MODEL_MODE` | `pi` | 设为 `fake` 时返回确定性响应，不调用任何提供商 |
+| `WORKER_POLL_INTERVAL_MS` | `1000` | worker 轮询任务的间隔 |
+| `APP_ENCRYPTION_KEY` | 开发占位值 | 生产环境必填，见第 2 步 |
+
+可以在 shell 中设置，也可以写入 `docker-compose.yml` 同级的 `.env`。
+
+Compose 默认把 PostgreSQL 发布到宿主机端口，以便下面的备份命令可以在代码目录中直接
+执行。如果数据库不应从 Compose 网络之外访问，请删除 `postgres` 服务的 `ports` 映射。
+
+### 日志与停止
+
+```bash
+docker compose logs -f web worker
+docker compose down
+```
+
+`docker compose down` 会保留 `postgres-data` 数据卷；`docker compose down -v` 会连同
+所有会话、来源和已保存凭据一并删除。
+
+### 升级
+
+```bash
+git pull
+docker compose up --build -d
+```
+
+两个应用服务都会在启动时执行迁移，因此不需要单独的迁移步骤。升级前后必须保持
+`APP_ENCRYPTION_KEY` 不变，否则已保存的凭据将无法解密。
+
+### 备份与恢复
+
+所有状态都保存在 `postgres-data` 数据卷中。在代码目录中执行备份与恢复，把
+`DATABASE_URL` 指向已发布的 PostgreSQL 端口：
+
+```bash
+DATABASE_URL=postgres://multi_chats:multi_chats@localhost:5432/multi_chats npm run db:backup -- backup.json
+DATABASE_URL=postgres://multi_chats:multi_chats@localhost:5432/multi_chats npm run db:restore -- backup.json
+```
 
 ## 验证
 
