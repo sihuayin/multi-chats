@@ -968,17 +968,27 @@ test("answers from the Workspace's own Sources with a citation chip and a source
     .filter({ hasText: /Workspace's own documents/ });
   await expect(reply).toBeVisible({ timeout: 30_000 });
 
-  // The citation reads as a chip naming its Source.
-  const chip = reply.locator(".citation-chip").filter({ hasText: "Persistence notes" });
-  await expect(chip.first()).toBeVisible();
+  // The inline citation reads as a numbered chip; the chip alone never
+  // names its origin — the hover title carries it and the strip maps the
+  // number to the source.
+  const chip = reply.locator("p .citation-chip").first();
+  await expect(chip).toBeVisible();
+  await expect(chip).toHaveText("[1]");
+  await expect(chip).toHaveAttribute("title", "Persistence notes");
 
-  // The message carries a strip of the Sources behind it.
+  // The message carries a strip counting and sectioning its sources; a
+  // Workspace Source is not this Conversation's, so it reads as from
+  // elsewhere.
   const strip = reply.locator(".source-strip");
   await expect(strip).toBeVisible();
-  await expect(strip).toContainText("Sources");
+  await expect(strip).toContainText("1 source");
+  await expect(strip.locator('[data-testid="strip-elsewhere"]')).toBeVisible();
+  await expect(strip.locator(".citation-chip").first()).toContainText(
+    "Persistence notes"
+  );
 
   // Clicking the chip shows the passage itself below the message.
-  await chip.first().click();
+  await chip.click();
   const passage = reply.locator('[data-testid="passage-panel"]');
   await expect(passage).toBeVisible();
   await expect(passage).toContainText(
@@ -997,6 +1007,21 @@ test("answers from the Workspace's own Sources with a citation chip and a source
   await expect(
     page.locator(".message-bubble.user").first().locator(".source-strip")
   ).toHaveCount(0);
+
+  // A remote History item: another Conversation whose message outranks the
+  // trigger in the history search, so the fake model cites it — the case
+  // the door exists for.
+  const archiveResponse = await request.post("/api/conversations", {
+    data: { title: "Archive", memberIds: [employee.id] }
+  });
+  const archiveConversation = (await archiveResponse.json()) as {
+    id: string;
+  };
+  const archiveMessage = await request.post(
+    `/api/conversations/${archiveConversation.id}/messages`,
+    { data: { content: "persistence archive note" } }
+  );
+  expect(archiveMessage.ok()).toBeTruthy();
 
   // The deliberately unhappy path: an unresolvable citation stays readable
   // as the literal text it was written as, is counted in muted text, and
@@ -1039,9 +1064,45 @@ test("answers from the Workspace's own Sources with a citation chip and a source
   // The result's own bare alias lines are prose (bracketed aliases are the
   // grammar); the fake model's bracketed citation of the first retrieved
   // item resolves into one inline chip and one strip entry — the same
-  // control in both places.
+  // control in both places. The cited item is the Archive's, so the chip
+  // title names that Conversation and the strip sections it under
+  // "From elsewhere".
   await expect(historyReply.locator("p .citation-chip")).toHaveCount(1);
   await expect(
     historyReply.locator(".source-strip .citation-chip")
   ).toHaveCount(1);
+  await expect(historyReply.locator("p .citation-chip").first()).toHaveAttribute(
+    "title",
+    "Archive"
+  );
+  await expect(
+    historyReply.locator('[data-testid="strip-elsewhere"]')
+  ).toBeVisible();
+
+  // Verdict B: remote is a door. The panel carries the provenance line and
+  // offers the jump; taking it swaps the stream, marks the cited Message,
+  // and leaves a way back.
+  await historyReply.locator("p .citation-chip").first().click();
+  const historyPanel = historyReply.locator('[data-testid="passage-panel"]');
+  await expect(historyPanel).toBeVisible();
+  await expect(
+    historyPanel.locator('[data-testid="passage-provenance"]')
+  ).toContainText("Archive · User");
+  await expect(historyPanel).toContainText("persistence archive note");
+  const door = historyPanel.locator('[data-testid="passage-door"]');
+  await expect(door).toContainText("Open in Archive");
+  await door.click();
+
+  await expect(page.locator(".conversation-header h2")).toContainText(
+    "Archive"
+  );
+  await expect(
+    page.locator('.message-bubble[data-marked="true"]')
+  ).toContainText("persistence archive note");
+  const back = page.locator('[data-testid="door-back-banner"] button');
+  await expect(back).toContainText("Back to Citation check");
+  await back.click();
+  await expect(page.locator(".conversation-header h2")).toContainText(
+    "Citation check"
+  );
 });

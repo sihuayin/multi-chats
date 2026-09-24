@@ -186,6 +186,14 @@ export function ChatWorkspace({
     messageId: string;
     alias: string;
   } | null>(null);
+  // A remote citation is a door (#210, prototype verdict B): taking it
+  // swaps the stream to the cited item's Conversation, marks the cited
+  // Message, and offers a way back.
+  const [doorJump, setDoorJump] = useState<{
+    targetConversationId: string;
+    targetMessageId?: string;
+    fromConversationId: string;
+  } | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const focusedTaskRef = useRef<string | null>(null);
@@ -265,6 +273,12 @@ export function ChatWorkspace({
         : { messageId, alias }
     );
   };
+  useEffect(() => {
+    if (!doorJump?.targetMessageId) return;
+    document
+      .querySelector(`[data-message-id="${doorJump.targetMessageId}"]`)
+      ?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [doorJump, selectedId]);
 
   useEffect(() => {
     if (
@@ -863,6 +877,29 @@ export function ChatWorkspace({
             ) : null}
 
             <div className="message-stream">
+              {doorJump &&
+              selected &&
+              selected.id === doorJump.targetConversationId ? (
+                <div className="door-back-banner" data-testid="door-back-banner">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const back = doorJump.fromConversationId;
+                      setDoorJump(null);
+                      setSelectedId(back);
+                    }}
+                  >
+                    ←{" "}
+                    {t("chat.backToConversation", {
+                      conversation:
+                        conversations.find(
+                          (conversation) =>
+                            conversation.id === doorJump.fromConversationId
+                        )?.title ?? ""
+                    })}
+                  </button>
+                </div>
+              ) : null}
               {latestRun?.status === "failed" && latestRun.error ? (
                 <div className="error-banner compact">
                   {latestRun.error}
@@ -886,15 +923,53 @@ export function ChatWorkspace({
                 // presented as having failed.
                 const unresolvedCount = citations.length - stripEntries.length;
                 const parts = splitCitationParts(item.content);
+                // Render-time ordinals: resolved aliases numbered by first
+                // appearance. The prose grammar stays the alias — the
+                // number is display only and never crosses into what the
+                // model writes.
+                const ordinals = new Map<string, number>();
+                for (const part of parts) {
+                  if (
+                    !("text" in part) &&
+                    resolved.has(part.alias) &&
+                    !ordinals.has(part.alias)
+                  ) {
+                    ordinals.set(part.alias, ordinals.size + 1);
+                  }
+                }
+                const citationTitle = (citation: MessageCitation): string =>
+                  citation.sourceTitle ??
+                  citation.originConversationTitle ??
+                  citation.alias;
+                // Origin sections: a History item of this Conversation is
+                // local; anything else — another Conversation's item, or a
+                // Workspace Source — reads as from elsewhere.
+                const isLocal = (citation: MessageCitation): boolean =>
+                  citation.originConversationId !== undefined &&
+                  citation.originConversationId === item.conversationId;
+                const localEntries = stripEntries.filter(isLocal);
+                const elsewhereEntries = stripEntries.filter(
+                  (citation) => !isLocal(citation)
+                );
                 const openCitation =
                   openPassage?.messageId === item.id
                     ? resolved.get(openPassage.alias)
+                    : undefined;
+                const openDoor =
+                  openCitation?.originConversationId !== undefined &&
+                  openCitation.originConversationId !== item.conversationId &&
+                  openCitation.originConversationTitle !== undefined
+                    ? openCitation
                     : undefined;
                 return (
                   <article
                     key={item.id}
                     className={`message-bubble ${item.authorType}`}
                     data-status={item.status}
+                    data-message-id={item.id}
+                    data-marked={
+                      doorJump?.targetMessageId === item.id ? "true" : undefined
+                    }
                   >
                     <div className="message-meta">
                       <strong>
@@ -922,14 +997,14 @@ export function ChatWorkspace({
                                 key={index}
                                 type="button"
                                 className="citation-chip"
+                                title={citationTitle(resolved.get(part.alias)!)}
                                 aria-expanded={
                                   openPassage?.messageId === item.id &&
                                   openPassage.alias === part.alias
                                 }
                                 onClick={() => togglePassage(item.id, part.alias)}
                               >
-                                {resolved.get(part.alias)?.sourceTitle ??
-                                  part.alias}
+                                [{ordinals.get(part.alias)}]
                               </button>
                             ) : (
                               // An unresolvable citation stays readable as
@@ -941,9 +1016,7 @@ export function ChatWorkspace({
                     {openCitation ? (
                       <div className="passage-panel" data-testid="passage-panel">
                         <div className="passage-head">
-                          <strong>
-                            {openCitation.sourceTitle ?? openCitation.alias}
-                          </strong>
+                          <strong>{citationTitle(openCitation)}</strong>
                           <button
                             type="button"
                             className="passage-close"
@@ -953,30 +1026,110 @@ export function ChatWorkspace({
                             ×
                           </button>
                         </div>
+                        {openCitation.originConversationId !== undefined ? (
+                          <div
+                            className="passage-provenance"
+                            data-testid="passage-provenance"
+                          >
+                            {[
+                              openCitation.originConversationTitle,
+                              openCitation.authorName,
+                              openCitation.itemDate
+                                ? new Date(
+                                    openCitation.itemDate
+                                  ).toLocaleTimeString()
+                                : undefined
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </div>
+                        ) : null}
                         <blockquote className="passage-text">
                           {openCitation.excerpt}
                         </blockquote>
+                        {openDoor ? (
+                          <button
+                            type="button"
+                            className="passage-door"
+                            data-testid="passage-door"
+                            onClick={() => {
+                              setDoorJump({
+                                targetConversationId:
+                                  openDoor.originConversationId!,
+                                ...(openDoor.targetMessageId
+                                  ? { targetMessageId: openDoor.targetMessageId }
+                                  : {}),
+                                fromConversationId: item.conversationId
+                              });
+                              setOpenPassage(null);
+                              setSelectedId(openDoor.originConversationId!);
+                            }}
+                          >
+                            {t("chat.openInConversation", {
+                              conversation: openDoor.originConversationTitle!
+                            })}
+                          </button>
+                        ) : null}
                       </div>
                     ) : null}
                     {citations.length > 0 ? (
                       <div className="source-strip" data-testid="source-strip">
-                        <span className="strip-label">{t("chat.sources")}</span>
-                        {stripEntries.map((citation) => (
-                          <button
-                            key={citation.alias}
-                            type="button"
-                            className="citation-chip"
-                            aria-expanded={
-                              openPassage?.messageId === item.id &&
-                              openPassage.alias === citation.alias
-                            }
-                            onClick={() =>
-                              togglePassage(item.id, citation.alias)
-                            }
-                          >
-                            {citation.sourceTitle ?? citation.alias}
-                          </button>
-                        ))}
+                        <span className="strip-label">
+                          {t("chat.sourcesCount", {
+                            count: String(stripEntries.length)
+                          })}
+                        </span>
+                        {localEntries.length > 0 ? (
+                          <span className="strip-section">
+                            <span className="strip-section-label">
+                              {t("chat.stripThisConversation")}
+                            </span>
+                            {localEntries.map((citation) => (
+                              <button
+                                key={citation.alias}
+                                type="button"
+                                className="citation-chip"
+                                aria-expanded={
+                                  openPassage?.messageId === item.id &&
+                                  openPassage.alias === citation.alias
+                                }
+                                onClick={() =>
+                                  togglePassage(item.id, citation.alias)
+                                }
+                              >
+                                [{ordinals.get(citation.alias)}]{" "}
+                                {citationTitle(citation)}
+                              </button>
+                            ))}
+                          </span>
+                        ) : null}
+                        {elsewhereEntries.length > 0 ? (
+                          <span className="strip-section">
+                            <span
+                              className="strip-section-label"
+                              data-testid="strip-elsewhere"
+                            >
+                              {t("chat.stripFromElsewhere")}
+                            </span>
+                            {elsewhereEntries.map((citation) => (
+                              <button
+                                key={citation.alias}
+                                type="button"
+                                className="citation-chip"
+                                aria-expanded={
+                                  openPassage?.messageId === item.id &&
+                                  openPassage.alias === citation.alias
+                                }
+                                onClick={() =>
+                                  togglePassage(item.id, citation.alias)
+                                }
+                              >
+                                [{ordinals.get(citation.alias)}]{" "}
+                                {citationTitle(citation)}
+                              </button>
+                            ))}
+                          </span>
+                        ) : null}
                         {unresolvedCount > 0 ? (
                           <span
                             className="strip-unresolved"

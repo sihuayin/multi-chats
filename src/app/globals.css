@@ -864,6 +864,72 @@ button {
   font-size: 11px;
 }
 
+.strip-section {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.strip-section-label {
+  color: var(--muted-foreground);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.passage-provenance {
+  margin-bottom: 4px;
+  color: var(--muted-foreground);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.03em;
+}
+
+.passage-door {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 3px 10px;
+  border: 1px solid rgb(16 163 127 / 40%);
+  border-radius: 6px;
+  background: rgb(16 163 127 / 12%);
+  color: var(--foreground);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.passage-door:hover {
+  background: rgb(16 163 127 / 22%);
+  border-color: var(--primary);
+}
+
+.door-back-banner {
+  margin-bottom: 8px;
+}
+
+.door-back-banner button {
+  padding: 5px 12px;
+  border: 1px dashed rgb(16 163 127 / 45%);
+  border-radius: 8px;
+  background: rgb(16 163 127 / 8%);
+  color: var(--muted-foreground);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.door-back-banner button:hover {
+  color: var(--foreground);
+  border-color: var(--primary);
+}
+
+.message-bubble[data-marked="true"] {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px rgb(16 163 127 / 55%);
+}
+
 .message-meta {
   justify-content: flex-start;
   color: var(--muted-foreground);
