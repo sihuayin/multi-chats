@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { apiRequest } from "@/lib/api";
 import { paginationEntries } from "@/lib/pagination";
 import { providerCatalog } from "@/lib/provider-catalog";
+import type { PublicProvider } from "@/lib/workspace-view";
 import { useI18n } from "@/components/i18n-provider";
 import { useWorkspace } from "@/components/workspace-provider";
 import { PageHeader } from "@/components/page-header";
@@ -52,7 +53,21 @@ import {
   TableRow
 } from "@/components/ui/table";
 
-const PAGE_SIZE = 8;
+const PAGE_SIZE = 20;
+
+/**
+ * Newest first. A Provider's `id` is a random UUID, so it carries no order of
+ * its own and sorting by it would shuffle the table between loads. `createdAt`
+ * is the timestamp the Provider was configured; `id` breaks a tie between two
+ * rows configured in the same millisecond, which keeps the order stable rather
+ * than arbitrary.
+ */
+function byNewestFirst(left: PublicProvider, right: PublicProvider): number {
+  return (
+    right.createdAt.localeCompare(left.createdAt) ||
+    right.id.localeCompare(left.id)
+  );
+}
 
 function formatValidationTime(value: string): string {
   return new Intl.DateTimeFormat(undefined, {
@@ -74,7 +89,9 @@ export function ProvidersManager() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
 
-  const providers = data?.providers ?? [];
+  // `data.providers` belongs to the shared Workspace view, so copy it first:
+  // `Array.prototype.sort` mutates in place.
+  const providers = [...(data?.providers ?? [])].sort(byNewestFirst);
   const pageCount = Math.max(1, Math.ceil(providers.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount);
   const pageStart = (safePage - 1) * PAGE_SIZE;
