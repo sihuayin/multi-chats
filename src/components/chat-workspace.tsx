@@ -908,15 +908,21 @@ export function ChatWorkspace({
               {messages.map((item) => {
                 const artifacts = messageArtifacts(item.id);
                 const citations = citationsByMessage.get(item.id) ?? [];
+                // A dangling citation is in the citable set but its target
+                // died with its Conversation: it stays a chip (#194), so it
+                // joins the chips here and is rendered without a title, a
+                // door, or a passage.
                 const resolved = new Map(
                   citations
-                    .filter((citation) => citation.resolved)
+                    .filter(
+                      (citation) => citation.resolved || citation.dangling
+                    )
                     .map((citation) => [citation.alias, citation])
                 );
                 // The strip is derived from the same parts as the prose:
                 // aliases deduped in order, resolved ones becoming entries.
                 const stripEntries = citations.filter(
-                  (citation) => citation.resolved
+                  (citation) => citation.resolved || citation.dangling
                 );
                 // An unresolvable citation is counted in muted text, never
                 // as an error state: visible, but the Conversation is not
@@ -997,7 +1003,11 @@ export function ChatWorkspace({
                                 key={index}
                                 type="button"
                                 className="citation-chip"
-                                title={citationTitle(resolved.get(part.alias)!)}
+                                title={
+                                  resolved.get(part.alias)!.resolved
+                                    ? citationTitle(resolved.get(part.alias)!)
+                                    : undefined
+                                }
                                 aria-expanded={
                                   openPassage?.messageId === item.id &&
                                   openPassage.alias === part.alias
@@ -1013,7 +1023,29 @@ export function ChatWorkspace({
                             )
                           )}
                     </p>
-                    {openCitation ? (
+                    {openCitation?.dangling ? (
+                      <div
+                        className="passage-panel"
+                        data-testid="passage-panel"
+                        data-dangling="true"
+                      >
+                        <div className="passage-head">
+                          <button
+                            type="button"
+                            className="passage-close"
+                            aria-label={t("chat.closePassage")}
+                            onClick={() => setOpenPassage(null)}
+                          >
+                            ×
+                          </button>
+                        </div>
+                        {/* It says the target is gone rather than naming an
+                            origin — there is no origin left to name. */}
+                        <p className="passage-gone" data-testid="passage-gone">
+                          {t("chat.passageGone")}
+                        </p>
+                      </div>
+                    ) : openCitation ? (
                       <div className="passage-panel" data-testid="passage-panel">
                         <div className="passage-head">
                           <strong>{citationTitle(openCitation)}</strong>
@@ -1125,7 +1157,9 @@ export function ChatWorkspace({
                                 }
                               >
                                 [{ordinals.get(citation.alias)}]{" "}
-                                {citationTitle(citation)}
+                                {citation.dangling
+                                  ? null
+                                  : citationTitle(citation)}
                               </button>
                             ))}
                           </span>

@@ -1105,4 +1105,40 @@ test("answers from the Workspace's own Sources with a citation chip and a source
   await expect(page.locator(".conversation-header h2")).toContainText(
     "Citation check"
   );
+
+  // The other way a citation fails: in the citable set, target gone.
+  // Deleting the Archive Conversation prunes the row it orphaned, and the
+  // citation stays a CHIP — no raw text, no badge — with no title, no door
+  // and no passage to show.
+  const deleteResponse = await request.delete(
+    `/api/conversations/${archiveConversation.id}`
+  );
+  expect(deleteResponse.ok()).toBeTruthy();
+  await page.reload();
+  await page
+    .locator(".conversation-item")
+    .filter({ hasText: "Citation check" })
+    .click();
+  const goneReply = page
+    .locator(".message-bubble.employee")
+    .filter({ hasText: "search_history — query:" })
+    .last();
+  await expect(goneReply.locator("p .citation-chip")).toHaveCount(1);
+  await expect(goneReply.locator("p .citation-chip").first()).not.toHaveAttribute(
+    "title",
+    /.+/
+  );
+  await expect(
+    goneReply.locator('[data-testid="strip-elsewhere"]')
+  ).toBeVisible();
+  await goneReply.locator("p .citation-chip").first().click();
+  const gonePanel = goneReply.locator('[data-testid="passage-panel"]');
+  await expect(
+    gonePanel.locator('[data-testid="passage-gone"]')
+  ).toBeVisible();
+  await expect(
+    gonePanel.locator('[data-testid="passage-door"]')
+  ).toHaveCount(0);
+  // Nothing failed: the Run and its Message completed normally.
+  await expect(goneReply).toHaveAttribute("data-status", "complete");
 });

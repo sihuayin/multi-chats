@@ -11,6 +11,12 @@ import type {
   TextExtractor
 } from "@/server/application/text-extractor";
 import { MemoryStore } from "@/server/store/memory-store";
+import { WorkspaceService } from "@/server/application/workspace-service";
+import { AesCredentialCipher } from "@/server/security/credential-cipher";
+import {
+  noopProviderRegistry,
+  TEST_KEY
+} from "@/server/test-support/fixtures";
 import { evidenceReferenceId } from "@/server/application/discussion-evidence";
 import { chunkSource } from "@/server/application/source-chunking";
 import { createFixtureState } from "@/server/test-support/fixtures";
@@ -737,6 +743,50 @@ describe("History-item citations", () => {
     expect(state.evidenceReferences).toHaveLength(0);
     const citations = resolveConversationCitations(state, conversationId);
     expect(citations[0].resolved).toBe(false);
+    // Not in the citable set at all: plain unresolved, NOT dangling — the
+    // two failure modes render differently (#194).
+    expect(citations[0].dangling).toBeUndefined();
+  });
+
+  it("keeps a citation whose target died with its Conversation as a dangling chip", async () => {
+    const { state, conversationId } = stateWithOtherMessage();
+    historyRetrievalEvent(state, "run-h1", ["message-elsewhere"]);
+    const reply = message(state, {
+      id: "message-reply",
+      conversationId,
+      content: "History says [message:message-elsewhere].",
+      runId: "run-h1"
+    });
+    recordMessageCitations(state, reply);
+    expect(
+      resolveConversationCitations(state, conversationId)[0].resolved
+    ).toBe(true);
+
+    // The deletion that produces the first dangling reference this repo can
+    // have — the same code path #201 fixed.
+    const store = new MemoryStore(state);
+    await new WorkspaceService(
+      store,
+      new AesCredentialCipher(TEST_KEY),
+      noopProviderRegistry
+    ).deleteConversation(OTHER);
+
+    const after = await store.read((current) => ({
+      citations: resolveConversationCitations(current, conversationId),
+      references: current.evidenceReferences
+    }));
+    // The row went with its target...
+    expect(after.references).toHaveLength(0);
+    // ...and the citation stays a chip, with nothing left to name: no
+    // origin, no passage, no door, no message to mark.
+    expect(after.citations[0]).toMatchObject({
+      alias: "message:message-elsewhere",
+      resolved: false,
+      dangling: true
+    });
+    expect(after.citations[0].originConversationTitle).toBeUndefined();
+    expect(after.citations[0].excerpt).toBeUndefined();
+    expect(after.citations[0].targetMessageId).toBeUndefined();
   });
 
   it("keeps a cited History item re-citable in a later Run without re-retrieval, recorded once", () => {

@@ -15,6 +15,13 @@ export type MessageCitation = {
   messageId: string;
   alias: string;
   resolved: boolean;
+  /**
+   * The second way a citation fails: it IS in the citable set, but its
+   * target died with its Conversation. It stays a chip — not raw text, no
+   * badge — listed under "From elsewhere" with no title, no door, and no
+   * passage, because the target's text is gone with it (#194).
+   */
+  dangling?: boolean;
   /** The originating Conversation of a resolved History-item citation. */
   locator?: string;
   chunkId?: string;
@@ -74,6 +81,11 @@ export function conversationEvidenceScope(
     if (item.conversationId !== conversation.id || !isPublished(item)) {
       continue;
     }
+    // Only what an Employee wrote is a citation. A User's prose is not: a
+    // bracketed alias pasted into a question would otherwise put an
+    // invented id into the citable set and flip how the answer renders,
+    // where #180 keeps a never-citable alias literal.
+    if (item.authorType === "user") continue;
     for (const alias of citationAliasesIn(item.content)) {
       if (alias.startsWith("external:")) {
         citableChunkIds.add(alias.slice("external:".length));
@@ -253,7 +265,26 @@ export function resolveConversationCitations(
         }
         citations.push(citation);
       } catch {
-        citations.push({ messageId: message.id, alias, resolved: false });
+        // Two ways a citation fails to resolve, and they render
+        // differently. In the citable set but the target is gone — a real
+        // citation whose Conversation was deleted — stays a CHIP with no
+        // origin and nothing to show. Not in the citable set — a
+        // hallucinated or wrong alias — stays literal text (#180).
+        const separator = alias.indexOf(":");
+        const prefix = separator > 0 ? alias.slice(0, separator) : "";
+        const sourceId = separator > 0 ? alias.slice(separator + 1) : "";
+        const dangling =
+          (prefix === "external" &&
+            scope.citableChunkIds?.has(sourceId) === true) ||
+          ((prefix === "message" ||
+            prefix === "task" ||
+            prefix === "artifact") &&
+            scope.citableIds?.has(sourceId) === true);
+        citations.push(
+          dangling
+            ? { messageId: message.id, alias, resolved: false, dangling: true }
+            : { messageId: message.id, alias, resolved: false }
+        );
       }
     }
   }
