@@ -397,8 +397,6 @@ export function validateRuntimeContracts(
     turnDiscussionIds
   } = discussionIndex(state);
   const messageIds = ids(state.messages);
-  const taskIds = ids(state.tasks);
-  const artifactIds = ids(state.artifacts);
   const runIds = ids(state.runs);
   const tasksById = new Map(
     records(state.tasks).map((task) => [

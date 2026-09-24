@@ -263,6 +263,8 @@ const en = {
   "chat.openInConversation": "Open in {conversation} ↗",
   "chat.backToConversation": "Back to {conversation}",
   "chat.closePassage": "Close passage",
+  "chat.passageGone":
+    "The cited item is gone — its Conversation was deleted.",
   "chat.unresolvedCitations": "{count} citation(s) did not resolve",
   "chat.approve": "Approve",
   "chat.reject": "Reject",
@@ -760,6 +762,7 @@ const zh: Record<TranslationKey, string> = {
   "chat.openInConversation": "在《{conversation}》中打开 ↗",
   "chat.backToConversation": "返回《{conversation}》",
   "chat.closePassage": "关闭引文段落",
+  "chat.passageGone": "所引条目已不在——其所在会话已被删除。",
   "chat.unresolvedCitations": "{count} 条引用未能解析",
   "chat.approve": "批准",
   "chat.reject": "拒绝",
